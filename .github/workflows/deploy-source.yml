@@ -2,6 +2,11 @@ name: Deploy complete validated v1.0.0 source
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .deploy-complete-source
 
 permissions:
   contents: write
@@ -79,9 +84,9 @@ jobs:
                   raise SystemExit(f'Unexpected GitHub contents response for {path}')
               return base64.b64decode(obj['content']).decode('ascii')
 
-          # The original Base64 transport was intentionally split because the
-          # connector could not upload one 392,812-character text object.
-          # Parts 00-04 are the exact first 72,000 Base64 characters.
+          # The original package Base64 was split because the connector could
+          # not upload one 392,812-character text object. Parts 00-04 contain
+          # the exact first 72,000 Base64 characters.
           head_paths = [f'.bootstrap/package.b64.{index:02d}' for index in range(5)]
           head_b64 = ''.join(
               ''.join(read_transport_text(path).split())
@@ -90,20 +95,23 @@ jobs:
           if len(head_b64) != 72000:
               raise SystemExit(f'Unexpected reconstructed head length: {len(head_b64)} != 72000')
 
-          # The remaining Base64 text was gzip-compressed, Base64-encoded and
-          # split into four sequential transport files.
+          # Each transport-tail file is an independently Base64-encoded slice
+          # of one gzip byte stream. Decode every slice separately first,
+          # concatenate the resulting gzip bytes, and only then decompress.
           tail_paths = [
               '.bootstrap/tail.gz.b64.00',
               '.bootstrap/tail.gz.b64.01',
               '.bootstrap/tail.gz.b64.02',
               '.bootstrap/tail2.b64.03',
           ]
-          tail_gzip_b64 = ''.join(
-              ''.join(read_transport_text(path).split())
-              for path in tail_paths
-          )
           try:
-              tail_gzip = base64.b64decode(tail_gzip_b64, validate=True)
+              tail_gzip_parts = []
+              for path in tail_paths:
+                  encoded_part = ''.join(read_transport_text(path).split())
+                  decoded_part = base64.b64decode(encoded_part, validate=True)
+                  print(f'TRANSPORT_PART={path} BASE64={len(encoded_part)} BYTES={len(decoded_part)}')
+                  tail_gzip_parts.append(decoded_part)
+              tail_gzip = b''.join(tail_gzip_parts)
               tail_b64 = gzip.decompress(tail_gzip).decode('ascii')
           except Exception as exc:
               raise SystemExit(f'Compressed transport tail reconstruction failed: {exc}') from exc
