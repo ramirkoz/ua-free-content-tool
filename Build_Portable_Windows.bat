@@ -7,11 +7,28 @@ set "TARGET=Release\UA_FREE_Content_Tool_R8_FIX30"
 
 if exist "%TARGET%" goto target_exists
 
+rem Prefer the exact Python placed first on PATH by actions/setup-python.
+rem Fall back to explicit Windows Python Launcher versions only when needed.
 set "PY_CMD=python"
-where py >nul 2>nul
-if not errorlevel 1 set "PY_CMD=py -3"
+python -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+if not errorlevel 1 goto python_ready
 
-%PY_CMD% -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+set "PY_CMD=py -3.13"
+py -3.13 -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+if not errorlevel 1 goto python_ready
+
+set "PY_CMD=py -3.12"
+py -3.12 -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+if not errorlevel 1 goto python_ready
+
+set "PY_CMD=py -3.11"
+py -3.11 -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+if not errorlevel 1 goto python_ready
+
+goto no_python
+
+:python_ready
+%PY_CMD% -c "import sys; print('Build Python:', sys.executable, sys.version)"
 if errorlevel 1 goto no_python
 
 if not exist ".venv-build\Scripts\python.exe" (
@@ -19,10 +36,10 @@ if not exist ".venv-build\Scripts\python.exe" (
   if errorlevel 1 goto failed
 )
 
-if not exist ".venv-build\.ready-stabilization-20260731-r8-fix29" (
+if not exist ".venv-build\.ready-stabilization-20260731-r8-fix30" (
   ".venv-build\Scripts\python.exe" -m pip install --disable-pip-version-check --no-input -r requirements-build.txt
   if errorlevel 1 goto failed
-  type nul > ".venv-build\.ready-stabilization-20260731-r8-fix29"
+  type nul > ".venv-build\.ready-stabilization-20260731-r8-fix30"
 )
 
 ".venv-build\Scripts\python.exe" -m compileall -q .
