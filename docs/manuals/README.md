@@ -9,4 +9,4 @@ The PDFs are generated reproducibly from the repository documentation and the va
 
 The manuals cover portable installation, checksum verification, first launch, the `Data` folder, Ollama, Facebook Pages, Threads, LinkedIn, Telegram, Google Drive media, source collection, editorial grouping, local rewrite, scheduling, queue recovery, backups, migration, security, first-live-publication checklists, and troubleshooting.
 
-The application interface remains Ukrainian, so the English manual shows important Ukrainian UI labels together with their English meaning.
+The application interface remains Ukrainian, so the English manual shows important Ukrainian UI labels together with their English meaning. The generated PDFs and this index are included in `FILE_MANIFEST.sha256`.
