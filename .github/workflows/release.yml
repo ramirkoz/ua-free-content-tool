@@ -1,0 +1,90 @@
+name: Build and publish Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        default: "1.0.0"
+      prerelease:
+        description: Publish as a prerelease
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build validated portable package
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Prepare release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.version }}"
+          $releaseRoot = "Release\UA_FREE_Content_Tool_R8_FIX30\UA_FREE_Content_Tool"
+          $portableZip = "UA_FREE_Content_Tool_v${version}_Windows_Portable.zip"
+          $sourceZip = "UA_FREE_Content_Tool_v${version}_Source.zip"
+          $checksums = "SHA256SUMS.txt"
+
+          if (-not (Test-Path $releaseRoot)) {
+            throw "Portable release folder not found: $releaseRoot"
+          }
+
+          Compress-Archive -Path "$releaseRoot\*" -DestinationPath $portableZip -CompressionLevel Optimal
+          git archive --format=zip --output=$sourceZip HEAD
+
+          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceHash = (Get-FileHash $sourceZip -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          @(
+            "$portableHash  $portableZip",
+            "$sourceHash  $sourceZip"
+          ) | Set-Content -Path $checksums -Encoding ascii
+
+          "portable_zip=$portableZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "source_zip=$sourceZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "checksums=$checksums" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.version }}"
+          $tag = "v$version"
+
+          $arguments = @(
+            "release", "create", $tag,
+            "${{ steps.assets.outputs.portable_zip }}",
+            "${{ steps.assets.outputs.source_zip }}",
+            "${{ steps.assets.outputs.checksums }}",
+            "--target", "main",
+            "--title", "UA FREE Content Tool v$version",
+            "--notes-file", "RELEASE_NOTES_v1.0.0.md",
+            "--latest"
+          )
+
+          if ("${{ inputs.prerelease }}" -eq "true") {
+            $arguments += "--prerelease"
+          }
+
+          & gh @arguments
