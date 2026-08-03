@@ -7,28 +7,20 @@ set "TARGET=Release\UA_FREE_Content_Tool_R8_FIX30"
 
 if exist "%TARGET%" goto target_exists
 
-rem Prefer the exact Python placed first on PATH by actions/setup-python.
-rem Fall back to explicit Windows Python Launcher versions only when needed.
 set "PY_CMD=python"
 python -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
-if not errorlevel 1 goto python_ready
+if errorlevel 1 (
+  set "PY_CMD="
+  where py >nul 2>nul
+  if not errorlevel 1 (
+    py -3.13 -c "import sys" >nul 2>nul && set "PY_CMD=py -3.13"
+    if not defined PY_CMD py -3.12 -c "import sys" >nul 2>nul && set "PY_CMD=py -3.12"
+    if not defined PY_CMD py -3.11 -c "import sys" >nul 2>nul && set "PY_CMD=py -3.11"
+  )
+)
 
-set "PY_CMD=py -3.13"
-py -3.13 -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
-if not errorlevel 1 goto python_ready
-
-set "PY_CMD=py -3.12"
-py -3.12 -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
-if not errorlevel 1 goto python_ready
-
-set "PY_CMD=py -3.11"
-py -3.11 -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
-if not errorlevel 1 goto python_ready
-
-goto no_python
-
-:python_ready
-%PY_CMD% -c "import sys; print('Build Python:', sys.executable, sys.version)"
+if not defined PY_CMD goto no_python
+%PY_CMD% -c "import sys; print(sys.executable); print(sys.version); raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,13) else 1)"
 if errorlevel 1 goto no_python
 
 if not exist ".venv-build\Scripts\python.exe" (
@@ -54,9 +46,9 @@ if errorlevel 1 goto failed
 ".venv-build\Scripts\pyinstaller.exe" --noconfirm --clean --windowed --name UA_FREE_Content_Tool --add-data "%CD%\content_agent\data\Europe_Kyiv.tzif;content_agent\data" --add-data "%CD%\content_agent\data\README.txt;content_agent\data" --distpath "%TARGET%" --workpath build\pyinstaller --specpath build app.py
 if errorlevel 1 goto failed
 
-copy /y README_UA.md "%TARGET%\README_UA.md" >nul
-copy /y PLATFORM_SETUP_UA.md "%TARGET%\PLATFORM_SETUP_UA.md" >nul
-copy /y SECURITY_NOTES_UA.md "%TARGET%\SECURITY_NOTES_UA.md" >nul
+copy /y README.md "%TARGET%\README.md" >nul
+copy /y PLATFORM_SETUP.md "%TARGET%\PLATFORM_SETUP.md" >nul
+copy /y SECURITY_NOTES.md "%TARGET%\SECURITY_NOTES.md" >nul
 copy /y VERSION.txt "%TARGET%\VERSION.txt" >nul
 
 set "APP_FOLDER=%TARGET%\UA_FREE_Content_Tool"
@@ -64,7 +56,7 @@ if not exist "%APP_FOLDER%" goto failed
 type nul > "%APP_FOLDER%\portable.flag"
 type nul > "%APP_FOLDER%\clean_start.flag"
 if not exist "%APP_FOLDER%\Data" mkdir "%APP_FOLDER%\Data"
-copy /y PORTABLE_MODE_UA.md "%APP_FOLDER%\PORTABLE_MODE_UA.md" >nul
+copy /y PORTABLE_MODE.md "%APP_FOLDER%\PORTABLE_MODE.md" >nul
 
 echo Build completed: %TARGET%
 exit /b 0
