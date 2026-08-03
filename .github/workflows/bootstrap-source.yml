@@ -1,6 +1,9 @@
 name: Deploy validated UA FREE Content Tool source
 
 on:
+  workflow_dispatch:
+  issues:
+    types: [opened]
   push:
     branches: [main]
     paths:
@@ -8,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: deploy-validated-v1.0.0
@@ -15,6 +19,9 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name != 'issues' ||
+      github.event.issue.title == '__DEPLOY_UA_FREE_CONTENT_TOOL_V1_0_0__'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -38,7 +45,6 @@ jobs:
           import stat
           import time
           import urllib.error
-          import urllib.parse
           import urllib.request
           import zipfile
           from pathlib import PurePosixPath
@@ -76,10 +82,7 @@ jobs:
                           continue
                       raise RuntimeError(f'{method} {url} failed: HTTP {exc.code}: {body}') from exc
 
-          encoded_file = request(
-              'GET',
-              '/contents/.bootstrap/package.b64.00?ref=main',
-          )
+          encoded_file = request('GET', '/contents/.bootstrap/package.b64.00?ref=main')
           if encoded_file.get('encoding') != 'base64':
               raise SystemExit('Unexpected GitHub contents encoding')
           b64_text = base64.b64decode(encoded_file['content']).decode('ascii')
@@ -165,12 +168,29 @@ jobs:
                   'parents': [parent],
               },
           )
-          request(
-              'PATCH',
-              '/git/refs/heads/main',
-              {'sha': commit['sha'], 'force': False},
-          )
+          request('PATCH', '/git/refs/heads/main', {'sha': commit['sha'], 'force': False})
           print(f"DEPLOYED_COMMIT={commit['sha']}")
           print(f"DEPLOYED_FILES={len(files)}")
           print(f"PACKAGE_SHA256={digest}")
+
+          issue = os.environ.get('GITHUB_EVENT_PATH')
+          if issue:
+              try:
+                  event = json.loads(open(issue, encoding='utf-8').read())
+                  number = event.get('issue', {}).get('number')
+                  if number:
+                      request(
+                          'PATCH',
+                          f'/issues/{number}',
+                          {
+                              'state': 'closed',
+                              'state_reason': 'completed',
+                              'body': (
+                                  'One-time deployment trigger. The validated v1.0.0 source tree '
+                                  f'was deployed as commit `{commit["sha"]}`.'
+                              ),
+                          },
+                      )
+              except Exception as exc:
+                  print(f'Could not close trigger issue: {exc}')
           PY
