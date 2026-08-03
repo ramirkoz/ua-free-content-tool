@@ -1,113 +1,113 @@
 # UA FREE Content Tool
 
-**Локальна privacy-first Windows-програма для збору, ручного групування, рерайту, планування та кроспостингу українських новин.**
+**A privacy-first Windows desktop application for collecting, manually grouping, rewriting, scheduling, and cross-posting Ukrainian news.**
 
-UA FREE Content Tool допомагає редактору пройти весь цикл роботи з новиною в одному desktop-інструменті: зібрати матеріали з налаштованих джерел, вручну об’єднати повідомлення про одну подію, підготувати один стислий український текст за допомогою локальної Ollama, додати медіа з Google Drive, поставити публікацію в чергу та послідовно відправити її у Facebook Pages, Threads, LinkedIn і Telegram.
+UA FREE Content Tool gives a human editor one local workflow for the full news-production cycle: collect materials from configured sources, manually combine reports about the same event, create one concise Ukrainian-language publication with a local Ollama model, attach media from Google Drive, schedule the package, and publish it sequentially to Facebook Pages, Threads, LinkedIn, and Telegram.
 
-> **Публічна версія:** `v1.0.0`  
-> **Внутрішня перевірена збірка:** `R8 FIX30`  
-> **Платформа:** Windows 10/11, portable  
-> **Мова інтерфейсу:** українська  
-> **Ліцензія:** GPL-2.0-or-later
+> **Public release:** `v1.0.0`  
+> **Internally validated build:** `R8 FIX30`  
+> **Platform:** Windows 10/11, portable  
+> **Interface language:** Ukrainian  
+> **License:** GPL-2.0-or-later
 
-## Для чого створено програму
+## Why this application exists
 
-Звичайний редакційний процес розкиданий між RSS-читачем, браузером, месенджерами, текстовим редактором, локальною LLM, таблицею планування та окремими кабінетами соціальних мереж. UA FREE Content Tool об’єднує ці дії в одному локальному Windows-застосунку, але залишає редактору контроль над фактажем і фінальним текстом.
+A normal editorial workflow is usually scattered across an RSS reader, browser tabs, messengers, a text editor, a local LLM, a scheduling sheet, and separate social-platform dashboards. UA FREE Content Tool brings those steps into one local Windows application while keeping factual and editorial decisions under human control.
 
-Програма не повинна самостійно вирішувати, що різні матеріали описують одну подію. Вона показує окремі вхідні блоки, дозволяє людині вибрати потрібні матеріали та лише після ручного підтвердження об’єднує їх у робочий блок.
+The application does not decide on its own that different materials describe the same event. It keeps incoming items separate, helps the editor find likely matches, and merges them only after explicit confirmation.
 
-Головний результат роботи редактора — **один канонічний український текст до 900 символів**, який використовується для всіх вибраних платформ. Для Threads довший текст може бути технічно поділений на основний допис і відповіді, але зміст залишається єдиним.
+The main editorial output is **one canonical Ukrainian-language publication of up to 900 characters** for all selected platforms. Threads may technically split a longer approved text into a main post and replies, but the content remains one canonical publication.
 
-## Основний робочий процес
+## Core workflow
 
-1. **Збір матеріалів.** Програма читає налаштовані джерела та створює окремі новинні блоки.
-2. **Ручний відбір.** Редактор виділяє матеріали через `Shift`, `Ctrl` або `Ctrl+A`.
-3. **Пошук кандидатів.** Дія **«Знайти все по темі»** підсвічує потенційно пов’язані матеріали, але нічого не об’єднує без рішення редактора.
-4. **Ручне групування.** Кілька повідомлень про одну подію об’єднуються в один блок.
-5. **Рерайт.** Локальна Ollama отримує всі джерела блока та готує стислий український текст.
-6. **Редакторська правка.** Людина перевіряє фактаж, формулювання, довжину та затверджує текст.
-7. **Медіа.** До публікації можна додати одне фото або відео з приватного Google Drive.
-8. **Планування.** Пакет ставиться в чергу з вибраними платформами й часом публікації.
-9. **Послідовна публікація.** Цілі обробляються по черзі, а статус кожної платформи зберігається окремо.
-10. **Частковий повтор.** Після помилки повторюються лише невдалі цілі; успішні публікації не дублюються.
+1. **Collect materials.** Enabled sources are checked and separate incoming blocks are created.
+2. **Select manually.** The editor uses `Shift`, `Ctrl`, or `Ctrl+A`.
+3. **Find candidates.** **Find everything on this topic** highlights likely related materials without merging them.
+4. **Group manually.** Reports about the same event are merged into one working block.
+5. **Rewrite locally.** Ollama receives all source materials in the block and produces a concise Ukrainian-language draft.
+6. **Edit and approve.** A human verifies facts, wording, and length.
+7. **Attach media.** One private Google Drive image or video can be attached.
+8. **Schedule.** The package is added to the queue with selected platforms and publication time.
+9. **Publish sequentially.** Targets are processed one by one and each platform keeps its own status.
+10. **Retry safely.** Only failed targets are retried; successful publications are not duplicated.
 
-## Ключові можливості
+## Main capabilities
 
-### Збір і редакторська робота
+### Collection and editorial work
 
-- збір актуальних новин із налаштованих джерел;
-- окремі вхідні блоки без неконтрольованого автоматичного склеювання;
-- множинне виділення через `Shift`, `Ctrl` і `Ctrl+A`;
-- ручне об’єднання матеріалів про одну подію;
-- тематичний пошук кандидатів без автоматичного об’єднання;
-- видалення непотрібних матеріалів;
-- дія **«Запам’ятати й виключати»** для майбутнього відсікання небажаного контенту;
-- редакційна пам’ять на основі фінальних ручних правок.
+- Collect current news from configured sources.
+- Keep incoming items separate until a human decides to merge them.
+- Support range and multi-selection through `Shift`, `Ctrl`, and `Ctrl+A`.
+- Merge related reports manually.
+- Highlight topic candidates without automatic grouping.
+- Delete irrelevant materials.
+- Use **Remember and exclude** to suppress highly similar future content.
+- Build local editorial memory from approved human edits.
 
-### Локальний рерайт
+### Local rewrite
 
-- робота з локальною Ollama без обов’язкового платного LLM API;
-- використання всіх джерел об’єднаного блока;
-- один фінальний текст українською мовою;
-- цільовий ліміт до 900 символів;
-- максимум фактажу й мінімум загальних міркувань;
-- блокування англомовного, російськомовного або нефактологічного результату;
-- повторний рерайт після зміни складу джерел;
-- синхронізація ручної фінальної правки з канонічним текстом публікації.
+- Use local Ollama without requiring a paid LLM API.
+- Include all sources from a merged block.
+- Produce one final Ukrainian-language publication.
+- Target a maximum length of 900 characters.
+- Maximize factual density and minimize filler.
+- Reject English, Russian, speculative, or non-news output.
+- Re-run the rewrite after the source composition changes.
+- Keep the manually approved final text as the canonical publication text.
 
-### Черга та надійність
+### Queue and reliability
 
-- відкладена публікація;
-- окремий статус кожної цільової платформи;
-- збереження спроб, помилок і remote ID;
-- відновлення пропущених або призупинених пакетів;
-- повторне планування без дублювання вже успішних цілей;
-- послідовне виконання з контрольованими паузами;
-- блокування другого одночасного процесу програми;
-- SQLite з WAL, foreign keys і `synchronous=FULL`;
-- міграції з перевіркою збереження pending-елементів, статусів, спроб і remote ID.
+- Schedule publications for later delivery.
+- Store a separate status for every target platform.
+- Preserve attempts, errors, and remote IDs.
+- Recover overdue or paused packages.
+- Reschedule without repeating targets that already succeeded.
+- Process targets sequentially with controlled pauses.
+- Prevent a second simultaneous application process.
+- Use SQLite with WAL, foreign keys, and `synchronous=FULL`.
+- Test migrations for preservation of pending items, target statuses, attempts, and remote IDs.
 
-### Платформи й медіа
+### Platforms and media
 
-- Facebook Pages;
-- Threads;
-- LinkedIn;
-- Telegram;
-- приватні файли Google Drive;
-- автоматична діагностика токенів і прав після запуску та кожні 6 годин;
-- окремі стани: `актуальний`, `замінити токен`, `перевірити права`, `тимчасово не перевірено`, `не налаштовано`;
-- тимчасовий доступ `anyone/reader` лише до конкретного Drive-файла, коли цього потребує Threads;
-- відкликання лише дозволу, створеного програмою;
-- видалення Drive-файла тільки після успіху всіх вибраних публікацій.
+- Facebook Pages.
+- Threads.
+- LinkedIn.
+- Telegram.
+- Private Google Drive files.
+- Automatic token and permission diagnostics after startup and every six hours.
+- Distinct states for valid credentials, expired tokens, missing permissions, temporary network failures, and unconfigured integrations.
+- Temporary `anyone/reader` access only for the specific Drive file required by Threads.
+- Revocation of only the permission created by the application.
+- Drive-file deletion only after all selected publications succeed.
 
-## Поведінка на платформах
+## Platform behavior
 
-| Платформа | Публікація | Медіа | Особливості |
+| Platform | Publication | Media | Notes |
 |---|---|---|---|
-| Facebook Pages | Один допис | Фото або відео | Сторінки й Page Access Tokens завантажуються через `/me/accounts`; підтримується API-пагінація без штучного ліміту у дві сторінки. |
-| Threads | Основний допис і, за потреби, відповіді | Фото або відео | Довший канонічний текст ділиться технічно без втрати змісту; для медіа створюється тимчасовий публічний доступ до конкретного Drive-файла. |
-| LinkedIn | Один професійний допис | Фото або відео | Використовується особистий профіль і дозвіл `w_member_social`. |
-| Telegram | Один допис або медіа з підписом | Фото або відео | Бот повинен бути адміністратором каналу та мати `can_post_messages`. |
+| Facebook Pages | One post | Image or video | Pages and Page Access Tokens are loaded through `/me/accounts`; API pagination is supported without an artificial two-page limit. |
+| Threads | Main post and replies when required | Image or video | Longer canonical text is split without dropping content; the application temporarily exposes only the selected Drive file. |
+| LinkedIn | One professional post | Image or video | Uses the personal profile and the `w_member_social` permission. |
+| Telegram | One post or media with caption | Image or video | The bot must be a channel administrator and have `can_post_messages`. |
 
-## Вимоги
+## Requirements
 
-### Для готової Windows portable-збірки
+### Ready Windows portable build
 
-- Windows 10 або Windows 11;
-- Ollama, встановлена окремо;
-- локальна модель, зазначена в налаштуваннях програми;
-- інтернет для збору матеріалів, Google Drive та соціальних платформ;
-- токени й дозволи лише для платформ, які використовуються;
-- Google Cloud OAuth Client типу `Desktop app` для Google Drive.
+- Windows 10 or Windows 11.
+- Ollama installed separately.
+- A compatible local model configured in the application.
+- Internet access for collection, Google Drive, and social platforms.
+- Credentials only for the platforms you intend to use.
+- A Google Cloud OAuth client of type `Desktop app` for Google Drive.
 
-Ollama та модель **не входять** до portable-архіву й встановлюються окремо на кожному комп’ютері.
+Ollama and model files are **not included** in the portable archive and must be installed separately on every computer.
 
-### Для запуску з вихідного коду
+### Development from source
 
-- Python 3.11–3.13;
-- `requirements.txt` для runtime;
-- `requirements-test.txt` для перевірок;
-- `requirements-build.txt` для Windows-збірки.
+- Python 3.11–3.13.
+- `requirements.txt` for runtime dependencies.
+- `requirements-test.txt` for validation.
+- `requirements-build.txt` for the Windows build.
 
 ```bat
 python -m venv .venv
@@ -117,183 +117,193 @@ python -m pip install -r requirements.txt -r requirements-test.txt
 python app.py
 ```
 
-Альтернативна точка входу:
+Alternative entry point:
 
 ```bat
 python -m content_agent.main
 ```
 
-## Швидкий старт для Windows
+## Windows quick start
 
-1. Відкрийте останній GitHub Release.
-2. Завантажте Windows portable ZIP.
-3. Перевірте SHA-256 за `SHA256SUMS.txt`, якщо файл опублікований у релізі.
-4. Повністю розпакуйте архів. Не запускайте EXE безпосередньо з ZIP.
-5. Встановіть Ollama та потрібну модель.
-6. Запустіть `UA_FREE_Content_Tool.exe` без прав адміністратора.
-7. У **«Налаштуваннях»** додайте джерела й облікові дані платформ.
-8. Перевірте підключення.
-9. Перед першою реальною публікацією зробіть резервну копію всієї папки програми.
+1. Open the latest GitHub Release.
+2. Download the Windows portable ZIP.
+3. Verify its SHA-256 against `SHA256SUMS.txt`.
+4. Extract the complete archive. Do not run the EXE from inside the ZIP.
+5. Install Ollama and the selected model.
+6. Run `UA_FREE_Content_Tool.exe` without administrator rights.
+7. Open **Settings** and configure sources and platform credentials.
+8. Verify every required connection.
+9. Back up the complete application folder before the first live publication and before every update.
 
-## Портативні дані, резервні копії та оновлення
+## Portable data, backups, and updates
 
-У папці `Data` поруч із EXE зберігаються:
+The `Data` folder next to the EXE contains the working state:
 
-- SQLite-база;
-- зашифрована конфігурація;
-- токени платформ і Google refresh token у зашифрованому вигляді;
-- джерела й вхідні блоки;
-- ручні об’єднання;
-- редакційна пам’ять і правила виключення;
-- черга, статуси платформ, спроби й remote ID;
-- операційні журнали.
+- SQLite database;
+- encrypted portable configuration;
+- encrypted platform tokens and Google refresh token;
+- sources and incoming blocks;
+- manual merges;
+- editorial memory and exclusion rules;
+- queue, target statuses, attempts, and remote IDs;
+- operational logs.
 
-Для резервної копії:
+To create a backup:
 
-1. закрийте програму;
-2. переконайтеся через Диспетчер завдань, що процес завершився;
-3. скопіюйте **всю папку `UA_FREE_Content_Tool`**, а не один EXE;
-4. зберігайте попередню робочу копію до першої успішної живої публікації новою версією.
+1. Close the application.
+2. Confirm in Task Manager that the process has stopped.
+3. Copy the **entire `UA_FREE_Content_Tool` folder**, not only the EXE.
+4. Keep the previous working copy until the first successful live publication with the new version.
 
-`Data\config.portable` і `Data\portable.key` становлять одну пару. Не видаляйте й не переносіть їх окремо. Фізичний доступ до всієї portable-папки потенційно дає доступ до збережених облікових даних.
+`Data\config.portable` and `Data\portable.key` form one pair. Do not delete, rename, or move them separately. Physical access to the complete portable folder may permit access to stored credentials.
 
-Детальніше: [PORTABLE_MODE_UA.md](PORTABLE_MODE_UA.md).
+See [PORTABLE_MODE.md](PORTABLE_MODE.md) for details.
 
-## Налаштування платформ
+## Platform setup
 
 ### Facebook Pages
 
-Потрібні Meta App ID, Meta App Secret і чинний Facebook User Access Token. Програма через `/me/accounts` отримує всі доступні сторінки та Page Access Tokens, включно з наступними сторінками API-пагінації. Прострочений токен спочатку потрібно створити заново.
+Provide a Meta App ID, Meta App Secret, and a valid Facebook User Access Token. The application calls `/me/accounts` to retrieve all available pages and their Page Access Tokens, including additional pagination pages. An expired token must be replaced before it can be exchanged.
 
 ### Threads
 
-Обов’язкові дозволи:
+Required permissions:
 
 ```text
 threads_basic
 threads_content_publish
 ```
 
-Для пошуку актуальних публікацій за ключовими словами додатково потрібен `threads_keyword_search`. Відсутність цього дозволу не блокує звичайну публікацію.
+`threads_keyword_search` is additionally required for topic and trend comparison. Its absence does not block normal publishing.
 
 ### LinkedIn
 
-Потрібні `openid`, `profile`, `w_member_social`. Програма визначає особистий профіль через API.
+Required permissions:
+
+```text
+openid
+profile
+w_member_social
+```
+
+The application resolves the personal profile through the API.
 
 ### Telegram
 
-Потрібні Bot Token, username або ID каналу, статус адміністратора для бота й право `can_post_messages`.
+Provide the Bot Token and channel username or ID. The bot must be a channel administrator with `can_post_messages`.
 
 ### Google Drive
 
-Потрібно створити Google Cloud проєкт, увімкнути Drive API, налаштувати OAuth consent screen і створити OAuth Client ID типу `Desktop app`. Файл залишається приватним, крім короткого технічного періоду, коли Threads потребує публічного URL.
+Create a Google Cloud project, enable Google Drive API, configure the OAuth consent screen, and create an OAuth Client ID of type `Desktop app`. Files remain private except for the short technical interval when Threads requires a public media URL.
 
-Повна інструкція: [PLATFORM_SETUP_UA.md](PLATFORM_SETUP_UA.md).
+See [PLATFORM_SETUP.md](PLATFORM_SETUP.md) for complete setup instructions.
 
-## Приватність і безпека
+## Privacy and security
 
-UA FREE Content Tool є локальною програмою без вбудованої телеметрії про редакційну роботу користувача.
+UA FREE Content Tool is a local application with no built-in telemetry about editorial work.
 
-- portable-конфігурація шифрується AES-GCM;
-- токени не зберігаються у SQLite;
-- секрети маскуються в інтерфейсі та звичайних помилках;
-- зовнішні URL проходять мережеві перевірки;
-- приватні й non-global адреси відхиляються для зовнішніх запитів;
-- Drive використовується через OAuth;
-- тимчасовий публічний доступ створюється лише для конкретного файла за потреби Threads.
+- Portable configuration is encrypted with AES-GCM.
+- Tokens are not stored in SQLite.
+- Secrets are masked in the interface and normal errors.
+- External URLs pass through network safeguards.
+- Private and non-global destinations are rejected for external fetches.
+- Google Drive uses OAuth.
+- Temporary public access is created only for the selected file when Threads requires it.
 
-Ніколи не публікуйте:
+Never publish:
 
-- реальну папку `Data`;
-- `config.portable` і `portable.key`;
-- SQLite-базу, WAL або SHM;
-- access token, App Secret, Client Secret чи refresh token;
-- приватні Drive-посилання;
-- журнали або скриншоти із секретами й персональними даними.
+- a real `Data` folder;
+- `config.portable` and `portable.key`;
+- SQLite database, WAL, or SHM files;
+- access tokens, app secrets, client secrets, or refresh tokens;
+- private Drive links;
+- logs or screenshots containing secrets or personal data.
 
-Детальніше: [SECURITY_NOTES_UA.md](SECURITY_NOTES_UA.md).
+See [SECURITY_NOTES.md](SECURITY_NOTES.md).
 
-## Структура повного репозиторію
+## Repository structure
 
 ```text
-.github/                       шаблони Issue, CI та release workflow
+.github/                       issue templates, CI, and release workflow
 content_agent/
-  data/                        вбудовані статичні дані
-  ui/                          інтерфейс Tkinter
-  main.py                      точка входу
-  database.py                  SQLite, схема й міграції
-  collectors.py                збір матеріалів
-  rewriter.py                  Ollama-рерайт і перевірки
-  editorial_memory.py          редакційна пам’ять
+  data/                        bundled static data
+  ui/                          Tkinter interface
+  main.py                      application entry point
+  database.py                  SQLite schema and migrations
+  collectors.py                source collection
+  rewriter.py                  Ollama rewrite and validation
+  editorial_memory.py          local editorial memory
   publishers.py                Facebook, Threads, LinkedIn, Telegram
-  google_drive.py              OAuth і медіа
-  scheduling.py                планування
-  worker.py                    виконання черги
-  security.py                  мережеві та секретні межі
-tests/                         51 тестовий файл
-tools/                         smoke й artifact-перевірки
-docs/history/                  історія стабілізації
-docs/validation/               звіти перевірок
+  google_drive.py              OAuth and media workflow
+  scheduling.py                scheduling
+  worker.py                    queue execution
+  security.py                  network and secret boundaries
+tests/                         automated tests
+tools/                         smoke and artifact validation tools
+docs/history/                  stabilization history
+docs/validation/               validation reports
 app.py                         launcher
 Build_Portable_Windows.bat     Windows portable build
-requirements*.txt              runtime, tests і build залежності
-FILE_MANIFEST.sha256           SHA-256 маніфест
-VERSION.txt                    внутрішня версія
-PUBLIC_VERSION.txt             публічна версія
+requirements*.txt              runtime, test, and build dependencies
+FILE_MANIFEST.sha256           SHA-256 manifest
+VERSION.txt                    internal build version
+PUBLIC_VERSION.txt             public version
 ```
 
-## Збірка Windows portable
+## Build the Windows portable package
 
 ```bat
 Build_Portable_Windows.bat
 ```
 
-Скрипт створює ізольоване build-середовище, встановлює залежності, запускає перевірки й формує portable-папку в `Release`.
+The script creates an isolated build environment, installs pinned dependencies, runs validation, and writes the portable package under `Release`.
 
-## Тестування та перевірка v1.0.0
+## Validation of v1.0.0
 
-Публічна версія `v1.0.0` відповідає внутрішній збірці `R8 FIX30`.
+Public version `v1.0.0` corresponds to internal build `R8 FIX30`.
 
-Для перевіреного пакета підтверджено:
+Validated checks include:
 
-- `223 passed` у pytest;
-- успішний `compileall`;
-- успішна перевірка імпортів точок входу;
-- успішний `import content_agent.main`;
-- локальний smoke test;
-- складання й запуск Windows portable;
-- збереження схеми, налаштувань і черги;
-- Shift-мультивибір у «Вхідних» і «Черзі»;
-- блокування англомовного, російськомовного й нефактологічного рерайту;
-- перевірка manifest, CRC, canonical root, duplicate names, path traversal, absolute paths, backslashes і symlinks.
+- `223 passed` in pytest;
+- successful `compileall`;
+- entry-point import checks;
+- successful `import content_agent.main`;
+- local smoke test;
+- Windows portable build and startup;
+- preservation of schema, settings, and queue state;
+- Shift multi-selection in Incoming and Queue views;
+- rejection of English, Russian, and non-grounded rewrite output;
+- manifest, CRC, canonical root, duplicate-name, path-traversal, absolute-path, backslash, and symlink checks.
 
-Повний звіт: [docs/validation/WINDOWS_GATE_REPORT_R8_FIX30.txt](docs/validation/WINDOWS_GATE_REPORT_R8_FIX30.txt).
+The raw Windows Gate evidence is stored in [docs/validation/WINDOWS_GATE_REPORT_R8_FIX30.txt](docs/validation/WINDOWS_GATE_REPORT_R8_FIX30.txt). It preserves literal console output, including original Ukrainian UI strings and test paths. The English summary is [docs/validation/WINDOWS_GATE_SUMMARY_R8_FIX30.md](docs/validation/WINDOWS_GATE_SUMMARY_R8_FIX30.md).
 
-Автоматизований Windows Gate не замінює живої перевірки реальних акаунтів. Поведінка платформ залежить від чинних токенів, ролей, дозволів, політик API та мережі на момент запуску.
+Automated Windows Gate validation does not replace live testing with real platform accounts. Live behavior depends on current tokens, roles, permissions, API policies, and network conditions.
 
-## Документація
+## Documentation
 
-- [README_UA.md](README_UA.md) — українська інструкція;
-- [README_EN.md](README_EN.md) — English overview;
-- [PLATFORM_SETUP_UA.md](PLATFORM_SETUP_UA.md) — платформи, токени й Google Drive;
-- [PORTABLE_MODE_UA.md](PORTABLE_MODE_UA.md) — portable-дані й перенесення;
-- [SECURITY_NOTES_UA.md](SECURITY_NOTES_UA.md) — безпека;
-- [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md) — реліз v1.0.0;
-- [CHANGELOG.md](CHANGELOG.md) — історія змін;
-- [CONTRIBUTING.md](CONTRIBUTING.md) — правила внесків;
-- [docs/MAINTAINER_RELEASE_GUIDE.md](docs/MAINTAINER_RELEASE_GUIDE.md) — процедура релізу;
-- [docs/history/DEVELOPMENT_HISTORY_R8_FIX30_UA.md](docs/history/DEVELOPMENT_HISTORY_R8_FIX30_UA.md) — історія стабілізації;
-- [docs/validation/WINDOWS_GATE_REPORT_R8_FIX30.txt](docs/validation/WINDOWS_GATE_REPORT_R8_FIX30.txt) — Windows Gate.
+- [README.md](README.md) — complete project overview.
+- [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform credentials and Google Drive.
+- [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
+- [SECURITY_NOTES.md](SECURITY_NOTES.md) — security boundaries.
+- [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md) — release notes.
+- [CHANGELOG.md](CHANGELOG.md) — version history.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution rules.
+- [docs/MAINTAINER_RELEASE_GUIDE.md](docs/MAINTAINER_RELEASE_GUIDE.md) — release procedure.
+- [docs/history/DEVELOPMENT_HISTORY_R8_FIX30.md](docs/history/DEVELOPMENT_HISTORY_R8_FIX30.md) — stabilization history.
+- [docs/history/STABILIZATION_DECISION_R8_FIX30.md](docs/history/STABILIZATION_DECISION_R8_FIX30.md) — final stabilization decision.
+- [docs/history/UPDATE_FIX29_TO_FIX30.md](docs/history/UPDATE_FIX29_TO_FIX30.md) — program-only update procedure.
+- [docs/validation/LOCAL_REVALIDATION_REPORT_R8_FIX30.md](docs/validation/LOCAL_REVALIDATION_REPORT_R8_FIX30.md) — local revalidation.
+- [docs/validation/WINDOWS_GATE_SUMMARY_R8_FIX30.md](docs/validation/WINDOWS_GATE_SUMMARY_R8_FIX30.md) — English Windows Gate summary.
 
-## Повідомлення про помилки та вразливості
+## Bug and vulnerability reports
 
-У GitHub Issue зазначте версію програми й Windows, модель Ollama, кроки відтворення, очікуваний і фактичний результат та санітизований фрагмент журналу.
+A GitHub Issue should include the application version, Windows version, Ollama model, reproduction steps, expected result, actual result, and a sanitized log excerpt.
 
-Не публікуйте секрети. Повідомлення про вразливість надсилайте мейнтейнеру на `kozyriev@uafree.org` із мінімальним описом версії, відтворення та впливу.
+Do not publish secrets. Vulnerability reports may be sent to `kozyriev@uafree.org` with the affected version, reproduction steps, and impact. Remove all real credentials and personal data.
 
-## Участь у розробці
+## Contributing
 
-Перед pull request:
+Before opening a pull request, run:
 
 ```bat
 python -m compileall -q .
@@ -302,29 +312,29 @@ python tools\check_entrypoint_imports.py
 python -c "import content_agent.main"
 ```
 
-Внесок не повинен додавати реальні токени або `Data`, послаблювати перевірки URL і секретів, автоматично об’єднувати матеріали без підтвердження редактора, дублювати успішні публікації під час retry або змінювати базу без міграції й тестів.
+A contribution must not add real tokens or working `Data`, weaken URL or secret checks, merge news automatically without editor approval, duplicate successful publications during retry, or modify the database without a migration and tests.
 
-## Підтримка
+## Support
 
-### Благодійний фонд UA FREE
+### UA FREE charitable foundation
 
-- [Підтримати UA FREE](https://uafree.org/donate/)
-- [Сайт фонду](https://uafree.org/)
+- [Donate to UA FREE](https://uafree.org/donate/)
+- [UA FREE website](https://uafree.org/)
 
-### Розробка програми
+### Application development
 
 - **PayPal:** `kozyriev@uafree.org`
-- [PayPal для підтримки розробки](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=kozyriev%40uafree.org&item_name=Support+UA+FREE+Content+Tool+development&currency_code=USD)
+- [Donate through PayPal](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=kozyriev%40uafree.org&item_name=Support+UA+FREE+Content+Tool+development&currency_code=USD)
 - **BTC:** `bc1q4dn8e7sz2866g7qp1qtshh98j54tvuau5ghuuk`
 - **ETH / USDC ERC-20:** `0x3aE3b23A7BD94b8a65A7E8Ca205A4e29BEF7c229`
 - **USDT TRC-20:** `TYsGyK7K3XB4NPHprf5w8ZodFafxFfDdbP`
 
-Пожертви на розробку відокремлені від пожертв благодійному фонду. Використовуйте лише мережу, зазначену біля криптоадреси.
+Application-development donations are separate from donations to the charitable foundation. Use only the network shown next to each cryptocurrency address.
 
-## Походження проєкту
+## Project background
 
-UA FREE Content Tool виріс із реальної контентної роботи, а не з демонстраційного шаблону. Розробка, рев’ю та підготовка частини тестів виконувалися з використанням OpenAI ChatGPT. Остаточні рішення, редакційна відповідальність, робота з обліковими даними й жива перевірка публікацій залишаються за людиною.
+UA FREE Content Tool grew from real content operations rather than from a generic social-media demonstration. Development, review, and part of the test preparation used OpenAI ChatGPT. Final product decisions, editorial responsibility, credential handling, and live publication validation remain under human control.
 
-## Ліцензія
+## License
 
-Проєкт поширюється за ліцензією **GPL-2.0-or-later**. Повний текст: [LICENSE](LICENSE).
+GPL-2.0-or-later. See [LICENSE](LICENSE).
