@@ -1,0 +1,1 @@
+Temporary bootstrap transport files. They are removed automatically after verified extraction.
