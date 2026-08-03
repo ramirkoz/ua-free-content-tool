@@ -1,200 +1,93 @@
-name: Deploy complete validated v1.0.0 source (robust v2)
+name: Deploy exact v1.0.0 repository package
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - UA_FREE_Content_Tool_v1.0.0_GitHub_Repository_Package.zip
 
 permissions:
   contents: write
   actions: write
 
 concurrency:
-  group: deploy-validated-v1.0.0-v2
+  group: deploy-exact-v1.0.0-package
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPOSITORY: ${{ github.repository }}
+      PACKAGE_NAME: UA_FREE_Content_Tool_v1.0.0_GitHub_Repository_Package.zip
       EXPECTED_SHA256: a18f8833fa8c586974537d38d0484e922e42da9b95c001c6c8240df368f8e825
       EXPECTED_SIZE: '294609'
 
     steps:
-      - name: Reconstruct exact package, validate and deploy
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate exact ZIP and prepare clean repository tree
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from __future__ import annotations
 
-          import base64
-          import gzip
           import hashlib
-          import io
-          import itertools
-          import json
           import os
           import re
+          import shutil
           import stat
-          import time
-          import urllib.error
-          import urllib.request
+          import tempfile
           import zipfile
-          from pathlib import PurePosixPath
+          from pathlib import Path, PurePosixPath
 
-          token = os.environ['GH_TOKEN']
-          repository = os.environ['GH_REPOSITORY']
-          expected_sha = os.environ['EXPECTED_SHA256']
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          package = workspace / os.environ['PACKAGE_NAME']
           expected_size = int(os.environ['EXPECTED_SIZE'])
-          api = f'https://api.github.com/repos/{repository}'
+          expected_sha = os.environ['EXPECTED_SHA256']
 
-          def request(method: str, path: str, payload=None, *, allow_status=()):
-              url = path if path.startswith('https://') else api + path
-              data = None if payload is None else json.dumps(payload).encode('utf-8')
-              headers = {
-                  'Authorization': f'Bearer {token}',
-                  'Accept': 'application/vnd.github+json',
-                  'X-GitHub-Api-Version': '2022-11-28',
-                  'User-Agent': 'ua-free-content-tool-deploy-v2',
-                  'Content-Type': 'application/json',
-              }
-              for attempt in range(6):
-                  req = urllib.request.Request(url, data=data, method=method, headers=headers)
-                  try:
-                      with urllib.request.urlopen(req, timeout=90) as response:
-                          body = response.read()
-                          return json.loads(body) if body else None
-                  except urllib.error.HTTPError as exc:
-                      body = exc.read().decode('utf-8', errors='replace')
-                      if exc.code in allow_status:
-                          return {'status': exc.code, 'body': body}
-                      if exc.code in {429, 500, 502, 503, 504} and attempt < 5:
-                          time.sleep(2 ** attempt)
-                          continue
-                      raise RuntimeError(f'{method} {url} failed: HTTP {exc.code}: {body}') from exc
+          if not package.is_file():
+              raise SystemExit(
+                  f'Missing {package.name}. Upload the exact repository ZIP to the root of main.'
+              )
 
-          def read_transport_text(path: str) -> str:
-              obj = request('GET', f'/contents/{path}?ref=main')
-              if not isinstance(obj, dict) or obj.get('encoding') != 'base64':
-                  raise SystemExit(f'Unexpected GitHub contents response for {path}')
-              return ''.join(base64.b64decode(obj['content']).decode('ascii').split())
+          payload = package.read_bytes()
+          actual_size = len(payload)
+          actual_sha = hashlib.sha256(payload).hexdigest()
+          print(f'PACKAGE_SIZE={actual_size}')
+          print(f'PACKAGE_SHA256={actual_sha}')
+          if actual_size != expected_size:
+              raise SystemExit(f'Package size mismatch: {actual_size} != {expected_size}')
+          if actual_sha != expected_sha:
+              raise SystemExit(f'Package SHA-256 mismatch: {actual_sha} != {expected_sha}')
 
-          def decode_b64(text: str):
-              if len(text) % 4 == 1:
-                  return None
-              padded = text + ('=' * ((4 - len(text) % 4) % 4))
-              try:
-                  return base64.b64decode(padded, validate=True)
-              except Exception:
-                  return None
+          current_readme = (workspace / 'README.md').read_text(encoding='utf-8')
+          final_readme = re.sub(
+              r'<!-- DEPLOYMENT_WARNING_START -->.*?<!-- DEPLOYMENT_WARNING_END -->\s*',
+              '',
+              current_readme,
+              flags=re.DOTALL,
+          ).strip() + '\n'
 
-          def edge_variants(text: str):
-              variants = []
-              seen = set()
-              # Transport corruption, if any, can only be at copied segment edges.
-              for left, right in ((0, 0), (1, 0), (0, 1), (2, 0), (0, 2), (1, 1)):
-                  if left + right >= len(text):
-                      continue
-                  candidate = text[left:len(text) - right if right else None]
-                  if candidate not in seen:
-                      seen.add(candidate)
-                      variants.append((f'drop-left-{left}-right-{right}', candidate))
-              return variants
-
-          def verify_package(package_b64: str):
-              package = decode_b64(package_b64)
-              if package is None:
-                  return None
-              if len(package) != expected_size:
-                  return None
-              if hashlib.sha256(package).hexdigest() != expected_sha:
-                  return None
-              return package
-
-          head_paths = [f'.bootstrap/package.b64.{index:02d}' for index in range(5)]
-          head_parts = [read_transport_text(path) for path in head_paths]
-          head_b64 = ''.join(head_parts)
-          print('HEAD_LENGTHS=' + ','.join(str(len(part)) for part in head_parts))
-          print(f'HEAD_TOTAL={len(head_b64)}')
-          if len(head_b64) != 72000:
-              raise SystemExit(f'Unexpected reconstructed head length: {len(head_b64)} != 72000')
-
-          tail_paths = [
-              '.bootstrap/tail.gz.b64.00',
-              '.bootstrap/tail.gz.b64.01',
-              '.bootstrap/tail.gz.b64.02',
-              '.bootstrap/tail2.b64.03',
-          ]
-          tail_parts = [read_transport_text(path) for path in tail_paths]
-          print('TAIL_LENGTHS=' + ','.join(str(len(part)) for part in tail_parts))
-
-          package = None
-          selected = None
-          variant_sets = [edge_variants(part) for part in tail_parts]
-
-          # Strategy 1: the files are sequential slices of one Base64-encoded gzip stream.
-          for combo in itertools.product(*variant_sets):
-              labels = [item[0] for item in combo]
-              text = ''.join(item[1] for item in combo)
-              compressed = decode_b64(text)
-              if compressed is None:
-                  continue
-              try:
-                  tail_b64 = gzip.decompress(compressed).decode('ascii')
-              except Exception:
-                  continue
-              package = verify_package(head_b64 + ''.join(tail_b64.split()))
-              if package is not None:
-                  selected = ('continuous-gzip-base64', labels)
-                  break
-
-          # Strategy 2: each file Base64-encodes a sequential binary slice of one gzip stream.
-          if package is None:
-              for combo in itertools.product(*variant_sets):
-                  labels = [item[0] for item in combo]
-                  decoded = [decode_b64(item[1]) for item in combo]
-                  if any(item is None for item in decoded):
-                      continue
-                  try:
-                      tail_b64 = gzip.decompress(b''.join(decoded)).decode('ascii')
-                  except Exception:
-                      continue
-                  package = verify_package(head_b64 + ''.join(tail_b64.split()))
-                  if package is not None:
-                      selected = ('separate-base64-binary-slices', labels)
-                      break
-
-          # Strategy 3: files directly contain sequential slices of the package Base64 tail.
-          if package is None:
-              for combo in itertools.product(*variant_sets):
-                  labels = [item[0] for item in combo]
-                  package = verify_package(head_b64 + ''.join(item[1] for item in combo))
-                  if package is not None:
-                      selected = ('direct-package-base64-tail', labels)
-                      break
-
-          if package is None:
-              raise SystemExit('No transport reconstruction candidate matched the exact package size and SHA-256')
-
-          digest = hashlib.sha256(package).hexdigest()
-          print(f'RECONSTRUCTION_STRATEGY={selected[0]}')
-          print('RECONSTRUCTION_VARIANTS=' + ','.join(selected[1]))
-          print(f'RECONSTRUCTED_PACKAGE_SIZE={len(package)}')
-          print(f'RECONSTRUCTED_PACKAGE_SHA256={digest}')
-
-          files: dict[str, bytes] = {}
-          with zipfile.ZipFile(io.BytesIO(package)) as archive:
+          staging = Path(tempfile.mkdtemp(prefix='ua-free-content-tool-', dir=os.environ['RUNNER_TEMP']))
+          with zipfile.ZipFile(package) as archive:
               bad = archive.testzip()
               if bad is not None:
                   raise SystemExit(f'ZIP CRC failed: {bad}')
+
               infos = archive.infolist()
               names = [info.filename for info in infos]
               if len(names) != len(set(names)):
                   raise SystemExit('Duplicate ZIP member names detected')
+
               roots = {name.split('/', 1)[0] for name in names if name}
               if roots != {'ua-free-content-tool'}:
                   raise SystemExit(f'Unexpected canonical root: {sorted(roots)}')
+
+              file_count = 0
               for info in infos:
                   name = info.filename
                   pure = PurePosixPath(name)
@@ -203,14 +96,15 @@ jobs:
                       raise SystemExit(f'Unsafe ZIP path: {name}')
                   if stat.S_ISLNK(mode):
                       raise SystemExit(f'Symlink is not allowed: {name}')
-                  if info.is_dir():
-                      continue
-                  relative = pure.relative_to('ua-free-content-tool').as_posix()
-                  files[relative] = archive.read(info)
+                  if not info.is_dir():
+                      file_count += 1
 
-          if len(files) != 123:
-              raise SystemExit(f'Unexpected file count: {len(files)} != 123')
+              if file_count != 123:
+                  raise SystemExit(f'Unexpected file count: {file_count} != 123')
 
+              archive.extractall(staging)
+
+          source = staging / 'ua-free-content-tool'
           required = {
               'content_agent/main.py',
               'content_agent/ui/main_window.py',
@@ -220,106 +114,84 @@ jobs:
               'README.md',
               '.github/workflows/release.yml',
           }
-          missing = sorted(required - set(files))
+          missing = sorted(path for path in required if not (source / path).is_file())
           if missing:
               raise SystemExit(f'Required files missing from package: {missing}')
 
-          readme_object = request('GET', '/contents/README.md?ref=main')
-          current_readme = base64.b64decode(readme_object['content']).decode('utf-8')
-          final_readme = re.sub(
-              r'<!-- DEPLOYMENT_WARNING_START -->.*?<!-- DEPLOYMENT_WARNING_END -->\s*',
-              '',
-              current_readme,
-              flags=re.DOTALL,
-          ).strip() + '\n'
-          files['README.md'] = final_readme.encode('utf-8')
-          files['README_UA.md'] = final_readme.encode('utf-8')
-
-          manifest_lines = []
-          for path in sorted(files):
-              if path == 'FILE_MANIFEST.sha256':
-                  continue
-              manifest_lines.append(f"{hashlib.sha256(files[path]).hexdigest()}  {path}")
-          files['FILE_MANIFEST.sha256'] = ('\n'.join(manifest_lines) + '\n').encode('utf-8')
-
-          forbidden_exact = {
-              '.env', 'config.portable', 'portable.key',
-              'content_agent.sqlite3', 'instance.lock',
-          }
-          forbidden_suffixes = {
-              '.db', '.sqlite', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm',
-              '.log', '.token', '.secret', '.pem', '.p12', '.pfx', '.pyc',
-          }
           forbidden = []
-          for path in files:
-              pure = PurePosixPath(path)
-              name = pure.name.lower()
-              if pure.parts and pure.parts[0] == 'Data':
-                  forbidden.append(path)
-              elif '__pycache__' in pure.parts or '.pytest_cache' in pure.parts:
-                  forbidden.append(path)
-              elif name in forbidden_exact or any(name.endswith(s) for s in forbidden_suffixes):
-                  forbidden.append(path)
+          for path in source.rglob('*'):
+              if not path.is_file():
+                  continue
+              relative = path.relative_to(source)
+              parts = relative.parts
+              lower_name = relative.name.lower()
+              if parts and parts[0] == 'Data':
+                  forbidden.append(relative.as_posix())
+              if '__pycache__' in parts or '.pytest_cache' in parts:
+                  forbidden.append(relative.as_posix())
+              if lower_name in {'.env', 'config.portable', 'portable.key', 'instance.lock'}:
+                  forbidden.append(relative.as_posix())
+              if lower_name.endswith(('.db', '.sqlite', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm', '.log', '.pyc', '.pem', '.p12', '.pfx')):
+                  forbidden.append(relative.as_posix())
           if forbidden:
-              raise SystemExit('Forbidden runtime or secret files: ' + ', '.join(sorted(forbidden)))
+              raise SystemExit('Forbidden runtime or secret files: ' + ', '.join(sorted(set(forbidden))))
 
-          tree = []
-          for index, path in enumerate(sorted(files), start=1):
-              content = files[path]
-              blob = request(
-                  'POST',
-                  '/git/blobs',
-                  {
-                      'content': base64.b64encode(content).decode('ascii'),
-                      'encoding': 'base64',
-                  },
-              )
-              tree.append({
-                  'path': path,
-                  'mode': '100755' if path.endswith('.bat') else '100644',
-                  'type': 'blob',
-                  'sha': blob['sha'],
-              })
-              if index % 20 == 0 or index == len(files):
-                  print(f'Created {index}/{len(files)} blobs')
+          # Replace the temporary repository tree completely, but never touch .git.
+          for child in workspace.iterdir():
+              if child.name == '.git':
+                  continue
+              if child.is_dir():
+                  shutil.rmtree(child)
+              else:
+                  child.unlink()
 
-          tree_result = request('POST', '/git/trees', {'tree': tree})
-          current_ref = request('GET', '/git/ref/heads/main')
-          parent = current_ref['object']['sha']
-          commit = request(
-              'POST',
-              '/git/commits',
-              {
-                  'message': 'Deploy complete UA FREE Content Tool v1.0.0 source',
-                  'tree': tree_result['sha'],
-                  'parents': [parent],
-              },
+          for child in source.iterdir():
+              destination = workspace / child.name
+              if child.is_dir():
+                  shutil.copytree(child, destination)
+              else:
+                  shutil.copy2(child, destination)
+
+          # Keep the detailed Ukrainian repository overview already prepared in main.
+          (workspace / 'README.md').write_text(final_readme, encoding='utf-8', newline='\n')
+          (workspace / 'README_UA.md').write_text(final_readme, encoding='utf-8', newline='\n')
+
+          # Rebuild manifest after the README replacement.
+          manifest = []
+          for path in sorted(workspace.rglob('*')):
+              if not path.is_file() or '.git' in path.parts:
+                  continue
+              relative = path.relative_to(workspace).as_posix()
+              if relative == 'FILE_MANIFEST.sha256':
+                  continue
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              manifest.append(f'{digest}  {relative}')
+          (workspace / 'FILE_MANIFEST.sha256').write_text(
+              '\n'.join(manifest) + '\n', encoding='ascii', newline='\n'
           )
-          request('PATCH', '/git/refs/heads/main', {'sha': commit['sha'], 'force': False})
 
-          tag_result = request(
-              'POST',
-              '/git/refs',
-              {'ref': 'refs/tags/v1.0.0', 'sha': commit['sha']},
-              allow_status=(422,),
-          )
-          if isinstance(tag_result, dict) and tag_result.get('status') == 422:
-              print('Tag v1.0.0 already exists; leaving it unchanged')
-
-          print(f'DEPLOYED_COMMIT={commit["sha"]}')
-          print(f'DEPLOYED_FILES={len(files)}')
-          print(f'PACKAGE_SHA256={digest}')
-
-          try:
-              request(
-                  'POST',
-                  '/actions/workflows/release.yml/dispatches',
-                  {
-                      'ref': 'main',
-                      'inputs': {'version': '1.0.0', 'prerelease': 'false'},
-                  },
-              )
-              print('RELEASE_WORKFLOW_DISPATCH_REQUESTED=true')
-          except Exception as exc:
-              print(f'RELEASE_WORKFLOW_DISPATCH_WARNING={exc}')
+          final_files = [p for p in workspace.rglob('*') if p.is_file() and '.git' not in p.parts]
+          if len(final_files) != 123:
+              raise SystemExit(f'Final repository file count mismatch: {len(final_files)} != 123')
+          print(f'FINAL_FILES={len(final_files)}')
           PY
+
+      - name: Commit clean full source tree to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Deploy complete UA FREE Content Tool v1.0.0 source"
+          git push origin HEAD:main
+
+      - name: Start Windows release workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --ref main -f version=1.0.0 -f prerelease=false
+          echo "Release workflow dispatched."
