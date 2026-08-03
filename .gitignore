@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+.venv-*/
+
+# Build output
+build/
+Release/
+dist/
+*.spec
+
+# Portable/private runtime data
+Data/
+config.portable
+portable.key
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.log
+instance.lock
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local credentials and exports
+.env
+.env.*
+*.token
+*.secret
+*.pem
+*.p12
+*.pfx

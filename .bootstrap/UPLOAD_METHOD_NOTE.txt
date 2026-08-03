@@ -1,1 +1,0 @@
-Connector-native staged upload in progress.

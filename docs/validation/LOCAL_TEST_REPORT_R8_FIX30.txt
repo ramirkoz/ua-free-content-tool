@@ -1,0 +1,13 @@
+UA FREE Content Tool R8 FIX30 — LOCAL TEST REPORT
+
+compileall: PASS
+pytest: 223 passed
+FIX30 explicit Shift+click range selection: PASS
+FIX30 English/non-news rewrite guard: PASS
+FIX30 source-grounded retry after invalid output: PASS
+FIX30 speculative commentary rejection: PASS
+Database schema: unchanged (7)
+Program-only compatibility with FIX29 Data: PASS by design and regression tests
+Windows Gate: NOT TESTED in this environment
+Live Ollama gate: NOT TESTED
+Live platform gate: NOT TESTED

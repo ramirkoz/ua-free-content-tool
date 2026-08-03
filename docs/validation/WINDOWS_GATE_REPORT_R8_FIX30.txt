@@ -1,0 +1,328 @@
+UA FREE Content Tool R8 FIX30 — WINDOWS GATE
+REPORT_STATUS: RUNNING
+Python runner: 3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+OS: nt / win32
+Administrative token: False
+WINDOWS_OS: PASS | win32
+RUN_WITHOUT_ADMIN: PASS | Запускати звичайним подвійним кліком
+SOURCE_ZIP_EXISTS: PASS | C:\Users\user\Desktop\UA_FREE_Content_Tool_R8_WINDOWS_GATE_FIX30\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30_source.zip
+SOURCE_ZIP_SHA256: PASS | cee2ab21a129661fdc242ccdfd521ca774738dfca36ec5197aaff74eba6811ac
+ZIP_CRC_AND_SAFE_EXTRACTION: PASS
+CYRILLIC_AND_SPACE_PATH: PASS | C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30
+PYTHON_VERSION_3_11_TO_3_13: PASS | (3, 12)
+
+COMMAND: C:\Users\user\AppData\Local\Programs\Python\Python312\python.exe -m venv "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate"
+EXIT_CODE: 0
+CREATE_TEST_VENV: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pip install --disable-pip-version-check --no-input -r requirements-build.txt
+Collecting cryptography==46.0.4 (from -r C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\requirements.txt (line 1))
+  Using cached cryptography-46.0.4-cp311-abi3-win_amd64.whl.metadata (5.7 kB)
+Collecting pyinstaller==6.15.0 (from -r requirements-build.txt (line 2))
+  Using cached pyinstaller-6.15.0-py3-none-win_amd64.whl.metadata (8.4 kB)
+Collecting pytest==8.4.1 (from -r requirements-build.txt (line 3))
+  Using cached pytest-8.4.1-py3-none-any.whl.metadata (7.7 kB)
+Collecting cffi>=2.0.0 (from cryptography==46.0.4->-r C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\requirements.txt (line 1))
+  Using cached cffi-2.1.0-cp312-cp312-win_amd64.whl.metadata (2.6 kB)
+Collecting setuptools>=42.0.0 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached setuptools-83.0.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting altgraph (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached altgraph-0.17.5-py2.py3-none-any.whl.metadata (7.5 kB)
+Collecting pefile!=2024.8.26,>=2022.5.30 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached pefile-2023.2.7-py3-none-any.whl.metadata (1.4 kB)
+Collecting pywin32-ctypes>=0.2.1 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+Collecting pyinstaller-hooks-contrib>=2025.8 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached pyinstaller_hooks_contrib-2026.6-py3-none-any.whl.metadata (16 kB)
+Collecting packaging>=22.0 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached packaging-26.2-py3-none-any.whl.metadata (3.5 kB)
+Collecting colorama>=0.4 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached colorama-0.4.6-py2.py3-none-any.whl.metadata (17 kB)
+Collecting iniconfig>=1 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting pluggy<2,>=1.5 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+Collecting pygments>=2.7.2 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached pygments-2.20.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography==46.0.4->-r C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\requirements.txt (line 1))
+  Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Using cached cryptography-46.0.4-cp311-abi3-win_amd64.whl (3.5 MB)
+Using cached pyinstaller-6.15.0-py3-none-win_amd64.whl (1.4 MB)
+Using cached pytest-8.4.1-py3-none-any.whl (365 kB)
+Using cached cffi-2.1.0-cp312-cp312-win_amd64.whl (185 kB)
+Using cached colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+Using cached packaging-26.2-py3-none-any.whl (100 kB)
+Using cached pefile-2023.2.7-py3-none-any.whl (71 kB)
+Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+Using cached pygments-2.20.0-py3-none-any.whl (1.2 MB)
+Using cached pyinstaller_hooks_contrib-2026.6-py3-none-any.whl (457 kB)
+Using cached pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
+Using cached setuptools-83.0.0-py3-none-any.whl (1.0 MB)
+Using cached altgraph-0.17.5-py2.py3-none-any.whl (21 kB)
+Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+Installing collected packages: altgraph, setuptools, pywin32-ctypes, pygments, pycparser, pluggy, pefile, packaging, iniconfig, colorama, pytest, pyinstaller-hooks-contrib, cffi, pyinstaller, cryptography
+Successfully installed altgraph-0.17.5 cffi-2.1.0 colorama-0.4.6 cryptography-46.0.4 iniconfig-2.3.0 packaging-26.2 pefile-2023.2.7 pluggy-1.6.0 pycparser-3.0 pygments-2.20.0 pyinstaller-6.15.0 pyinstaller-hooks-contrib-2026.6 pytest-8.4.1 pywin32-ctypes-0.2.3 setuptools-83.0.0
+EXIT_CODE: 0
+INSTALL_PINNED_TEST_BUILD_DEPS: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" tools/validate_artifact.py C:\Users\user\Desktop\UA_FREE_Content_Tool_R8_WINDOWS_GATE_FIX30\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30_source.zip
+PASS size=282492 sha256=cee2ab21a129661fdc242ccdfd521ca774738dfca36ec5197aaff74eba6811ac root=UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30 files=105
+EXIT_CODE: 0
+ARTIFACT_VALIDATION_ZIP: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m compileall -q .
+EXIT_CODE: 0
+COMPILEALL: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q
+........................................................................ [ 32%]
+........................................................................ [ 64%]
+........................................................................ [ 96%]
+.......                                                                  [100%]
+223 passed in 19.15s
+EXIT_CODE: 0
+PYTEST_223: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix19.py
+.........                                                                [100%]
+9 passed in 1.58s
+EXIT_CODE: 0
+R8_FIX19_PUBLICATION_SEQUENCING_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix21.py
+....                                                                     [100%]
+4 passed in 0.40s
+EXIT_CODE: 0
+R8_FIX21_QUEUE_MULTISELECT_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix26.py
+.....                                                                    [100%]
+5 passed in 0.58s
+EXIT_CODE: 0
+R8_FIX26_LIVE_FAILURE_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix27.py
+......                                                                   [100%]
+6 passed in 0.50s
+EXIT_CODE: 0
+R8_FIX27_EDITORIAL_MEMORY_AND_TOPIC_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix28.py
+......                                                                   [100%]
+6 passed in 0.50s
+EXIT_CODE: 0
+R8_FIX28_QUEUE_900_MIGRATION_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix29.py
+.........                                                                [100%]
+9 passed in 0.73s
+EXIT_CODE: 0
+R8_FIX29_EXCLUSION_AND_REWRITE_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -m pytest -q tests/test_r8_fix30.py
+.........                                                                [100%]
+9 passed in 0.12s
+EXIT_CODE: 0
+R8_FIX30_SHIFT_AND_GROUNDED_UKRAINIAN_REWRITE_GUARD: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" tools/check_entrypoint_imports.py
+PASS: content_agent.main uses package-relative internal imports
+EXIT_CODE: 0
+ENTRYPOINT_IMPORT_CHECKER: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" -c "import content_agent.main;print('IMPORT_PASS')"
+IMPORT_PASS
+EXIT_CODE: 0
+REAL_MAIN_IMPORT: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" tools/smoke_local.py
+PASS local end-to-end smoke
+EXIT_CODE: 0
+LOCAL_SMOKE: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\_fix30_ui_probe.py"
+FIX30_UI_PASS
+EXIT_CODE: 0
+FIX30_SHIFT_AND_REWRITE_UI: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\_fix30_schema_queue_probe.py"
+FIX30_SCHEMA_QUEUE_MARKER_PASS
+EXIT_CODE: 0
+FIX29_TO_FIX30_SCHEMA_QUEUE_AND_900_MARKER_PRESERVATION: PASS
+
+COMMAND: "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\.venv-windows-gate\Scripts\python.exe" "C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\_fix30_live_logic_probe.py"
+FIX30_LIVE_LOGIC_PASS
+EXIT_CODE: 0
+FIX30_REWRITE_LANGUAGE_GROUNDING_AND_EXCLUSION_PROBE: PASS
+
+COMMAND: cmd.exe /d /c Build_Portable_Windows.bat
+Collecting cryptography==46.0.4 (from -r C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\requirements.txt (line 1))
+  Using cached cryptography-46.0.4-cp311-abi3-win_amd64.whl.metadata (5.7 kB)
+Collecting pyinstaller==6.15.0 (from -r requirements-build.txt (line 2))
+  Using cached pyinstaller-6.15.0-py3-none-win_amd64.whl.metadata (8.4 kB)
+Collecting pytest==8.4.1 (from -r requirements-build.txt (line 3))
+  Using cached pytest-8.4.1-py3-none-any.whl.metadata (7.7 kB)
+Collecting cffi>=2.0.0 (from cryptography==46.0.4->-r C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\requirements.txt (line 1))
+  Using cached cffi-2.1.0-cp312-cp312-win_amd64.whl.metadata (2.6 kB)
+Collecting setuptools>=42.0.0 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached setuptools-83.0.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting altgraph (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached altgraph-0.17.5-py2.py3-none-any.whl.metadata (7.5 kB)
+Collecting pefile!=2024.8.26,>=2022.5.30 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached pefile-2023.2.7-py3-none-any.whl.metadata (1.4 kB)
+Collecting pywin32-ctypes>=0.2.1 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+Collecting pyinstaller-hooks-contrib>=2025.8 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached pyinstaller_hooks_contrib-2026.6-py3-none-any.whl.metadata (16 kB)
+Collecting packaging>=22.0 (from pyinstaller==6.15.0->-r requirements-build.txt (line 2))
+  Using cached packaging-26.2-py3-none-any.whl.metadata (3.5 kB)
+Collecting colorama>=0.4 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached colorama-0.4.6-py2.py3-none-any.whl.metadata (17 kB)
+Collecting iniconfig>=1 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting pluggy<2,>=1.5 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+Collecting pygments>=2.7.2 (from pytest==8.4.1->-r requirements-build.txt (line 3))
+  Using cached pygments-2.20.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography==46.0.4->-r C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\requirements.txt (line 1))
+  Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Using cached cryptography-46.0.4-cp311-abi3-win_amd64.whl (3.5 MB)
+Using cached pyinstaller-6.15.0-py3-none-win_amd64.whl (1.4 MB)
+Using cached pytest-8.4.1-py3-none-any.whl (365 kB)
+Using cached cffi-2.1.0-cp312-cp312-win_amd64.whl (185 kB)
+Using cached colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+Using cached packaging-26.2-py3-none-any.whl (100 kB)
+Using cached pefile-2023.2.7-py3-none-any.whl (71 kB)
+Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+Using cached pygments-2.20.0-py3-none-any.whl (1.2 MB)
+Using cached pyinstaller_hooks_contrib-2026.6-py3-none-any.whl (457 kB)
+Using cached pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
+Using cached setuptools-83.0.0-py3-none-any.whl (1.0 MB)
+Using cached altgraph-0.17.5-py2.py3-none-any.whl (21 kB)
+Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+Installing collected packages: altgraph, setuptools, pywin32-ctypes, pygments, pycparser, pluggy, pefile, packaging, iniconfig, colorama, pytest, pyinstaller-hooks-contrib, cffi, pyinstaller, cryptography
+Successfully installed altgraph-0.17.5 cffi-2.1.0 colorama-0.4.6 cryptography-46.0.4 iniconfig-2.3.0 packaging-26.2 pefile-2023.2.7 pluggy-1.6.0 pycparser-3.0 pygments-2.20.0 pyinstaller-6.15.0 pyinstaller-hooks-contrib-2026.6 pytest-8.4.1 pywin32-ctypes-0.2.3 setuptools-83.0.0
+........................................................................ [ 32%]
+........................................................................ [ 64%]
+........................................................................ [ 96%]
+.......                                                                  [100%]
+223 passed in 15.98s
+PASS: content_agent.main uses package-relative internal imports
+140 INFO: PyInstaller: 6.15.0, contrib hooks: 2026.6
+140 INFO: Python: 3.12.10
+162 INFO: Platform: Windows-11-10.0.26200-SP0
+162 INFO: Python environment: C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\.venv-build
+170 INFO: wrote build\UA_FREE_Content_Tool.spec
+171 INFO: Removing temporary files and cleaning cache in C:\Users\user\AppData\Local\pyinstaller
+180 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з '
+ 'пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Scripts\\pyinstaller.exe',
+ 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з '
+ 'пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\python312.zip',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\DLLs',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\Lib',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312',
+ 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з '
+ 'пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build',
+ 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з '
+ 'пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages',
+ 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з '
+ 'пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30']
+466 INFO: Appending 'datas' from .spec
+466 INFO: checking Analysis
+466 INFO: Building Analysis because Analysis-00.toc is non existent
+466 INFO: Running Analysis Analysis-00.toc
+466 INFO: Target bytecode optimization level: 0
+466 INFO: Initializing module dependency graph...
+468 INFO: Initializing module graph hook caches...
+501 INFO: Analyzing modules for base_library.zip ...
+1871 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+5517 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+8401 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+11232 INFO: Caching module dependency graph...
+11272 INFO: Looking for Python shared library...
+11281 INFO: Using Python shared library: C:\Users\user\AppData\Local\Programs\Python\Python312\python312.dll
+11281 INFO: Analyzing C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\app.py
+11312 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+11312 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+11786 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+11932 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+12172 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+13152 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+13334 INFO: Processing standard module hook 'hook-sqlite3.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+13790 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+13918 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+13952 INFO: Processing standard module hook 'hook-zoneinfo.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+14043 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+15322 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+15454 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+16512 INFO: Processing module hooks (post-graph stage)...
+16592 WARNING: Hidden import "tzdata" not found!
+16902 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks'
+16920 INFO: Performing binary vs. data reclassification (937 entries)
+33400 INFO: Looking for ctypes DLLs
+33411 INFO: Analyzing run-time hooks ...
+33414 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+33416 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+33416 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\Users\\user\\AppData\\Local\\Temp\\UA FREE Тест R8 FIX30\\Вихідний код з пробілами\\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\\.venv-build\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+33452 INFO: Creating base_library.zip...
+33533 INFO: Looking for dynamic libraries
+33721 INFO: Extra DLL search directories (AddDllDirectory): []
+33721 INFO: Extra DLL search directories (PATH): []
+34302 INFO: Warnings written to C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\build\pyinstaller\UA_FREE_Content_Tool\warn-UA_FREE_Content_Tool.txt
+34332 INFO: Graph cross-reference written to C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\build\pyinstaller\UA_FREE_Content_Tool\xref-UA_FREE_Content_Tool.html
+34388 INFO: checking PYZ
+34388 INFO: Building PYZ because PYZ-00.toc is non existent
+34388 INFO: Building PYZ (ZlibArchive) C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\build\pyinstaller\UA_FREE_Content_Tool\PYZ-00.pyz
+34950 INFO: Building PYZ (ZlibArchive) C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\build\pyinstaller\UA_FREE_Content_Tool\PYZ-00.pyz completed successfully.
+34972 INFO: checking PKG
+34972 INFO: Building PKG because PKG-00.toc is non existent
+34972 INFO: Building PKG (CArchive) UA_FREE_Content_Tool.pkg
+35016 INFO: Building PKG (CArchive) UA_FREE_Content_Tool.pkg completed successfully.
+35020 INFO: Bootloader C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\.venv-build\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+35020 INFO: checking EXE
+35020 INFO: Building EXE because EXE-00.toc is non existent
+35020 INFO: Building EXE from EXE-00.toc
+35020 INFO: Copying bootloader EXE to C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\build\pyinstaller\UA_FREE_Content_Tool\UA_FREE_Content_Tool.exe
+35242 INFO: Copying icon to EXE
+35360 INFO: Copying 0 resources to EXE
+35360 INFO: Embedding manifest in EXE
+35477 INFO: Appending PKG archive to EXE
+35627 INFO: Fixing EXE headers
+36131 INFO: Building EXE from EXE-00.toc completed successfully.
+36142 INFO: checking COLLECT
+36142 INFO: Building COLLECT because COLLECT-00.toc is non existent
+36142 INFO: Building COLLECT COLLECT-00.toc
+38214 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+38241 INFO: Build complete! The results are available in: C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\Release\UA_FREE_Content_Tool_R8_FIX30
+Build completed: Release\UA_FREE_Content_Tool_R8_FIX30
+EXIT_CODE: 0
+PYINSTALLER_PORTABLE_BUILD: PASS
+PORTABLE_EXE_EXISTS: PASS | C:\Users\user\AppData\Local\Temp\UA FREE Тест R8 FIX30\Вихідний код з пробілами\UA_FREE_Content_Tool_STABILIZATION_2026-07-31_R8_FIX30\Release\UA_FREE_Content_Tool_R8_FIX30\UA_FREE_Content_Tool\UA_FREE_Content_Tool.exe
+PORTABLE_MARKER_EXISTS: PASS
+CLEAN_START_MARKER_EXISTS: PASS
+PORTABLE_DATA_DIR_EXISTS: PASS
+PORTABLE_EXE_STARTS_AND_STAYS_ALIVE: PASS | pid=19080
+RELEASE_DATA_HAS_NO_IMPORTED_USER_CONTENT_AFTER_STARTUP_PROBE: PASS | runtime_files=['content_agent.sqlite3', 'instance.lock', 'logs'] counts={'sources': 0, 'news_groups': 0, 'articles': 0, 'publication_batches': 0, 'publication_targets': 0, 'content_exclusions': 0} unexpected=[] unexpected_logs=[]
+PROGRAM_ONLY_UPDATE_CREATED: PASS | files=969 sha256=a1431feb4fe610c5cd211fc7c4d4112635b434407e222f883267c0d2f365b7e7
+PROGRAM_ONLY_UPDATE_EXCLUDES_DATA_AND_SECRETS: PASS
+
+MANUAL_LIVE_CHECKS_REQUIRED:
+1. У чинній FIX29 переконатися, що публікується 0 і поточна операція завершена.
+2. Зробити повну резервну копію всієї робочої FIX29 і окрему копію для оновлення.
+3. У копії замінити лише UA_FREE_Content_Tool.exe та _internal з PROGRAM_ONLY_UPDATE. Data не чіпати.
+4. Після запуску перевірити незмінність кількості пакетів, часів, платформ, медіа, status, attempts і remote IDs.
+5. У Вхідних перевірити Shift+клік зверху вниз і знизу вгору; Delete має прибрати весь виділений діапазон після одного підтвердження.
+6. У Черзі перевірити Shift+клік без скасування або повторного запуску пакетів.
+7. Зробити рерайт тестової новини поза чергою: результат лише українською, до 900 символів, без припущень і роздумів.
+8. Повторити рерайт на короткій російськомовній новині з рекламним хвостом: промо не потрапляє в текст.
+9. Для блока з 5+ джерелами перевірити N із N і факти з кількох матеріалів.
+10. Після тестових рерайтів перевірити чергу ще раз; жоден пакет не перепланований і не видалений.
+11. Перша жива публікація FIX30 має пройти без дублювання Threads/LinkedIn та без повернення успішних targets у pending.
+AUTOMATED_WINDOWS_GATE: PASS
+FULL_WINDOWS_GATE: PENDING_MANUAL_LIVE_CHECKS
+SAFE_TO_REPLACE_ONLY_WORKING_COPY: YES_AFTER_BACKUP
+REPORT_STATUS: COMPLETE

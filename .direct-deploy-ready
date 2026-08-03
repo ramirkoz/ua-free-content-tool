@@ -1,1 +1,0 @@
-The complete tree will be committed atomically; temporary markers are excluded from the final tree.

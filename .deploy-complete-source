@@ -1,3 +1,0 @@
-Validated v1.0.0 full-source deployment trigger.
-Run: 2026-08-03T14:15:00+03:00
-Reconstruction: decode each Base64 tail segment separately before gzip concatenation.
