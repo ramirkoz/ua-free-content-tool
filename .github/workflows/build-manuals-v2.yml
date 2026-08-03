@@ -1,0 +1,373 @@
+name: Build bilingual PDF manuals
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-manuals-v2.yml
+      - docs/manuals/README.md
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-bilingual-pdf-manuals
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install document toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc libreoffice-writer fonts-noto-core fonts-dejavu-core poppler-utils
+
+      - name: Assemble English manual
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/manuals" docs/manuals
+          OUT="$RUNNER_TEMP/manuals/manual-en.md"
+          cat > "$OUT" <<'EOF'
+          ---
+          title: "UA FREE Content Tool"
+          subtitle: "Complete Installation, Configuration, Operation, Backup, and Troubleshooting Manual"
+          author: "UA FREE"
+          date: "Public version 1.0.0 / validated build R8 FIX30"
+          lang: en-US
+          ---
+
+          # Purpose of this manual
+
+          This is the complete practical manual for installing, configuring, validating, operating, backing up, moving, and troubleshooting UA FREE Content Tool on Windows 10 or Windows 11. The application interface is Ukrainian; the English manual names important Ukrainian controls together with their meaning.
+
+          > **Critical safety rule:** the working state is the complete portable application folder, especially `Data`. Never update, move, or back up only the EXE. Never separate `Data/config.portable` from `Data/portable.key`.
+
+          ## Recommended setup order
+
+          1. Download the Windows portable ZIP and `SHA256SUMS.txt` from the latest GitHub Release.
+          2. Verify SHA-256 before extraction.
+          3. Extract the complete folder to a writable local location.
+          4. Install and start Ollama and download at least one local model.
+          5. Start `UA_FREE_Content_Tool.exe` without administrator rights.
+          6. Open **Налаштування** (Settings), detect Ollama models, select the primary model, and save.
+          7. Configure one platform at a time and run its live check.
+          8. Connect Google Drive when media publishing is required.
+          9. Add and test a small source set.
+          10. Run **Перевірити всі підключення зараз** (Check all connections now).
+          11. Back up the complete application folder.
+          12. Perform one controlled live publication and verify every target status.
+
+          ## Preparation inventory
+
+          | Integration | Required material |
+          |---|---|
+          | Ollama | Running local Ollama service and an installed model |
+          | Facebook Pages | Meta App ID, App Secret, valid Facebook User Access Token, page role |
+          | Threads | Token with `threads_basic` and `threads_content_publish`; optional `threads_keyword_search` |
+          | LinkedIn | Token with `openid`, `profile`, `w_member_social` |
+          | Telegram | Bot Token, channel username or ID, administrator role, `can_post_messages` |
+          | Google Drive | Drive API enabled; OAuth Client ID of type Desktop app; Client Secret when issued |
+          | Sources | RSS URL, website URL, or public Telegram channel identifier |
+
+          # Part I — Product overview and complete editorial workflow
+          EOF
+          tail -n +2 README.md >> "$OUT"
+          printf '\n# Part II — Platform and Google Drive configuration\n\n' >> "$OUT"
+          tail -n +2 PLATFORM_SETUP.md >> "$OUT"
+          printf '\n# Part III — Portable mode, migration, backups, and moving the application\n\n' >> "$OUT"
+          tail -n +2 PORTABLE_MODE.md >> "$OUT"
+          printf '\n# Part IV — Security policy and operational boundaries\n\n' >> "$OUT"
+          tail -n +2 SECURITY_NOTES.md >> "$OUT"
+          cat >> "$OUT" <<'EOF'
+
+          # Part V — Detailed first launch
+
+          ## Verify the release
+
+          Keep the Windows ZIP and `SHA256SUMS.txt` together. In PowerShell run:
+
+          ```powershell
+          Get-FileHash .\UA_FREE_Content_Tool_v1.0.0_Windows_Portable.zip -Algorithm SHA256
+          Get-Content .\SHA256SUMS.txt
+          ```
+
+          Compare all 64 hash characters. Do not use the archive when even one character differs.
+
+          ## Choose the permanent folder
+
+          Use a writable local folder such as `C:\Tools\UA_FREE_Content_Tool`. Do not run the EXE from inside the ZIP, a browser preview, a read-only location, or a folder that is aggressively synchronized while SQLite is open.
+
+          ## Configure Ollama
+
+          Start Ollama first. `ollama list` must show at least one model. In **Налаштування → 1. Ollama і моделі**, click **Знайти моделі**, select a primary model, optionally select a different fallback model, then click **ЗБЕРЕГТИ ЗМІНИ**. The application accepts only a local loopback Ollama URL such as `http://127.0.0.1:11434`.
+
+          ## Configure integrations
+
+          Complete and validate one platform at a time. An unconfigured platform is simply unavailable as a publication target and does not block other integrations. After all required platforms are configured, use **Перевірити всі підключення зараз** and read every status row.
+
+          ## Add sources and test collection
+
+          Open **Джерела**, choose `rss`, `telegram`, or `url`, enter a human-readable name and the address, then click **Додати**. Begin with a small source set. Enabled sources are checked after startup and every five minutes.
+
+          ## Perform the first end-to-end test
+
+          Collect a small sample, select related reports with Shift/Ctrl, merge them manually, create a local rewrite, verify the final Ukrainian text and the 900-character limit, attach a non-sensitive Drive file when needed, schedule one package, and inspect **Черга** until every selected platform is successful.
+
+          # Part VI — Troubleshooting matrix
+
+          | Symptom | Likely cause | Safe action |
+          |---|---|---|
+          | Ollama is not found | Service is stopped or no model is installed | Start Ollama, run `ollama list`, repeat **Знайти моделі** |
+          | First rewrite is slow | Model cold start or model too large | Wait for preload or select a smaller model |
+          | English/Russian rewrite is rejected | Language and grounding gate worked | Re-run or improve the merged source block; do not disable the gate |
+          | Facebook pages are missing | Wrong/expired token, missing role, missing permission | Create a valid User Access Token, confirm roles, repeat **Знайти сторінки** |
+          | Threads publishes but trend search fails | Optional `threads_keyword_search` is absent | Continue publishing; add the optional permission only when required |
+          | LinkedIn token fails | Missing `w_member_social`, expired token, wrong account | Generate a new correctly scoped token |
+          | Telegram bot cannot post | Bot is not an administrator or lacks `can_post_messages` | Grant the required channel role and permission |
+          | Drive media check fails | Wrong link/type/account or missing delete access | Use the direct file link and reconnect the correct account |
+          | Status is temporarily unverified | DNS, network, or platform outage | Do not rotate tokens without explicit invalid-token evidence; retry later |
+          | Queue package is paused | Retry limit or authentication block | Correct the issue, then use **Повторити невідправлені** |
+          | Package is overdue | Application was closed at the scheduled time | Use **Перепланувати пропущені / призупинені** |
+          | Settings vanished after moving | Only part of the folder was copied | Restore the complete folder from backup |
+
+          # Part VII — First live publication checklist
+
+          - [ ] Complete portable folder backed up.
+          - [ ] Ollama and selected model available.
+          - [ ] Required sources tested.
+          - [ ] All relevant source texts included in the block.
+          - [ ] Final Ukrainian text factual and no longer than 900 characters.
+          - [ ] Media belongs to the connected Drive account and is non-sensitive.
+          - [ ] Only intended platform targets selected.
+          - [ ] Kyiv schedule verified.
+          - [ ] Connection diagnostics current.
+          - [ ] Every target status and remote ID reviewed after publication.
+
+          # Part VIII — Recovery rule
+
+          Before changing anything after a failure, close the application, copy the complete portable folder, sanitize logs, record exact target statuses and remote IDs, and change only the component proven to be faulty. Never erase the queue or replace `Data` because one platform failed.
+          EOF
+
+      - name: Assemble Ukrainian manual
+        shell: bash
+        env:
+          UA_SOURCE_REF: 7f6cebbbd7d6346818b125838318a47cc227f960
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/manuals/manual-ua.md"
+          git show "$UA_SOURCE_REF:README_UA.md" > "$RUNNER_TEMP/manuals/ua-readme.md"
+          git show "$UA_SOURCE_REF:PLATFORM_SETUP_UA.md" > "$RUNNER_TEMP/manuals/ua-platform.md"
+          git show "$UA_SOURCE_REF:PORTABLE_MODE_UA.md" > "$RUNNER_TEMP/manuals/ua-portable.md"
+          sed -i 's/FIX23/R8 FIX30/g; s/FIX28/R8 FIX30/g' "$RUNNER_TEMP/manuals/ua-platform.md"
+
+          cat > "$OUT" <<'EOF'
+          ---
+          title: "UA FREE Content Tool"
+          subtitle: "Повний посібник зі встановлення, налаштування, роботи, резервного копіювання та усунення несправностей"
+          author: "UA FREE"
+          date: "Публічна версія 1.0.0 / перевірена збірка R8 FIX30"
+          lang: uk-UA
+          ---
+
+          # Призначення посібника
+
+          Це повний практичний посібник зі встановлення, налаштування, перевірки, щоденної роботи, резервного копіювання, перенесення та відновлення UA FREE Content Tool у Windows 10 або Windows 11.
+
+          > **Критичне правило збереження даних:** робочим станом є вся портативна папка програми, насамперед `Data`. Не оновлюйте, не переносьте і не копіюйте лише EXE. Не розділяйте `Data/config.portable` та `Data/portable.key`.
+
+          ## Рекомендований порядок налаштування
+
+          1. Завантажте Windows portable ZIP і `SHA256SUMS.txt` з останнього GitHub Release.
+          2. Перевірте SHA-256 до розпакування.
+          3. Повністю розпакуйте програму в постійну папку з правом запису.
+          4. Встановіть і запустіть Ollama, завантажте щонайменше одну локальну модель.
+          5. Запустіть `UA_FREE_Content_Tool.exe` без прав адміністратора.
+          6. У **Налаштуваннях** знайдіть моделі Ollama, виберіть основну модель і збережіть зміни.
+          7. Налаштовуйте платформи по одній і виконуйте живу перевірку кожної.
+          8. Підключіть Google Drive, якщо потрібні фото або відео.
+          9. Додайте й перевірте невеликий набір джерел.
+          10. Натисніть **Перевірити всі підключення зараз**.
+          11. Створіть резервну копію всієї папки програми.
+          12. Виконайте одну контрольовану публікацію й перевірте статус кожної цілі.
+
+          ## Що підготувати
+
+          | Інтеграція | Необхідні дані |
+          |---|---|
+          | Ollama | Запущена локальна служба й установлена модель |
+          | Facebook Pages | Meta App ID, App Secret, чинний Facebook User Access Token, роль на сторінці |
+          | Threads | `threads_basic`, `threads_content_publish`; опційно `threads_keyword_search` |
+          | LinkedIn | `openid`, `profile`, `w_member_social` |
+          | Telegram | Bot Token, username/ID каналу, роль адміністратора, `can_post_messages` |
+          | Google Drive | Увімкнений Drive API, OAuth Client ID типу Desktop app, Client Secret за наявності |
+          | Джерела | RSS URL, URL сайту або публічний Telegram-канал |
+
+          # Частина I — Огляд продукту і повний редакційний процес
+          EOF
+          tail -n +2 "$RUNNER_TEMP/manuals/ua-readme.md" >> "$OUT"
+          printf '\n# Частина II — Налаштування платформ і Google Drive\n\n' >> "$OUT"
+          tail -n +2 "$RUNNER_TEMP/manuals/ua-platform.md" >> "$OUT"
+          printf '\n# Частина III — Портативний режим, міграція, резервні копії та перенесення\n\n' >> "$OUT"
+          tail -n +2 "$RUNNER_TEMP/manuals/ua-portable.md" >> "$OUT"
+          cat >> "$OUT" <<'EOF'
+
+          # Частина IV — Безпека та операційні межі
+
+          Не публікуйте реальну папку `Data`, `config.portable`, `portable.key`, SQLite/WAL/SHM, access token, App Secret, OAuth Client Secret, refresh token, приватні Drive-посилання, журнали або скриншоти із секретами й персональними даними.
+
+          Портативна конфігурація шифрується AES-GCM. Ключ зберігається поруч, щоб уся папка могла переноситися між комп’ютерами. Тому фізичний доступ до повної папки потенційно дає доступ до облікових даних. Токени не зберігаються у SQLite.
+
+          Зовнішні URL проходять мережеві перевірки. Приватні та non-global адреси відхиляються. Тимчасовий публічний доступ створюється лише до конкретного Drive-файла для Threads, а файл видаляється тільки після успіху всіх вибраних платформ.
+
+          # Частина V — Детальний перший запуск
+
+          ## Перевірте реліз
+
+          Збережіть ZIP і `SHA256SUMS.txt` разом. У PowerShell виконайте:
+
+          ```powershell
+          Get-FileHash .\UA_FREE_Content_Tool_v1.0.0_Windows_Portable.zip -Algorithm SHA256
+          Get-Content .\SHA256SUMS.txt
+          ```
+
+          Порівняйте всі 64 символи. За будь-якої відмінності архів не використовуйте.
+
+          ## Виберіть постійну папку
+
+          Використовуйте доступний для запису локальний каталог, наприклад `C:\Tools\UA_FREE_Content_Tool`. Не запускайте EXE зсередини ZIP, із браузерного preview, read-only папки або каталогу, який інтенсивно синхронізується під час роботи SQLite.
+
+          ## Налаштуйте Ollama
+
+          Запустіть Ollama. Команда `ollama list` має показати модель. У **Налаштування → 1. Ollama і моделі** натисніть **Знайти моделі**, виберіть основну й, за потреби, іншу запасну модель, потім **ЗБЕРЕГТИ ЗМІНИ**. Програма приймає лише локальну loopback-адресу на кшталт `http://127.0.0.1:11434`.
+
+          ## Налаштуйте інтеграції
+
+          Підключайте платформи по одній: введіть дані, натисніть платформну кнопку перевірки, прочитайте статус, збережіть. Неналаштована платформа просто не буде доступною як ціль і не блокує інші.
+
+          ## Додайте джерела
+
+          У вкладці **Джерела** виберіть `rss`, `telegram` або `url`, введіть зрозумілу назву й адресу, натисніть **Додати**. Почніть з невеликого набору. Увімкнені джерела перевіряються після запуску й кожні п’ять хвилин.
+
+          ## Виконайте наскрізний тест
+
+          Зберіть невелику вибірку, виділіть пов’язані матеріали через Shift/Ctrl, вручну об’єднайте, створіть рерайт, перевірте фактаж і ліміт 900 символів, за потреби додайте несекретний Drive-файл, поставте один пакет у чергу й контролюйте всі статуси.
+
+          # Частина VI — Матриця усунення несправностей
+
+          | Симптом | Імовірна причина | Безпечна дія |
+          |---|---|---|
+          | Ollama не знайдено | Службу не запущено або немає моделі | Запустіть Ollama, виконайте `ollama list`, повторіть **Знайти моделі** |
+          | Перший рерайт повільний | Холодний старт або завелика модель | Дочекайтеся підготовки або виберіть меншу модель |
+          | Англійський/російський рерайт відхилено | Спрацював мовний і фактологічний gate | Повторіть або покращте блок джерел; не вимикайте gate |
+          | Facebook-сторінки не знайдено | Невірний/прострочений токен, немає ролі/дозволів | Створіть чинний User Access Token і повторіть **Знайти сторінки** |
+          | Threads публікує, але тренди не працюють | Немає `threads_keyword_search` | Публікуйте далі; дозвіл опційний |
+          | LinkedIn не приймає токен | Немає `w_member_social`, токен прострочено | Створіть новий токен із потрібними scopes |
+          | Telegram-бот не постить | Бот не адміністратор або немає `can_post_messages` | Надайте роль і дозвіл |
+          | Drive-медіа не проходить | Невірне посилання/тип/акаунт або немає видалення | Використайте пряме посилання й перепідключіть правильний акаунт |
+          | «Тимчасово не перевірено» | DNS, мережа або збій платформи | Не міняйте токен без ознаки invalid/expired; повторіть пізніше |
+          | Пакет призупинено | Вичерпано спроби або auth-block | Усуньте причину й натисніть **Повторити невідправлені** |
+          | Пакет прострочено | Програма була закрита | Натисніть **Перепланувати пропущені / призупинені** |
+          | Після перенесення немає налаштувань | Скопійовано не всю папку | Відновіть повну папку з backup |
+
+          # Частина VII — Чекліст першої живої публікації
+
+          - [ ] Уся портативна папка скопійована в backup.
+          - [ ] Ollama та модель доступні.
+          - [ ] Джерела перевірені.
+          - [ ] Блок містить усі релевантні тексти.
+          - [ ] Фінальний український текст фактологічний і до 900 символів.
+          - [ ] Медіа належить підключеному Drive-акаунту й не є чутливим.
+          - [ ] Обрані лише потрібні платформи.
+          - [ ] Час за Києвом перевірено.
+          - [ ] Діагностика актуальна.
+          - [ ] Після публікації перевірені всі статуси й remote ID.
+
+          # Частина VIII — Правило відновлення
+
+          До будь-яких змін після збою закрийте програму, скопіюйте всю портативну папку, санітизуйте журнали, зафіксуйте точні статуси й remote ID, а потім змінюйте лише доведено несправний компонент. Не очищайте чергу й не замінюйте `Data` через помилку однієї платформи.
+          EOF
+
+      - name: Build DOCX and PDF manuals
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD="$RUNNER_TEMP/manuals"
+          pandoc "$BUILD/manual-en.md" --from=gfm --to=docx --toc --toc-depth=3 --number-sections -o "$BUILD/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.docx"
+          pandoc "$BUILD/manual-ua.md" --from=gfm --to=docx --toc --toc-depth=3 --number-sections -o "$BUILD/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.docx"
+          rm -f docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf
+          libreoffice --headless --convert-to pdf --outdir docs/manuals "$BUILD"/*.docx
+          test -s docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf
+          test -s docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf
+          EN_PAGES="$(pdfinfo docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf | awk '/^Pages:/ {print $2}')"
+          UA_PAGES="$(pdfinfo docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf | awk '/^Pages:/ {print $2}')"
+          test "$EN_PAGES" -ge 12
+          test "$UA_PAGES" -ge 12
+          echo "English pages: $EN_PAGES"
+          echo "Ukrainian pages: $UA_PAGES"
+          sha256sum docs/manuals/*.pdf
+
+      - name: Update README and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          readme = Path("README.md")
+          text = readme.read_text(encoding="utf-8")
+          start = "<!-- SETUP_MANUALS_START -->"
+          end = "<!-- SETUP_MANUALS_END -->"
+          block = """<!-- SETUP_MANUALS_START -->
+          ## Complete setup manuals
+
+          - [English: complete installation and configuration manual (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf)
+          - [Українською: повний посібник зі встановлення та налаштування (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf)
+
+          The manuals cover installation, checksum verification, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, scheduling, queue recovery, backups, migration, security, live-publication checklists, and troubleshooting.
+          <!-- SETUP_MANUALS_END -->"""
+          if start in text and end in text:
+              before, rest = text.split(start, 1)
+              _, after = rest.split(end, 1)
+              text = before.rstrip() + "\n\n" + block + "\n\n" + after.lstrip()
+          else:
+              marker = "## Bug and vulnerability reports" if "## Bug and vulnerability reports" in text else "## License"
+              text = text.replace(marker, block + "\n\n" + marker, 1)
+          readme.write_text(text, encoding="utf-8", newline="\n")
+
+          root = Path.cwd()
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+          Path("FILE_MANIFEST.sha256").write_text("\n".join(lines) + "\n", encoding="ascii", newline="\n")
+          PY
+
+      - name: Commit manuals
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md FILE_MANIFEST.sha256 docs/manuals/*.pdf
+          if git diff --cached --quiet; then
+            echo "Manuals are already current."
+            exit 0
+          fi
+          git commit -m "Add complete bilingual PDF setup manuals"
+          git push origin HEAD:main
