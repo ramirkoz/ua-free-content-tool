@@ -295,6 +295,15 @@ Automated Windows Gate validation does not replace live testing with real platfo
 - [docs/validation/LOCAL_REVALIDATION_REPORT_R8_FIX30.md](docs/validation/LOCAL_REVALIDATION_REPORT_R8_FIX30.md) — local revalidation.
 - [docs/validation/WINDOWS_GATE_SUMMARY_R8_FIX30.md](docs/validation/WINDOWS_GATE_SUMMARY_R8_FIX30.md) — English Windows Gate summary.
 
+<!-- SETUP_MANUALS_START -->
+## Complete setup manuals
+
+- [English: complete installation and configuration manual (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf)
+- [Українською: повний посібник зі встановлення та налаштування (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf)
+
+The manuals cover installation, checksum verification, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, scheduling, queue recovery, backups, migration, security, live-publication checklists, and troubleshooting.
+<!-- SETUP_MANUALS_END -->
+
 ## Bug and vulnerability reports
 
 A GitHub Issue should include the application version, Windows version, Ollama model, reproduction steps, expected result, actual result, and a sanitized log excerpt.
