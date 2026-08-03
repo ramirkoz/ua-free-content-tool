@@ -1,4 +1,4 @@
-name: Bootstrap validated public source
+name: Deploy validated UA FREE Content Tool source
 
 on:
   push:
@@ -11,40 +11,45 @@ permissions:
   actions: write
 
 concurrency:
-  group: bootstrap-v1.0.0
+  group: deploy-validated-v1.0.0
   cancel-in-progress: false
 
 jobs:
-  bootstrap:
+  deploy:
     runs-on: ubuntu-latest
     env:
-      PACKAGE_URL: https://filebin.net/uafree-content-tool-20260802-fix30-4f9c1ab7/UA_FREE_Content_Tool_v1.0.0_GitHub_Repository_Package.zip
+      PACKAGE_B64: .bootstrap/package.b64.00
+      PACKAGE_ZIP: /tmp/ua-free-content-tool-repository-package.zip
       PACKAGE_SHA256: a18f8833fa8c586974537d38d0484e922e42da9b95c001c6c8240df368f8e825
+      PACKAGE_SIZE: '294609'
       GH_TOKEN: ${{ github.token }}
+
     steps:
-      - name: Checkout bootstrap repository
+      - name: Checkout transport commit
         uses: actions/checkout@v4
 
-      - name: Download and verify repository package
+      - name: Reconstruct and verify validated package
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 5 --retry-all-errors --retry-delay 5 \
-            "$PACKAGE_URL" -o /tmp/repository-package.zip
-          echo "$PACKAGE_SHA256  /tmp/repository-package.zip" | sha256sum -c -
+          test -s "$PACKAGE_B64"
+          tr -d '\r\n\t ' < "$PACKAGE_B64" | base64 --decode > "$PACKAGE_ZIP"
+          test "$(stat -c '%s' "$PACKAGE_ZIP")" = "$PACKAGE_SIZE"
+          echo "$PACKAGE_SHA256  $PACKAGE_ZIP" | sha256sum -c -
 
-      - name: Validate ZIP and extract exact repository root
+      - name: Validate ZIP structure and extract
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/ua-free-content-tool-package
+          mkdir -p /tmp/ua-free-content-tool-package
           python - <<'PY'
           from pathlib import Path, PurePosixPath
           import stat
           import zipfile
 
-          archive = Path('/tmp/repository-package.zip')
-          destination = Path('/tmp/repository-package')
-          destination.mkdir(parents=True, exist_ok=True)
+          archive = Path('/tmp/ua-free-content-tool-repository-package.zip')
+          destination = Path('/tmp/ua-free-content-tool-package')
 
           with zipfile.ZipFile(archive) as zf:
               names = zf.namelist()
@@ -65,17 +70,18 @@ jobs:
                       raise SystemExit(f'Symlink is not allowed: {name}')
               zf.extractall(destination)
           PY
-          test -f /tmp/repository-package/ua-free-content-tool/README.md
-          test -f /tmp/repository-package/ua-free-content-tool/content_agent/main.py
+          test -f /tmp/ua-free-content-tool-package/ua-free-content-tool/content_agent/main.py
+          test -f /tmp/ua-free-content-tool-package/ua-free-content-tool/tests/test_r8_fix30.py
+          test -f /tmp/ua-free-content-tool-package/ua-free-content-tool/FILE_MANIFEST.sha256
 
-      - name: Replace repository tree with validated package
+      - name: Replace repository with exact validated source tree
         shell: bash
         run: |
           set -euo pipefail
           rsync -a --delete --exclude='.git/' \
-            /tmp/repository-package/ua-free-content-tool/ ./
+            /tmp/ua-free-content-tool-package/ua-free-content-tool/ ./
 
-      - name: Verify manifest and private-data exclusions
+      - name: Verify manifest and public-source boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -89,7 +95,7 @@ jobs:
           }
           forbidden_suffixes = {
               '.db', '.sqlite', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm',
-              '.log', '.token', '.secret', '.pem', '.p12', '.pfx'
+              '.log', '.token', '.secret', '.pem', '.p12', '.pfx', '.pyc'
           }
           failures = []
           for path in Path('.').rglob('*'):
@@ -97,10 +103,12 @@ jobs:
                   continue
               rel = path.as_posix()
               name = path.name.lower()
-              if rel.startswith('Data/') or name in forbidden_exact or any(name.endswith(s) for s in forbidden_suffixes):
+              if rel.startswith('Data/') or '__pycache__' in path.parts or '.pytest_cache' in path.parts:
+                  failures.append(rel)
+              elif name in forbidden_exact or any(name.endswith(s) for s in forbidden_suffixes):
                   failures.append(rel)
           if failures:
-              raise SystemExit('Private runtime files detected: ' + ', '.join(failures))
+              raise SystemExit('Forbidden runtime or cache files detected: ' + ', '.join(failures))
           PY
 
       - name: Revalidate source
@@ -113,19 +121,18 @@ jobs:
           python tools/check_entrypoint_imports.py
           python -c "import content_agent.main"
 
-      - name: Commit complete public source tree
+      - name: Commit complete product tree
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/workflows/bootstrap-source.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
-          git commit -m 'Release UA FREE Content Tool v1.0.0 source'
+          git commit -m 'Deploy complete UA FREE Content Tool v1.0.0 source'
           git push origin main
 
-      - name: Dispatch Windows build and GitHub Release
+      - name: Dispatch Windows release build
         shell: bash
         run: |
           set -euo pipefail
@@ -136,5 +143,5 @@ jobs:
             fi
             sleep 10
           done
-          echo 'Source was published, but release workflow dispatch failed.' >&2
+          echo 'Complete source was published, but release workflow dispatch failed.' >&2
           exit 1
