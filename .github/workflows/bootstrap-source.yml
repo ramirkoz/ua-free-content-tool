@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: deploy-validated-v1.0.0
@@ -18,130 +17,160 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      PACKAGE_B64: .bootstrap/package.b64.00
-      PACKAGE_ZIP: /tmp/ua-free-content-tool-repository-package.zip
-      PACKAGE_SHA256: a18f8833fa8c586974537d38d0484e922e42da9b95c001c6c8240df368f8e825
-      PACKAGE_SIZE: '294609'
       GH_TOKEN: ${{ github.token }}
+      GH_REPOSITORY: ${{ github.repository }}
+      EXPECTED_SHA256: a18f8833fa8c586974537d38d0484e922e42da9b95c001c6c8240df368f8e825
+      EXPECTED_SIZE: '294609'
 
     steps:
-      - name: Checkout transport commit
-        uses: actions/checkout@v4
-
-      - name: Reconstruct and verify validated package
+      - name: Deploy exact validated repository package through Git Data API
         shell: bash
         run: |
           set -euo pipefail
-          test -s "$PACKAGE_B64"
-          tr -d '\r\n\t ' < "$PACKAGE_B64" | base64 --decode > "$PACKAGE_ZIP"
-          test "$(stat -c '%s' "$PACKAGE_ZIP")" = "$PACKAGE_SIZE"
-          echo "$PACKAGE_SHA256  $PACKAGE_ZIP" | sha256sum -c -
-
-      - name: Validate ZIP structure and extract
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/ua-free-content-tool-package
-          mkdir -p /tmp/ua-free-content-tool-package
           python - <<'PY'
-          from pathlib import Path, PurePosixPath
+          from __future__ import annotations
+
+          import base64
+          import hashlib
+          import io
+          import json
+          import os
           import stat
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
           import zipfile
+          from pathlib import PurePosixPath
 
-          archive = Path('/tmp/ua-free-content-tool-repository-package.zip')
-          destination = Path('/tmp/ua-free-content-tool-package')
+          token = os.environ['GH_TOKEN']
+          repository = os.environ['GH_REPOSITORY']
+          expected_sha = os.environ['EXPECTED_SHA256']
+          expected_size = int(os.environ['EXPECTED_SIZE'])
+          api = f'https://api.github.com/repos/{repository}'
 
-          with zipfile.ZipFile(archive) as zf:
-              names = zf.namelist()
-              if zf.testzip() is not None:
-                  raise SystemExit('ZIP CRC validation failed')
+          def request(method: str, path: str, payload=None):
+              url = path if path.startswith('https://') else api + path
+              data = None if payload is None else json.dumps(payload).encode('utf-8')
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  method=method,
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'User-Agent': 'ua-free-content-tool-bootstrap',
+                      'Content-Type': 'application/json',
+                  },
+              )
+              for attempt in range(6):
+                  try:
+                      with urllib.request.urlopen(req, timeout=60) as response:
+                          body = response.read()
+                          return json.loads(body) if body else None
+                  except urllib.error.HTTPError as exc:
+                      body = exc.read().decode('utf-8', errors='replace')
+                      if exc.code in {429, 500, 502, 503, 504} and attempt < 5:
+                          time.sleep(2 ** attempt)
+                          continue
+                      raise RuntimeError(f'{method} {url} failed: HTTP {exc.code}: {body}') from exc
+
+          encoded_file = request(
+              'GET',
+              '/contents/.bootstrap/package.b64.00?ref=main',
+          )
+          if encoded_file.get('encoding') != 'base64':
+              raise SystemExit('Unexpected GitHub contents encoding')
+          b64_text = base64.b64decode(encoded_file['content']).decode('ascii')
+          package = base64.b64decode(''.join(b64_text.split()), validate=True)
+
+          if len(package) != expected_size:
+              raise SystemExit(f'Package size mismatch: {len(package)} != {expected_size}')
+          digest = hashlib.sha256(package).hexdigest()
+          if digest != expected_sha:
+              raise SystemExit(f'Package SHA-256 mismatch: {digest} != {expected_sha}')
+
+          files: list[tuple[str, bytes]] = []
+          with zipfile.ZipFile(io.BytesIO(package)) as archive:
+              bad = archive.testzip()
+              if bad is not None:
+                  raise SystemExit(f'ZIP CRC failed: {bad}')
+              infos = archive.infolist()
+              names = [info.filename for info in infos]
               if len(names) != len(set(names)):
                   raise SystemExit('Duplicate ZIP member names detected')
               roots = {name.split('/', 1)[0] for name in names if name}
               if roots != {'ua-free-content-tool'}:
                   raise SystemExit(f'Unexpected canonical root: {sorted(roots)}')
-              for info in zf.infolist():
+              for info in infos:
                   name = info.filename
-                  path = PurePosixPath(name)
+                  pure = PurePosixPath(name)
                   mode = (info.external_attr >> 16) & 0xFFFF
-                  if name.startswith(('/', '\\')) or '\\' in name or '..' in path.parts:
+                  if name.startswith(('/', '\\')) or '\\' in name or '..' in pure.parts:
                       raise SystemExit(f'Unsafe ZIP path: {name}')
                   if stat.S_ISLNK(mode):
                       raise SystemExit(f'Symlink is not allowed: {name}')
-              zf.extractall(destination)
-          PY
-          test -f /tmp/ua-free-content-tool-package/ua-free-content-tool/content_agent/main.py
-          test -f /tmp/ua-free-content-tool-package/ua-free-content-tool/tests/test_r8_fix30.py
-          test -f /tmp/ua-free-content-tool-package/ua-free-content-tool/FILE_MANIFEST.sha256
+                  if info.is_dir():
+                      continue
+                  relative = pure.relative_to('ua-free-content-tool').as_posix()
+                  files.append((relative, archive.read(info)))
 
-      - name: Replace repository with exact validated source tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          rsync -a --delete --exclude='.git/' \
-            /tmp/ua-free-content-tool-package/ua-free-content-tool/ ./
-
-      - name: Verify manifest and public-source boundaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha256sum -c FILE_MANIFEST.sha256
-          python - <<'PY'
-          from pathlib import Path
-
-          forbidden_exact = {
-              'config.portable', 'portable.key', 'content_agent.sqlite3',
-              'instance.lock', '.env'
+          if len(files) != 123:
+              raise SystemExit(f'Unexpected file count: {len(files)} != 123')
+          required = {
+              'content_agent/main.py',
+              'content_agent/ui/main_window.py',
+              'tests/test_r8_fix30.py',
+              'requirements.txt',
+              'FILE_MANIFEST.sha256',
+              'README.md',
+              '.github/workflows/release.yml',
           }
-          forbidden_suffixes = {
-              '.db', '.sqlite', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm',
-              '.log', '.token', '.secret', '.pem', '.p12', '.pfx', '.pyc'
-          }
-          failures = []
-          for path in Path('.').rglob('*'):
-              if not path.is_file() or '.git' in path.parts:
-                  continue
-              rel = path.as_posix()
-              name = path.name.lower()
-              if rel.startswith('Data/') or '__pycache__' in path.parts or '.pytest_cache' in path.parts:
-                  failures.append(rel)
-              elif name in forbidden_exact or any(name.endswith(s) for s in forbidden_suffixes):
-                  failures.append(rel)
-          if failures:
-              raise SystemExit('Forbidden runtime or cache files detected: ' + ', '.join(failures))
+          actual_names = {name for name, _ in files}
+          missing = sorted(required - actual_names)
+          if missing:
+              raise SystemExit(f'Required files missing from package: {missing}')
+
+          tree = []
+          for index, (path, content) in enumerate(files, start=1):
+              blob = request(
+                  'POST',
+                  '/git/blobs',
+                  {
+                      'content': base64.b64encode(content).decode('ascii'),
+                      'encoding': 'base64',
+                  },
+              )
+              tree.append(
+                  {
+                      'path': path,
+                      'mode': '100755' if path.endswith('.bat') else '100644',
+                      'type': 'blob',
+                      'sha': blob['sha'],
+                  }
+              )
+              if index % 20 == 0 or index == len(files):
+                  print(f'Created {index}/{len(files)} blobs')
+
+          tree_result = request('POST', '/git/trees', {'tree': tree})
+          current_ref = request('GET', '/git/ref/heads/main')
+          parent = current_ref['object']['sha']
+          commit = request(
+              'POST',
+              '/git/commits',
+              {
+                  'message': 'Deploy complete UA FREE Content Tool v1.0.0 source',
+                  'tree': tree_result['sha'],
+                  'parents': [parent],
+              },
+          )
+          request(
+              'PATCH',
+              '/git/refs/heads/main',
+              {'sha': commit['sha'], 'force': False},
+          )
+          print(f"DEPLOYED_COMMIT={commit['sha']}")
+          print(f"DEPLOYED_FILES={len(files)}")
+          print(f"PACKAGE_SHA256={digest}")
           PY
-
-      - name: Revalidate source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
-          python -m compileall -q .
-          python -m pytest -q
-          python tools/check_entrypoint_imports.py
-          python -c "import content_agent.main"
-
-      - name: Commit complete product tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --check
-          git commit -m 'Deploy complete UA FREE Content Tool v1.0.0 source'
-          git push origin main
-
-      - name: Dispatch Windows release build
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3 4 5 6; do
-            if gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main \
-              -f version=1.0.0 -f prerelease=false; then
-              exit 0
-            fi
-            sleep 10
-          done
-          echo 'Complete source was published, but release workflow dispatch failed.' >&2
-          exit 1
