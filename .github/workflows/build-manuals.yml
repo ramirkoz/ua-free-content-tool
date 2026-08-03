@@ -1,0 +1,135 @@
+name: Build setup manuals
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/build_setup_manuals.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-setup-manuals
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install document toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer fonts-noto-core fonts-dejavu-core poppler-utils
+          python -m pip install --disable-pip-version-check python-docx
+
+      - name: Generate bilingual DOCX sources
+        shell: bash
+        env:
+          UA_FREE_MANUAL_BUILD_DIR: ${{ runner.temp }}/ua-free-manuals
+        run: |
+          set -euo pipefail
+          python tools/build_setup_manuals.py
+
+      - name: Convert manuals to PDF
+        shell: bash
+        env:
+          UA_FREE_MANUAL_BUILD_DIR: ${{ runner.temp }}/ua-free-manuals
+        run: |
+          set -euo pipefail
+          mkdir -p docs/manuals
+          rm -f docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf
+          rm -f docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf
+          libreoffice --headless --convert-to pdf --outdir docs/manuals "$UA_FREE_MANUAL_BUILD_DIR"/*.docx
+          test -s docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf
+          test -s docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf
+          test "$(pdfinfo docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf | awk '/^Pages:/ {print $2}')" -ge 10
+          test "$(pdfinfo docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf | awk '/^Pages:/ {print $2}')" -ge 10
+          sha256sum docs/manuals/*.pdf
+
+      - name: Add manual links to the main README
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          from pathlib import Path
+
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          start = "<!-- SETUP_MANUALS_START -->"
+          end = "<!-- SETUP_MANUALS_END -->"
+          block = """<!-- SETUP_MANUALS_START -->
+          ## Complete setup manuals
+
+          - [English: complete installation and configuration manual (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf)
+          - [Українською: повний посібник зі встановлення та налаштування (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf)
+
+          The manuals cover portable installation, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, queue recovery, backups, migration, security, and troubleshooting.
+          <!-- SETUP_MANUALS_END -->"""
+
+          if start in text and end in text:
+              before, rest = text.split(start, 1)
+              _, after = rest.split(end, 1)
+              text = before.rstrip() + "\n\n" + block + "\n\n" + after.lstrip()
+          else:
+              marker = "## Bug and vulnerability reports"
+              if marker not in text:
+                  marker = "## License"
+              if marker in text:
+                  text = text.replace(marker, block + "\n\n" + marker, 1)
+              else:
+                  text = text.rstrip() + "\n\n" + block + "\n"
+          path.write_text(text, encoding="utf-8", newline="\n")
+          '@ | python -
+
+      - name: Refresh repository manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          from pathlib import Path
+          import hashlib
+
+          root = Path.cwd()
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+
+          (root / "FILE_MANIFEST.sha256").write_text(
+              "\n".join(lines) + "\n",
+              encoding="ascii",
+              newline="\n",
+          )
+          '@ | python -
+
+      - name: Commit generated manuals
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md FILE_MANIFEST.sha256 docs/manuals/*.pdf
+          if git diff --cached --quiet; then
+            echo "Manual PDFs are already current."
+            exit 0
+          fi
+          git commit -m "Add complete bilingual setup manuals"
+          git push origin HEAD:main
