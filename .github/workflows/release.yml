@@ -31,6 +31,42 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Refresh repository manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          from pathlib import Path
+          import hashlib
+
+          root = Path.cwd()
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+
+          (root / "FILE_MANIFEST.sha256").write_text(
+              "\n".join(lines) + "\n",
+              encoding="ascii",
+              newline="\n",
+          )
+          '@ | python -
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add FILE_MANIFEST.sha256
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Refresh repository manifest"
+            git push origin HEAD:main
+          } else {
+            Write-Host "Manifest is already current."
+          }
+
       - name: Build validated portable package
         shell: cmd
         run: Build_Portable_Windows.bat
@@ -76,10 +112,11 @@ jobs:
           $portableZip = "${{ steps.assets.outputs.portable_zip }}"
           $sourceZip = "${{ steps.assets.outputs.source_zip }}"
           $checksums = "${{ steps.assets.outputs.checksums }}"
+          $head = (git rev-parse HEAD).Trim()
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag --force $tag $env:GITHUB_SHA
+          git tag --force $tag $head
           git push origin "refs/tags/$tag" --force
 
           gh release view $tag *> $null
@@ -94,8 +131,6 @@ jobs:
             )
             if ("${{ inputs.prerelease }}" -eq "true") {
               $arguments += "--prerelease"
-            } else {
-              $arguments += "--prerelease=false"
             }
             & gh @arguments
           } else {
