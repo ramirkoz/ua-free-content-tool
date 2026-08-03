@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -63,7 +65,7 @@ jobs:
           "source_zip=$sourceZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "checksums=$checksums" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Publish GitHub Release
+      - name: Publish or refresh GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,20 +73,44 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = "${{ inputs.version }}"
           $tag = "v$version"
+          $portableZip = "${{ steps.assets.outputs.portable_zip }}"
+          $sourceZip = "${{ steps.assets.outputs.source_zip }}"
+          $checksums = "${{ steps.assets.outputs.checksums }}"
 
-          $arguments = @(
-            "release", "create", $tag,
-            "${{ steps.assets.outputs.portable_zip }}",
-            "${{ steps.assets.outputs.source_zip }}",
-            "${{ steps.assets.outputs.checksums }}",
-            "--target", "main",
-            "--title", "UA FREE Content Tool v$version",
-            "--notes-file", "RELEASE_NOTES_v1.0.0.md",
-            "--latest"
-          )
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force $tag $env:GITHUB_SHA
+          git push origin "refs/tags/$tag" --force
 
-          if ("${{ inputs.prerelease }}" -eq "true") {
-            $arguments += "--prerelease"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $portableZip $sourceZip $checksums --clobber
+            $arguments = @(
+              "release", "edit", $tag,
+              "--target", "main",
+              "--title", "UA FREE Content Tool v$version",
+              "--notes-file", "RELEASE_NOTES_v1.0.0.md",
+              "--latest"
+            )
+            if ("${{ inputs.prerelease }}" -eq "true") {
+              $arguments += "--prerelease"
+            } else {
+              $arguments += "--prerelease=false"
+            }
+            & gh @arguments
+          } else {
+            $arguments = @(
+              "release", "create", $tag,
+              $portableZip,
+              $sourceZip,
+              $checksums,
+              "--target", "main",
+              "--title", "UA FREE Content Tool v$version",
+              "--notes-file", "RELEASE_NOTES_v1.0.0.md",
+              "--latest"
+            )
+            if ("${{ inputs.prerelease }}" -eq "true") {
+              $arguments += "--prerelease"
+            }
+            & gh @arguments
           }
-
-          & gh @arguments
