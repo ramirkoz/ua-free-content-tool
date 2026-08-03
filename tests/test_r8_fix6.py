@@ -141,5 +141,5 @@ def test_windows_build_marks_release_as_portable() -> None:
     build = (root / "Build_Portable_Windows.bat").read_text(encoding="utf-8-sig")
     assert "portable.flag" in build
     assert "\\Data" in build
-    assert "PORTABLE_MODE_UA.md" in build
+    assert "PORTABLE_MODE.md" in build
     assert "R8_FIX30" in build
