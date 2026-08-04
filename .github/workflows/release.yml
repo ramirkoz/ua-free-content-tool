@@ -6,7 +6,7 @@ on:
       version:
         description: Release version without the v prefix
         required: true
-        default: "1.0.0"
+        default: "1.1.0"
       prerelease:
         description: Publish as a prerelease
         required: true
@@ -30,6 +30,24 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+
+      - name: Validate release metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.version }}"
+          $publicVersion = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          $internalVersion = (Get-Content VERSION.txt -Raw).Trim()
+          $notes = "RELEASE_NOTES_v$version.md"
+          if ($publicVersion -ne $version) {
+            throw "PUBLIC_VERSION.txt contains $publicVersion, requested release is $version"
+          }
+          if ($internalVersion -ne $version) {
+            throw "VERSION.txt contains $internalVersion, requested release is $version"
+          }
+          if (-not (Test-Path $notes)) {
+            throw "Release notes not found: $notes"
+          }
 
       - name: Refresh repository manifest
         shell: pwsh
@@ -61,7 +79,7 @@ jobs:
           git add FILE_MANIFEST.sha256
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
-            git commit -m "Refresh repository manifest"
+            git commit -m "Refresh repository manifest for v${{ inputs.version }}"
             git push origin HEAD:main
           } else {
             Write-Host "Manifest is already current."
@@ -77,7 +95,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ inputs.version }}"
-          $releaseRoot = "Release\UA_FREE_Content_Tool_R8_FIX30\UA_FREE_Content_Tool"
+          $releaseRoot = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
           $portableZip = "UA_FREE_Content_Tool_v${version}_Windows_Portable.zip"
           $sourceZip = "UA_FREE_Content_Tool_v${version}_Source.zip"
           $checksums = "SHA256SUMS.txt"
@@ -109,6 +127,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = "${{ inputs.version }}"
           $tag = "v$version"
+          $notes = "RELEASE_NOTES_v$version.md"
           $portableZip = "${{ steps.assets.outputs.portable_zip }}"
           $sourceZip = "${{ steps.assets.outputs.source_zip }}"
           $checksums = "${{ steps.assets.outputs.checksums }}"
@@ -126,7 +145,7 @@ jobs:
               "release", "edit", $tag,
               "--target", "main",
               "--title", "UA FREE Content Tool v$version",
-              "--notes-file", "RELEASE_NOTES_v1.0.0.md",
+              "--notes-file", $notes,
               "--latest"
             )
             if ("${{ inputs.prerelease }}" -eq "true") {
@@ -141,7 +160,7 @@ jobs:
               $checksums,
               "--target", "main",
               "--title", "UA FREE Content Tool v$version",
-              "--notes-file", "RELEASE_NOTES_v1.0.0.md",
+              "--notes-file", $notes,
               "--latest"
             )
             if ("${{ inputs.prerelease }}" -eq "true") {
