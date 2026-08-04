@@ -136,10 +136,12 @@ def test_portable_backup_keeps_encrypted_config_and_key(
     assert [item.name for item in Database().list_sources()] == ["Portable source"]
 
 
-def test_windows_build_marks_release_as_portable() -> None:
+def test_windows_build_marks_release_as_portable_and_versioned() -> None:
     root = Path(__file__).resolve().parents[1]
     build = (root / "Build_Portable_Windows.bat").read_text(encoding="utf-8-sig")
     assert "portable.flag" in build
+    assert "clean_start.flag" in build
     assert "\\Data" in build
     assert "PORTABLE_MODE.md" in build
-    assert "R8_FIX30" in build
+    assert "PUBLIC_VERSION.txt" in build
+    assert "UA_FREE_Content_Tool_v%PUBLIC_VERSION%" in build
