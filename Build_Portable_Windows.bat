@@ -3,7 +3,12 @@ setlocal
 cd /d "%~dp0"
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
-set "TARGET=Release\UA_FREE_Content_Tool_R8_FIX30"
+
+if not exist "PUBLIC_VERSION.txt" goto missing_version
+set /p PUBLIC_VERSION=<PUBLIC_VERSION.txt
+if not defined PUBLIC_VERSION goto missing_version
+set "TARGET=Release\UA_FREE_Content_Tool_v%PUBLIC_VERSION%"
+set "BUILD_READY=.venv-build\.ready-v%PUBLIC_VERSION%"
 
 if exist "%TARGET%" goto target_exists
 
@@ -28,10 +33,10 @@ if not exist ".venv-build\Scripts\python.exe" (
   if errorlevel 1 goto failed
 )
 
-if not exist ".venv-build\.ready-stabilization-20260731-r8-fix30" (
+if not exist "%BUILD_READY%" (
   ".venv-build\Scripts\python.exe" -m pip install --disable-pip-version-check --no-input -r requirements-build.txt
   if errorlevel 1 goto failed
-  type nul > ".venv-build\.ready-stabilization-20260731-r8-fix30"
+  type nul > "%BUILD_READY%"
 )
 
 ".venv-build\Scripts\python.exe" -m compileall -q .
@@ -50,6 +55,7 @@ copy /y README.md "%TARGET%\README.md" >nul
 copy /y PLATFORM_SETUP.md "%TARGET%\PLATFORM_SETUP.md" >nul
 copy /y SECURITY_NOTES.md "%TARGET%\SECURITY_NOTES.md" >nul
 copy /y VERSION.txt "%TARGET%\VERSION.txt" >nul
+copy /y PUBLIC_VERSION.txt "%TARGET%\PUBLIC_VERSION.txt" >nul
 
 set "APP_FOLDER=%TARGET%\UA_FREE_Content_Tool"
 if not exist "%APP_FOLDER%" goto failed
@@ -64,6 +70,10 @@ exit /b 0
 :target_exists
 echo Target already exists. Move or delete it manually: %TARGET%
 exit /b 2
+
+:missing_version
+echo PUBLIC_VERSION.txt is missing or empty.
+exit /b 1
 
 :no_python
 echo Python 3.11-3.13 is required for this pinned PyInstaller build.
