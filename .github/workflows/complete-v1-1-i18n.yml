@@ -5,6 +5,7 @@ on:
     branches:
       - feature/v1.1.0-bilingual-learning-inbox
     paths:
+      - tools/prepare_v1_1_i18n_completion.py
       - tools/apply_v1_1_i18n_completion.py
       - content_agent/i18n_extra.py
       - .github/workflows/complete-v1-1-i18n.yml
@@ -12,6 +13,7 @@ on:
     branches:
       - main
     paths:
+      - tools/prepare_v1_1_i18n_completion.py
       - tools/apply_v1_1_i18n_completion.py
       - content_agent/i18n_extra.py
       - .github/workflows/complete-v1-1-i18n.yml
@@ -35,6 +37,8 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+      - name: Prepare localization migration
+        run: python tools/prepare_v1_1_i18n_completion.py
       - name: Apply localization completion
         run: python tools/apply_v1_1_i18n_completion.py
       - name: Compile
