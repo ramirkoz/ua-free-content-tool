@@ -10,6 +10,7 @@ from typing import Callable
 from ..backup import create_backup
 from ..config import AppConfig
 from ..database import Database
+from ..i18n import LocalizedMessageBox, localize_widget_tree, normalize_language, tr
 from ..ollama_client import OllamaClient
 from ..queue_migration import (
     QUEUE_900_MIGRATION_KEY,
@@ -38,6 +39,8 @@ class QueueMigrationDialog:
         self.parent = parent
         self.db = database
         self.config = config
+        self.language = normalize_language(config.ui_language)
+        self.msg = LocalizedMessageBox(lambda: self.language)
         self.candidates = {item.batch_id: item for item in candidates}
         self.order = [item.batch_id for item in candidates]
         self.on_complete = on_complete
@@ -49,7 +52,7 @@ class QueueMigrationDialog:
         self.busy = False
 
         window = self.window = tk.Toplevel(parent)
-        window.title("Разове оновлення завтрашньої черги до 900 символів")
+        window.title(self.t("Разове оновлення завтрашньої черги до 900 символів"))
         window.geometry("1180x820")
         window.minsize(900, 650)
         window.transient(parent)
@@ -120,7 +123,7 @@ class QueueMigrationDialog:
                     len(candidate.old_text),
                     candidate.limit,
                     "—",
-                    "очікує",
+                    self.t("очікує"),
                 ),
             )
 
@@ -169,10 +172,14 @@ class QueueMigrationDialog:
         )
         self.abort_button.grid(row=0, column=3, padx=(8, 0))
 
+        localize_widget_tree(window, self.language)
         if self.order:
             self.tree.selection_set(str(self.order[0]))
             self.tree.focus(str(self.order[0]))
             self._load_candidate(self.order[0])
+
+    def t(self, text: str) -> str:
+        return tr(text, self.language)
 
     @staticmethod
     def _format_schedule(value: str) -> str:
@@ -243,7 +250,7 @@ class QueueMigrationDialog:
         candidate = self.candidates[self.current_batch_id]
         draft = self.new_text.get("1.0", "end-1c").strip()
         self.count_var.set(f"{len(draft)} / {candidate.limit}")
-        warnings = critical_fact_warnings(candidate.old_text, draft) if draft else []
+        warnings = critical_fact_warnings(candidate.old_text, draft, language=self.language) if draft else []
         error = self.errors.get(self.current_batch_id, "")
         self.warning_var.set(error or "; ".join(warnings))
 
@@ -258,11 +265,12 @@ class QueueMigrationDialog:
         elif len(draft) > candidate.limit:
             state = "перевищено ліміт"
         else:
-            warnings = critical_fact_warnings(candidate.old_text, draft)
+            warnings = critical_fact_warnings(candidate.old_text, draft, language=self.language)
             state = "готово, перевірте факти" if warnings else "готово"
         values = list(self.tree.item(str(batch_id), "values"))
         values[4] = len(draft) if draft else "—"
         values[5] = state
+        values[5] = self.t(str(values[5]))
         self.tree.item(str(batch_id), values=values)
 
     def _refresh_apply_state(self) -> None:
@@ -276,7 +284,7 @@ class QueueMigrationDialog:
     def _generate_all(self) -> None:
         self._save_current()
         if not self.config.ollama_model.strip():
-            messagebox.showerror(
+            self.msg.showerror(
                 "Ollama не налаштована",
                 "У чинних налаштуваннях не вибрана основна модель Ollama. "
                 "Тексти можна скоротити вручну або спочатку повернутися до FIX26 і зберегти модель.",
@@ -300,13 +308,14 @@ class QueueMigrationDialog:
                         primary_model=self.config.ollama_model,
                         fallback_client=fallback,
                         fallback_model=self.config.ollama_fallback_model,
+                        language=self.language,
                     )
                 except QueueMigrationError as exc:
                     errors[batch_id] = str(exc)
                 self.parent.after(
                     0,
                     lambda i=index, total=len(self.order), bid=batch_id: self.status_var.set(
-                        f"Оброблено {i}/{total}: пакет #{bid}."
+                        self.t(f"Оброблено {i}/{total}: пакет #{bid}.")
                     ),
                 )
 
@@ -339,13 +348,13 @@ class QueueMigrationDialog:
             or len(self.drafts[batch_id].strip()) > self.candidates[batch_id].limit
         ]
         if invalid:
-            messagebox.showerror(
+            self.msg.showerror(
                 "Не всі тексти готові",
                 "Виправте пакети: " + ", ".join(f"#{item}" for item in invalid),
                 parent=self.window,
             )
             return
-        if not messagebox.askyesno(
+        if not self.msg.askyesno(
             "Застосувати до черги",
             "Програма спочатку створить повний backup Data, а потім однією транзакцією "
             "замінить лише тексти неопублікованих цілей. Продовжити?",
@@ -390,11 +399,11 @@ class QueueMigrationDialog:
 
     def _apply_failed(self, error: str) -> None:
         self._set_busy(False, "Оновлення не застосовано. Чинна черга залишилася без змін.")
-        messagebox.showerror("Не вдалося оновити чергу", error, parent=self.window)
+        self.msg.showerror("Не вдалося оновити чергу", error, parent=self.window)
 
     def _apply_succeeded(self, count: int, backup: str) -> None:
         self._set_busy(False, f"Оновлено пакетів: {count}. Backup: {backup}")
-        messagebox.showinfo(
+        self.msg.showinfo(
             "Чергу оновлено",
             f"Оновлено пакетів: {count}.\n\nПовний backup створено тут:\n{backup}\n\n"
             "Планувальник буде увімкнений після закриття цього вікна.",
@@ -407,7 +416,7 @@ class QueueMigrationDialog:
     def _abort(self) -> None:
         if self.busy:
             return
-        if not messagebox.askyesno(
+        if not self.msg.askyesno(
             "Закрити без змін",
             "Програма закриється, публікація не запускатиметься, а черга залишиться без змін. Продовжити?",
             parent=self.window,

@@ -29,12 +29,20 @@ class AppConfig:
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = ""
     ollama_fallback_model: str = ""
+    ui_language: str = "uk"
+    learning_enabled: bool = True
+    learning_examples_limit: int = 3
+    facebook_app_id: str = ""
+    facebook_app_secret: str = field(default="", repr=False)
+    threads_app_id: str = ""
+    threads_app_secret: str = field(default="", repr=False)
+    # Legacy shared fields are retained for encrypted-config compatibility.
     meta_app_id: str = ""
     meta_client_token: str = field(default="", repr=False)
     meta_app_secret: str = field(default="", repr=False)
     meta_user_access_token: str = field(default="", repr=False)
     meta_user_token_expires_at: str = ""
-    meta_graph_version: str = "v24.0"
+    meta_graph_version: str = "v26.0"
     facebook_pages: list[dict[str, str]] = field(default_factory=list)
     facebook_page_1_name: str = ""
     facebook_page_1_id: str = ""
@@ -67,6 +75,10 @@ class AppConfig:
     ui_font_size: int = 12
 
     def validate(self) -> None:
+        if self.ui_language not in {"uk", "en"}:
+            raise ConfigError("Application language must be uk or en.")
+        if not (1 <= int(self.learning_examples_limit) <= 12):
+            raise ConfigError("Learning examples limit must be between 1 and 12.")
         parts = urlsplit(self.ollama_base_url)
         if parts.scheme != "http" or parts.hostname not in {"127.0.0.1", "localhost", "::1"}:
             raise ConfigError("Ollama URL must be a local loopback HTTP address.")
@@ -150,6 +162,19 @@ class AppConfig:
         if set(payload) - allowed:
             raise ConfigError("Configuration contains unknown fields.")
         result = cls(**payload)
+        # Migrate the v1.0 shared Meta application into independent slots.
+        if not result.facebook_app_id:
+            result.facebook_app_id = result.meta_app_id
+        if not result.facebook_app_secret:
+            result.facebook_app_secret = result.meta_app_secret
+        if not result.threads_app_id:
+            result.threads_app_id = result.meta_app_id
+        if not result.threads_app_secret:
+            result.threads_app_secret = result.meta_app_secret
+        result.meta_app_id = result.facebook_app_id or result.threads_app_id or result.meta_app_id
+        result.meta_app_secret = (
+            result.facebook_app_secret or result.threads_app_secret or result.meta_app_secret
+        )
         if not result.facebook_pages:
             legacy_pages: list[dict[str, str]] = []
             for page_id, name, token in (
@@ -161,7 +186,7 @@ class AppConfig:
             result.facebook_pages = legacy_pages
         result.sync_legacy_facebook_slots()
         if not result.meta_graph_version:
-            result.meta_graph_version = "v24.0"
+            result.meta_graph_version = "v26.0"
         if not result.linkedin_version:
             result.linkedin_version = "202607"
         result.validate()

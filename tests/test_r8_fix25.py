@@ -59,4 +59,6 @@ def test_fix25_portable_build_marks_fresh_copies_as_clean_start() -> None:
     build = Path("Build_Portable_Windows.bat").read_text(encoding="utf-8")
 
     assert 'type nul > "%APP_FOLDER%\\clean_start.flag"' in build
-    assert 'set "TARGET=Release\\UA_FREE_Content_Tool_R8_FIX30"' in build
+    assert 'set /p PUBLIC_VERSION=<PUBLIC_VERSION.txt' in build
+    assert 'set "TARGET=Release\\UA_FREE_Content_Tool_v%PUBLIC_VERSION%"' in build
+    assert 'if not exist "%APP_FOLDER%\\Data" mkdir "%APP_FOLDER%\\Data"' in build

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Mapping, Sequence
 
 from .database import Database
+from .i18n import normalize_language, output_language_instruction
 from .ollama_client import OllamaClient, OllamaError
 from .scheduling import KYIV
 from .publication_text import (
@@ -221,7 +222,26 @@ def scan_queue_for_900_migration(
     return QueueMigrationScan(candidates=candidates, blockers=blockers)
 
 
-def build_queue_compression_prompt(text: str, limit: int) -> str:
+def build_queue_compression_prompt(text: str, limit: int, *, language: str = "uk") -> str:
+    language = normalize_language(language)
+    if language == "en":
+        return f"""
+{output_language_instruction(language)}
+You are shortening an editor-approved news text. Return only the completed text,
+without headings, explanations, JSON, or markdown.
+
+STRICT REQUIREMENTS:
+- no more than {int(limit)} characters including spaces and line breaks;
+- preserve as many verified facts as possible;
+- preserve names, positions, dates, numbers, geography, institutions, causes,
+  consequences, and the meaning of quotations;
+- add no new facts and do not change meaning or tone;
+- remove repetition, filler introductions, generic phrases, and decoration;
+- do not add a fundraising footer or source link; the application adds them.
+
+APPROVED TEXT:
+{text.strip()}
+""".strip()
     return f"""
 Ти стискаєш ВЖЕ СХВАЛЕНИЙ редактором український новинний текст.
 Поверни лише готовий текст, без заголовків, пояснень, JSON і markdown.
@@ -259,10 +279,16 @@ def compress_approved_text(
     primary_model: str,
     fallback_client: OllamaClient | None = None,
     fallback_model: str = "",
+    language: str = "uk",
 ) -> tuple[str, str, bool]:
     if not str(primary_model or "").strip():
-        raise QueueMigrationError("У налаштуваннях не вибрана основна модель Ollama.")
-    prompt = build_queue_compression_prompt(text, limit)
+        raise QueueMigrationError(
+            "No primary Ollama model is selected in Settings."
+            if normalize_language(language) == "en"
+            else "У налаштуваннях не вибрана основна модель Ollama."
+        )
+    language = normalize_language(language)
+    prompt = build_queue_compression_prompt(text, limit, language=language)
     attempts: list[tuple[OllamaClient, str, bool]] = [(primary_client, primary_model, False)]
     if fallback_client is not None and fallback_model.strip() and fallback_model.strip() != primary_model.strip():
         attempts.append((fallback_client, fallback_model.strip(), True))
@@ -283,7 +309,7 @@ def compress_approved_text(
     raise QueueMigrationError("; ".join(errors) or "Ollama не створила придатний скорочений текст.")
 
 
-def critical_fact_warnings(old_text: str, new_text: str) -> list[str]:
+def critical_fact_warnings(old_text: str, new_text: str, *, language: str = "uk") -> list[str]:
     """Flag conspicuous losses for human review without pretending to understand facts."""
 
     warnings: list[str] = []
@@ -291,12 +317,18 @@ def critical_fact_warnings(old_text: str, new_text: str) -> list[str]:
     new_numbers = set(re.findall(r"(?<!\w)\d[\d\s.,:/%-]*", new_text))
     missing_numbers = sorted(item.strip() for item in old_numbers - new_numbers if item.strip())
     if missing_numbers:
-        warnings.append("можливо втрачено числа: " + ", ".join(missing_numbers[:8]))
+        warnings.append(
+            ("numbers may be missing: " if normalize_language(language) == "en" else "можливо втрачено числа: ")
+            + ", ".join(missing_numbers[:8])
+        )
     old_acronyms = set(re.findall(r"\b[А-ЯІЇЄҐA-Z]{2,}\b", old_text))
     new_acronyms = set(re.findall(r"\b[А-ЯІЇЄҐA-Z]{2,}\b", new_text))
     missing_acronyms = sorted(old_acronyms - new_acronyms)
     if missing_acronyms:
-        warnings.append("можливо втрачено назви/абревіатури: " + ", ".join(missing_acronyms[:8]))
+        warnings.append(
+            ("names/acronyms may be missing: " if normalize_language(language) == "en" else "можливо втрачено назви/абревіатури: ")
+            + ", ".join(missing_acronyms[:8])
+        )
     return warnings
 
 

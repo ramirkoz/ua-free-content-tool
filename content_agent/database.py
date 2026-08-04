@@ -28,7 +28,7 @@ from .paths import config_path, database_path, portable_key_path
 from .security import redact_secrets, sha256_bytes
 
 UTC = timezone.utc
-DATABASE_SCHEMA_VERSION = 7
+DATABASE_SCHEMA_VERSION = 8
 
 
 class LeaseLost(RuntimeError):
@@ -374,8 +374,9 @@ class Database:
                     ai_draft_text TEXT NOT NULL DEFAULT '',
                     final_text TEXT NOT NULL,
                     headline TEXT NOT NULL DEFAULT '',
+                    language TEXT NOT NULL DEFAULT 'uk' CHECK(language IN ('uk','en')),
                     created_at TEXT NOT NULL,
-                    UNIQUE(source_fingerprint, final_text)
+                    UNIQUE(source_fingerprint, final_text, language)
                 );
                 CREATE INDEX IF NOT EXISTS idx_editorial_examples_created
                     ON editorial_examples(created_at DESC, id DESC);
@@ -388,8 +389,9 @@ class Database:
                         CHECK(decision IN ('merged','not_related')),
                     anchor_text TEXT NOT NULL,
                     candidate_text TEXT NOT NULL,
+                    language TEXT NOT NULL DEFAULT 'uk' CHECK(language IN ('uk','en')),
                     created_at TEXT NOT NULL,
-                    UNIQUE(anchor_signature, candidate_signature, decision)
+                    UNIQUE(anchor_signature, candidate_signature, decision, language)
                 );
                 CREATE INDEX IF NOT EXISTS idx_topic_feedback_created
                     ON topic_merge_feedback(created_at DESC, id DESC);
@@ -406,6 +408,18 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_content_exclusions_active
                     ON content_exclusions(active, updated_at DESC, id DESC);
+
+                CREATE TABLE IF NOT EXISTS learning_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    language TEXT NOT NULL DEFAULT 'uk' CHECK(language IN ('uk','en')),
+                    group_id INTEGER,
+                    anchor_group_id INTEGER,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_events_lookup
+                    ON learning_events(language,event_type,created_at DESC,id DESC);
 
                 CREATE TABLE IF NOT EXISTS queue_text_migrations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -440,6 +454,12 @@ class Database:
             group_columns = self._columns(db, "news_groups")
             if "ai_draft_text" not in group_columns:
                 db.execute("ALTER TABLE news_groups ADD COLUMN ai_draft_text TEXT NOT NULL DEFAULT ''")
+            editorial_columns = self._columns(db, "editorial_examples")
+            if "language" not in editorial_columns:
+                db.execute("ALTER TABLE editorial_examples ADD COLUMN language TEXT NOT NULL DEFAULT 'uk'")
+            topic_columns = self._columns(db, "topic_merge_feedback")
+            if "language" not in topic_columns:
+                db.execute("ALTER TABLE topic_merge_feedback ADD COLUMN language TEXT NOT NULL DEFAULT 'uk'")
             batch_columns = self._columns(db, "publication_batches")
             if "cleanup_error" not in batch_columns:
                 db.execute("ALTER TABLE publication_batches ADD COLUMN cleanup_error TEXT")
@@ -1155,34 +1175,58 @@ class Database:
         if cursor.rowcount != 1:
             raise KeyError(group_id)
 
-    def list_editorial_examples(self, limit: int = 500) -> list[dict[str, object]]:
+    def list_editorial_examples(
+        self,
+        limit: int = 500,
+        *,
+        language: str | None = None,
+    ) -> list[dict[str, object]]:
+        query = (
+            "SELECT id,group_id,source_text,ai_draft_text,final_text,headline,language,created_at "
+            "FROM editorial_examples"
+        )
+        params: list[object] = []
+        if language is not None:
+            query += " WHERE language=?"
+            params.append("en" if str(language).lower() == "en" else "uk")
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, int(limit)))
         with self.connect() as db:
-            rows = db.execute(
-                """
-                SELECT id,group_id,source_text,ai_draft_text,final_text,headline,created_at
-                FROM editorial_examples ORDER BY id DESC LIMIT ?
-                """,
-                (max(1, int(limit)),),
-            ).fetchall()
+            rows = db.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
-    def editorial_example_count(self) -> int:
+    def editorial_example_count(self, *, language: str | None = None) -> int:
         with self.connect() as db:
-            return int(db.execute("SELECT COUNT(*) FROM editorial_examples").fetchone()[0] or 0)
+            if language is None:
+                row = db.execute("SELECT COUNT(*) FROM editorial_examples").fetchone()
+            else:
+                row = db.execute(
+                    "SELECT COUNT(*) FROM editorial_examples WHERE language=?",
+                    ("en" if str(language).lower() == "en" else "uk",),
+                ).fetchone()
+        return int(row[0] or 0)
 
-    def record_editorial_example(self, group_id: int, *, final_text: str, headline: str) -> bool:
+    def record_editorial_example(
+        self,
+        group_id: int,
+        *,
+        final_text: str,
+        headline: str,
+        language: str = "uk",
+    ) -> bool:
         group = self.get_group(int(group_id))
         source_text = group.combined_text.strip()
         final = str(final_text or "").strip()
         if not source_text or not final:
             return False
-        fingerprint = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        lang = "en" if str(language).lower() == "en" else "uk"
+        fingerprint = hashlib.sha256(f"{lang}\0{source_text}".encode("utf-8")).hexdigest()
         with self.connect() as db:
             cursor = db.execute(
                 """
                 INSERT OR IGNORE INTO editorial_examples(
-                    group_id,source_fingerprint,source_text,ai_draft_text,final_text,headline,created_at
-                ) VALUES(?,?,?,?,?,?,?)
+                    group_id,source_fingerprint,source_text,ai_draft_text,final_text,headline,language,created_at
+                ) VALUES(?,?,?,?,?,?,?,?)
                 """,
                 (
                     int(group_id),
@@ -1191,6 +1235,7 @@ class Database:
                     group.ai_draft_text,
                     final,
                     str(headline or "").strip(),
+                    lang,
                     _iso(),
                 ),
             )
@@ -1218,6 +1263,7 @@ class Database:
         candidate_text: str,
         *,
         decision: str = "merged",
+        language: str = "uk",
     ) -> bool:
         if decision not in {"merged", "not_related"}:
             raise ValueError(decision)
@@ -1225,8 +1271,9 @@ class Database:
         right = " ".join(str(candidate_text or "").split())
         if not left or not right:
             return False
-        left_sig = hashlib.sha256(left.encode("utf-8")).hexdigest()
-        right_sig = hashlib.sha256(right.encode("utf-8")).hexdigest()
+        lang = "en" if str(language).lower() == "en" else "uk"
+        left_sig = hashlib.sha256(f"{lang}\0{left}".encode("utf-8")).hexdigest()
+        right_sig = hashlib.sha256(f"{lang}\0{right}".encode("utf-8")).hexdigest()
         if right_sig < left_sig:
             left_sig, right_sig = right_sig, left_sig
             left, right = right, left
@@ -1234,22 +1281,31 @@ class Database:
             cursor = db.execute(
                 """
                 INSERT OR IGNORE INTO topic_merge_feedback(
-                    anchor_signature,candidate_signature,decision,anchor_text,candidate_text,created_at
-                ) VALUES(?,?,?,?,?,?)
+                    anchor_signature,candidate_signature,decision,anchor_text,candidate_text,language,created_at
+                ) VALUES(?,?,?,?,?,?,?)
                 """,
-                (left_sig, right_sig, decision, left, right, _iso()),
+                (
+                    left_sig, right_sig, decision, left, right,
+                    lang, _iso(),
+                ),
             )
         return cursor.rowcount == 1
 
-    def list_topic_feedback(self, limit: int = 1000) -> list[dict[str, object]]:
+    def list_topic_feedback(
+        self,
+        limit: int = 1000,
+        *,
+        language: str | None = None,
+    ) -> list[dict[str, object]]:
+        query = "SELECT id,decision,anchor_text,candidate_text,language,created_at FROM topic_merge_feedback"
+        params: list[object] = []
+        if language is not None:
+            query += " WHERE language=?"
+            params.append("en" if str(language).lower() == "en" else "uk")
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, int(limit)))
         with self.connect() as db:
-            rows = db.execute(
-                """
-                SELECT id,decision,anchor_text,candidate_text,created_at
-                FROM topic_merge_feedback ORDER BY id DESC LIMIT ?
-                """,
-                (max(1, int(limit)),),
-            ).fetchall()
+            rows = db.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def topic_candidate_rows(self, anchor_group_id: int, limit: int = 250) -> list[dict[str, object]]:
@@ -1264,6 +1320,7 @@ class Database:
                     "text": group.combined_text or group.canonical_title,
                     "source_count": group.source_count,
                     "published_at": group.last_published_at or "",
+                    "url": group.primary_url,
                 }
             )
         return rows
@@ -1334,7 +1391,7 @@ class Database:
         return int(cursor.rowcount or 0)
 
     def list_content_exclusions(self, *, active_only: bool = True, limit: int = 500) -> list[dict[str, object]]:
-        query = "SELECT id,group_id,title,source_text,active,created_at,updated_at FROM content_exclusions"
+        query = "SELECT id,group_id,signature,title,source_text,active,created_at,updated_at FROM content_exclusions"
         params: list[object] = []
         if active_only:
             query += " WHERE active=1"
@@ -1348,6 +1405,207 @@ class Database:
         with self.connect() as db:
             row = db.execute("SELECT COUNT(*) FROM content_exclusions WHERE active=1").fetchone()
         return int(row[0] or 0)
+
+    def record_learning_event(
+        self,
+        event_type: str,
+        *,
+        language: str = "uk",
+        group_id: int | None = None,
+        anchor_group_id: int | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> int:
+        event = str(event_type or "").strip()
+        if not event:
+            raise ValueError("event_type is required")
+        lang = "en" if str(language).lower() == "en" else "uk"
+        with self.connect() as db:
+            cursor = db.execute(
+                """
+                INSERT INTO learning_events(
+                    event_type,language,group_id,anchor_group_id,payload_json,created_at
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    event, lang, group_id, anchor_group_id,
+                    json.dumps(payload or {}, ensure_ascii=False, sort_keys=True), _iso(),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def list_learning_events(
+        self,
+        *,
+        language: str | None = None,
+        event_type: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, object]]:
+        query = "SELECT * FROM learning_events"
+        clauses: list[str] = []
+        params: list[object] = []
+        if language is not None:
+            clauses.append("language=?")
+            params.append("en" if str(language).lower() == "en" else "uk")
+        if event_type:
+            clauses.append("event_type=?")
+            params.append(str(event_type))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = self._safe_json(str(item.pop("payload_json", "{}")), {})
+            result.append(item)
+        return result
+
+    def learning_stats(self) -> dict[str, object]:
+        with self.connect() as db:
+            events = int(db.execute("SELECT COUNT(*) FROM learning_events").fetchone()[0] or 0)
+            examples = {
+                str(row["language"]): int(row["count"] or 0)
+                for row in db.execute(
+                    "SELECT language,COUNT(*) AS count FROM editorial_examples GROUP BY language"
+                ).fetchall()
+            }
+            feedback = int(db.execute("SELECT COUNT(*) FROM topic_merge_feedback").fetchone()[0] or 0)
+            exclusions = int(db.execute("SELECT COUNT(*) FROM content_exclusions WHERE active=1").fetchone()[0] or 0)
+        return {
+            "events": events,
+            "editorial_examples": examples,
+            "topic_feedback": feedback,
+            "active_exclusions": exclusions,
+        }
+
+    def export_learning_data(self, path: Path) -> Path:
+        payload = {
+            "format": "UA_FREE_LEARNING_V1",
+            "exported_at": _iso(),
+            "editorial_examples": self.list_editorial_examples(limit=100000),
+            "topic_feedback": self.list_topic_feedback(limit=100000),
+            "content_exclusions": self.list_content_exclusions(active_only=False, limit=100000),
+            "learning_events": self.list_learning_events(limit=100000),
+        }
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        return target
+
+    def import_learning_data(self, path: Path) -> dict[str, int]:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("format") != "UA_FREE_LEARNING_V1":
+            raise ValueError("Unsupported learning-data file.")
+        counts = {"editorial_examples": 0, "topic_feedback": 0, "content_exclusions": 0, "learning_events": 0}
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for row in payload.get("editorial_examples", []):
+                    if not isinstance(row, dict):
+                        continue
+                    cursor = db.execute(
+                        """
+                        INSERT OR IGNORE INTO editorial_examples(
+                            group_id,source_fingerprint,source_text,ai_draft_text,final_text,headline,language,created_at
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            row.get("group_id"),
+                            hashlib.sha256(str(row.get("source_text") or "").encode("utf-8")).hexdigest(),
+                            str(row.get("source_text") or ""),
+                            str(row.get("ai_draft_text") or ""),
+                            str(row.get("final_text") or ""),
+                            str(row.get("headline") or ""),
+                            "en" if str(row.get("language") or "uk").lower() == "en" else "uk",
+                            str(row.get("created_at") or _iso()),
+                        ),
+                    )
+                    counts["editorial_examples"] += int(bool(cursor.rowcount))
+                for row in payload.get("topic_feedback", []):
+                    if not isinstance(row, dict):
+                        continue
+                    left = " ".join(str(row.get("anchor_text") or "").split())
+                    right = " ".join(str(row.get("candidate_text") or "").split())
+                    if not left or not right:
+                        continue
+                    left_sig = hashlib.sha256(left.encode("utf-8")).hexdigest()
+                    right_sig = hashlib.sha256(right.encode("utf-8")).hexdigest()
+                    if right_sig < left_sig:
+                        left_sig, right_sig, left, right = right_sig, left_sig, right, left
+                    cursor = db.execute(
+                        """
+                        INSERT OR IGNORE INTO topic_merge_feedback(
+                            anchor_signature,candidate_signature,decision,anchor_text,candidate_text,language,created_at
+                        ) VALUES(?,?,?,?,?,?,?)
+                        """,
+                        (left_sig, right_sig, str(row.get("decision") or "merged"), left, right,
+                         "en" if str(row.get("language") or "uk").lower() == "en" else "uk",
+                         str(row.get("created_at") or _iso())),
+                    )
+                    counts["topic_feedback"] += int(bool(cursor.rowcount))
+                for row in payload.get("content_exclusions", []):
+                    if not isinstance(row, dict):
+                        continue
+                    source_text = str(row.get("source_text") or "").strip()
+                    if not source_text:
+                        continue
+                    signature = str(row.get("signature") or "").strip()
+                    if not signature:
+                        signature = sha256_bytes(source_text.casefold().encode("utf-8"))
+                    cursor = db.execute(
+                        """
+                        INSERT INTO content_exclusions(
+                            group_id,signature,title,source_text,active,created_at,updated_at
+                        ) VALUES(?,?,?,?,?,?,?)
+                        ON CONFLICT(signature) DO UPDATE SET
+                            title=excluded.title,
+                            source_text=excluded.source_text,
+                            active=excluded.active,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            row.get("group_id"), signature, str(row.get("title") or ""), source_text,
+                            1 if bool(row.get("active", True)) else 0,
+                            str(row.get("created_at") or _iso()),
+                            str(row.get("updated_at") or _iso()),
+                        ),
+                    )
+                    counts["content_exclusions"] += int(bool(cursor.rowcount))
+                for row in payload.get("learning_events", []):
+                    if not isinstance(row, dict):
+                        continue
+                    cursor = db.execute(
+                        """
+                        INSERT INTO learning_events(
+                            event_type,language,group_id,anchor_group_id,payload_json,created_at
+                        ) VALUES(?,?,?,?,?,?)
+                        """,
+                        (str(row.get("event_type") or "imported"),
+                         "en" if str(row.get("language") or "uk").lower() == "en" else "uk",
+                         row.get("group_id"), row.get("anchor_group_id"),
+                         json.dumps(row.get("payload") or {}, ensure_ascii=False, sort_keys=True),
+                         str(row.get("created_at") or _iso())),
+                    )
+                    counts["learning_events"] += int(bool(cursor.rowcount))
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+        return counts
+
+    def clear_learning_history(self) -> None:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("DELETE FROM editorial_examples")
+                db.execute("DELETE FROM topic_merge_feedback")
+                db.execute("DELETE FROM learning_events")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
 
     def set_group_options(self, group_id: int, *, include_source_link: bool) -> None:
         with self.connect() as db:

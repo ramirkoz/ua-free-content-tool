@@ -2,21 +2,41 @@
 
 This document covers the credentials, permissions, and operational requirements for Facebook Pages, Threads, LinkedIn, Telegram, and Google Drive.
 
-## Meta App ID and App Secret
+## Facebook and Threads applications
 
-Facebook and Threads can use the same Meta application, but they use different access tokens. Enter the Meta App ID and Meta App Secret so the application can exchange eligible short-lived tokens for long-lived tokens. The App Secret is stored in the same encrypted portable configuration as the tokens and is never written to normal logs.
+Version 1.1.0 stores Facebook and Threads application credentials separately. This supports the common case where the Facebook Page and Threads profile belong to different Meta accounts or were configured in different developer applications.
+
+Configure these fields independently:
+
+```text
+Facebook App ID
+Facebook App Secret
+Facebook User Access Token
+
+Threads App ID
+Threads App Secret
+Threads Access Token
+```
+
+Do not paste a Facebook App Secret into the Threads field or reuse an unrelated application merely because both products belong to Meta. Legacy shared Meta fields are migrated for compatibility, but the separate platform fields are authoritative after the v1.1.0 settings are saved.
+
+App Secrets and tokens are stored in the encrypted portable configuration and are not written to normal logs.
 
 ## Facebook Pages
 
 UA FREE Content Tool uses one Facebook User Access Token. It calls `/me/accounts` to load every page available to that token and stores the returned Page Access Tokens. API pagination is followed, so there is no artificial two-page limit.
 
-A token created through Graph API Explorer is usually short-lived. After entering the App ID, App Secret, and a valid User Access Token, use **Find pages**. The application first attempts a long-lived-token exchange, then stores all Page Access Tokens and displays expiry information when available.
+A token created through Graph API Explorer is usually short-lived. After entering the **Facebook** App ID, Facebook App Secret, and a valid User Access Token, use **Find pages**. The application first attempts a long-lived-token exchange, then stores available Page Access Tokens and displays expiry information when available.
 
 An expired token cannot be exchanged. Create a new valid User Access Token first.
 
+The token must belong to an account that can manage the required Facebook Page and must include the permissions required by Meta for page discovery and publication.
+
 ## Threads
 
-Required Threads permissions:
+Enter the **Threads** App ID, Threads App Secret, and Threads Access Token in the Threads section. They are independent from the Facebook values.
+
+Required publication permissions:
 
 ```text
 threads_basic
@@ -33,7 +53,9 @@ The trend-search check uses the current `graph.threads.net/keyword_search` endpo
 
 Without `threads_keyword_search`, ordinary publishing still works, but the trend/explosiveness assessment is marked as partial.
 
-When the Meta App Secret is configured, an eligible short-lived Threads token can be exchanged for a long-lived token. A valid long-lived token may be refreshed before expiry. An already expired token must be recreated.
+When the Threads App Secret is configured, an eligible short-lived Threads token can be exchanged for a long-lived token. A valid long-lived token may be refreshed before expiry. An already expired token must be recreated.
+
+Use **Determine profile** to validate publication identity and **Check trend search** separately to validate `threads_keyword_search`. One check does not silently substitute for the other.
 
 ## LinkedIn
 
@@ -93,7 +115,9 @@ Do not make the whole folder public.
 
 ## Token storage and saving
 
-The **Save changes** control remains available in Settings. Successful checks for Facebook, Threads, LinkedIn, Telegram, and Google Drive also persist the verified values immediately.
+The **Save changes** control remains available in Settings. Successful checks for Facebook, Threads, LinkedIn, Telegram, and Google Drive also persist verified values immediately.
+
+When switching from v1.0.0, open Settings once, verify the separate Facebook and Threads fields, and save them. Do not rotate a working token merely because the field layout changed.
 
 ## Automatic connection diagnostics
 

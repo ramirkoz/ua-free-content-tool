@@ -77,5 +77,5 @@ def test_old_empty_api_versions_are_migrated_to_hidden_defaults() -> None:
     config = AppConfig.from_json_bytes(
         b'{"ollama_base_url":"http://127.0.0.1:11434","meta_graph_version":"","linkedin_version":""}'
     )
-    assert config.meta_graph_version == "v24.0"
+    assert config.meta_graph_version == "v26.0"
     assert config.linkedin_version == "202607"

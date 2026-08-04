@@ -51,15 +51,15 @@ def test_fix26_bulk_reject_is_atomic(tmp_path: Path) -> None:
     assert [group.id for group in db.list_groups()] == [ids[2]]
 
 
-def test_fix26_inbox_ui_supports_bulk_reject_and_delete() -> None:
+def test_fix26_inbox_ui_supports_bulk_reject_delete_and_focused_topic_merge() -> None:
     source = Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py"
     text = source.read_text(encoding="utf-8")
     assert 'text="Видалити"' in text
-    assert 'text="Запам’ятати й виключати"' in text
+    assert 'text="Запам’ятати й більше не пропонувати"' in text
     assert 'self.groups_tree.bind("<Delete>", self._delete_selected_group_rows)' in text
     assert "def reject_selected_groups(self) -> None:" in text
     assert "self.db.set_groups_status(group_ids, \"rejected\")" in text
-    assert "Автоматичного об’єднання немає" in text
+    assert "TopicCandidatesDialog" in text
 
 
 def test_fix26_target_timeout_pauses_batch_and_keeps_database_responsive(tmp_path: Path) -> None:
@@ -87,7 +87,9 @@ def test_fix26_target_timeout_pauses_batch_and_keeps_database_responsive(tmp_pat
     elapsed = time.monotonic() - started
 
     assert entered.is_set()
-    assert elapsed < 1.0
+    # The publisher blocks for three seconds. A 1.5-second ceiling still proves
+    # run_once returned early while tolerating hosted Windows scheduling jitter.
+    assert elapsed < 1.5
     assert result.paused is True
     assert "linkedin" in result.failed_platforms
     assert "Результат невідомий" in result.failed_platforms["linkedin"]

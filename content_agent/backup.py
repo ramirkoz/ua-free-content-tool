@@ -42,15 +42,19 @@ _REQUIRED_TABLES = {
     },
     "editorial_examples": {
         "id", "group_id", "source_fingerprint", "source_text", "ai_draft_text",
-        "final_text", "headline", "created_at",
+        "final_text", "headline", "language", "created_at",
     },
     "topic_merge_feedback": {
         "id", "anchor_signature", "candidate_signature", "decision", "anchor_text",
-        "candidate_text", "created_at",
+        "candidate_text", "language", "created_at",
     },
     "content_exclusions": {
         "id", "group_id", "signature", "title", "source_text", "active",
         "created_at", "updated_at",
+    },
+    "learning_events": {
+        "id", "event_type", "language", "group_id", "anchor_group_id",
+        "payload_json", "created_at",
     },
     "queue_text_migrations": {
         "id", "migration_key", "backup_path", "summary_json", "completed_at",

@@ -104,14 +104,14 @@ def test_fix28_additive_migration_preserves_sources_settings_projection_and_queu
     _downgrade_to_fix26_schema(path)
 
     upgraded = Database(path)
-    assert DATABASE_SCHEMA_VERSION == 7
+    assert DATABASE_SCHEMA_VERSION == 8
     assert upgraded.list_sources()[0].name == "Робоче джерело"
     assert upgraded.get_group(group.id).rewrite_text == "Робочий текст"
     batch = upgraded.get_batch(batch_id)
     assert batch.status == "pending"
     assert [(target.platform, target.status) for target in batch.targets] == [("telegram", "pending")]
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 8
         assert db.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"editorial_examples", "topic_merge_feedback", "queue_text_migrations", "queue_text_migration_items"}.issubset(tables)
@@ -227,9 +227,9 @@ def test_fix28_manual_merge_feedback_boosts_topic_search() -> None:
 
 def test_fix28_ui_contract_has_one_text_and_topic_search() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — R8 FIX30")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.0")' in source
     assert 'text="Текст публікації: один для всіх мереж"' in source
-    assert 'text="Знайти все по темі"' in source
+    assert 'text="Пошук схожих за темою матеріалів"' in source
     assert "def find_all_by_topic(self) -> None:" in source
     assert "Синхронізувати всі тексти" not in source
     assert '("facebook", "Facebook")' not in source
