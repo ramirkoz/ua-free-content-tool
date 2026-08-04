@@ -32,7 +32,11 @@ jobs:
           if old not in text:
               raise SystemExit('automatic publish trigger anchor not found')
           text = text.replace(old, new, 1)
-          old_if = "    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]') }}\n"
+          old_if = (
+              "    if: $" +
+              "{{ github.event_name == 'workflow_dispatch' || "
+              "!contains(github.event.head_commit.message, '[skip release]') }}\n"
+          )
           if old_if not in text:
               raise SystemExit('publish job condition anchor not found')
           text = text.replace(old_if, "", 1)
