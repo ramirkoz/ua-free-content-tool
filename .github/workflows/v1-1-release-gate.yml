@@ -1,0 +1,103 @@
+name: v1.1.0 portable release gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-release-gate:
+    runs-on: windows-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build validated portable application
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate portable layout and startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          if ($version -ne "1.1.0") {
+            throw "Unexpected public version: $version"
+          }
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          $exe = Join-Path $root "UA_FREE_Content_Tool.exe"
+          if (-not (Test-Path $exe)) { throw "Executable not found: $exe" }
+          if (-not (Test-Path (Join-Path $root "_internal"))) { throw "_internal directory missing" }
+          if (-not (Test-Path (Join-Path $root "portable.flag"))) { throw "portable.flag missing" }
+          if (-not (Test-Path (Join-Path $root "clean_start.flag"))) { throw "clean_start.flag missing" }
+          if (-not (Test-Path (Join-Path $root "Data"))) { throw "Data directory missing" }
+
+          $forbidden = Get-ChildItem $root -Recurse -Force -File | Where-Object {
+            $_.Name -match 'config\.portable|portable\.key|\.sqlite3?$|\.db$|\.log$' -or
+            $_.Name -match 'token|secret'
+          }
+          if ($forbidden) {
+            $forbidden | ForEach-Object { Write-Host $_.FullName }
+            throw "Forbidden working data or secret-like files found in portable package"
+          }
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 6
+          if ($process.HasExited) {
+            throw "Portable executable exited during startup smoke test with code $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+
+      - name: Create and validate release ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v${version}_Windows_Portable_RC.zip"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content -Path "UA_FREE_Content_Tool_v${version}_RC_SHA256.txt" -Encoding ascii
+
+          @'
+          from pathlib import Path, PurePosixPath
+          import zipfile
+
+          version = Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip()
+          archive = Path(f"UA_FREE_Content_Tool_v{version}_Windows_Portable_RC.zip")
+          with zipfile.ZipFile(archive) as handle:
+              bad = handle.testzip()
+              if bad:
+                  raise SystemExit(f"CRC failure: {bad}")
+              names = [info.filename for info in handle.infolist()]
+              if not names:
+                  raise SystemExit("empty release archive")
+              if len(names) != len(set(names)):
+                  raise SystemExit("duplicate ZIP entry names")
+              for name in names:
+                  path = PurePosixPath(name.replace("\\", "/"))
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"unsafe ZIP path: {name}")
+                  if "\\" in name:
+                      raise SystemExit(f"backslash in ZIP entry: {name}")
+          print(f"PORTABLE_ZIP_VALIDATED={archive}")
+          '@ | python -
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.1.0_Windows_Portable_RC
+          path: |
+            UA_FREE_Content_Tool_v1.1.0_Windows_Portable_RC.zip
+            UA_FREE_Content_Tool_v1.1.0_RC_SHA256.txt
+          if-no-files-found: error
+          retention-days: 7
