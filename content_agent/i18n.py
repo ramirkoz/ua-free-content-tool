@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import re
 import tkinter as tk
-from tkinter import ttk
-from typing import Iterable
+from tkinter import filedialog, messagebox, ttk
+from typing import Callable, Iterable
+
+from .i18n_extra import EXTRA_EN, EXTRA_PATTERNS
 
 SUPPORTED_LANGUAGES = ("uk", "en")
 LANGUAGE_LABELS = {"uk": "Українська", "en": "English"}
@@ -155,6 +157,7 @@ _EN: dict[str, str] = {
     "перевірити права": "check permissions",
     "тимчасово не перевірено": "temporarily unchecked",
 }
+_EN.update(EXTRA_EN)
 
 _EN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^Знайдено моделей: (\d+)$"), r"Models found: \1"),
@@ -165,7 +168,7 @@ _EN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^Поточна операція: немає$"), "Current operation: none"),
     (re.compile(r"^Поточна операція: (.+)$"), r"Current operation: \1"),
     (re.compile(r"^(\d+) / (\d+) символів(.*)$"), r"\1 / \2 characters\3"),
-)
+) + EXTRA_PATTERNS
 
 
 def normalize_language(value: str | None) -> str:
@@ -205,6 +208,49 @@ def original_text(value: str) -> str:
     current = str(value or "")
     reverse = {english: ukrainian for ukrainian, english in _EN.items()}
     return reverse.get(current, current)
+
+
+class LocalizedMessageBox:
+    """Translate dialog titles and messages at the moment they are shown."""
+
+    def __init__(self, language_getter: Callable[[], str]):
+        self._language_getter = language_getter
+
+    def __getattr__(self, name: str):
+        target = getattr(messagebox, name)
+
+        def invoke(*args: object, **kwargs: object):
+            language = normalize_language(self._language_getter())
+            translated = list(args)
+            for index in range(min(2, len(translated))):
+                if isinstance(translated[index], str):
+                    translated[index] = tr(translated[index], language)
+            if isinstance(kwargs.get("title"), str):
+                kwargs["title"] = tr(str(kwargs["title"]), language)
+            if isinstance(kwargs.get("message"), str):
+                kwargs["message"] = tr(str(kwargs["message"]), language)
+            if isinstance(kwargs.get("detail"), str):
+                kwargs["detail"] = tr(str(kwargs["detail"]), language)
+            return target(*translated, **kwargs)
+
+        return invoke
+
+
+class LocalizedFileDialog:
+    """Translate native file-dialog titles while preserving every other option."""
+
+    def __init__(self, language_getter: Callable[[], str]):
+        self._language_getter = language_getter
+
+    def __getattr__(self, name: str):
+        target = getattr(filedialog, name)
+
+        def invoke(*args: object, **kwargs: object):
+            if isinstance(kwargs.get("title"), str):
+                kwargs["title"] = tr(str(kwargs["title"]), self._language_getter())
+            return target(*args, **kwargs)
+
+        return invoke
 
 
 def output_language_name(language: str) -> str:

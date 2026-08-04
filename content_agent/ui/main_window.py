@@ -30,6 +30,8 @@ from ..i18n import (
     LANGUAGE_LABELS,
     language_from_label,
     language_label,
+    LocalizedFileDialog,
+    LocalizedMessageBox,
     localize_widget_tree,
     normalize_language,
     original_text,
@@ -208,10 +210,21 @@ def publication_target_keys(config: AppConfig) -> list[str]:
 
 
 class MainWindow:
+    def __getattr__(self, name: str):
+        # Older regression tests construct MainWindow with __new__ and do not
+        # run __init__. Fall back to the module dialogs in that narrow case.
+        if name == 'msg':
+            return messagebox
+        if name == 'files':
+            return filedialog
+        raise AttributeError(name)
+
     def __init__(self, root: tk.Tk, database: Database, config: AppConfig):
         self.root = root
         self.db = database
         self.config = config
+        self.msg = LocalizedMessageBox(lambda: self.config.ui_language)
+        self.files = LocalizedFileDialog(lambda: self.config.ui_language)
         self._settings_loading = True
         self.settings_dirty = False
         self.current_group_id: int | None = None
@@ -304,7 +317,7 @@ class MainWindow:
         self.root.after(900, self._auto_collect)
         self.root.after(2200, lambda: self.run_connection_diagnostics(automatic=True))
         self.threads_token_maintenance_after_id = self.root.after(4200, self._maybe_refresh_threads_token_async)
-        self.status_var.set("Готово. Планувальник публікацій увімкнено.")
+        self.set_status("Готово. Планувальник публікацій увімкнено.")
 
     def _startup_queue_migration_gate(self) -> None:
         if self.stop_event.is_set():
@@ -316,7 +329,7 @@ class MainWindow:
             scan = scan_queue_for_900_migration(self.db)
         except Exception as exc:
             self.status_var.set("Публікацію не запущено: не вдалося перевірити чергу.")
-            messagebox.showerror(
+            self.msg.showerror(
                 "Перевірка черги не завершена",
                 f"Планувальник залишився вимкненим. Помилка: {exc}",
                 parent=self.root,
@@ -324,7 +337,7 @@ class MainWindow:
             return
         if scan.blockers:
             self.status_var.set("Публікацію не запущено: у черзі є активний або прострочений пакет.")
-            messagebox.showerror(
+            self.msg.showerror(
                 "Спочатку завершіть чинну публікацію",
                 "FIX28 не змінює чергу, поки пакет публікується або вже прострочений.\n\n"
                 + "\n".join(f"• {item}" for item in scan.blockers)
@@ -363,7 +376,7 @@ class MainWindow:
 
     def close(self) -> None:
         if self.settings_dirty:
-            answer = messagebox.askyesnocancel(
+            answer = self.msg.askyesnocancel(
                 "Незбережені налаштування",
                 "У налаштуваннях є незбережені зміни. Зберегти їх перед закриттям?",
                 parent=self.root,
@@ -408,7 +421,7 @@ class MainWindow:
         self.root.destroy()
 
     def set_status(self, text: str) -> None:
-        self.status_var.set(text)
+        self.status_var.set(self.t(text))
 
     def _publication_progress_from_worker(self, text: str) -> None:
         """Show background publication progress without touching Tk off-thread."""
@@ -552,12 +565,13 @@ class MainWindow:
             return
         elapsed = max(0, int((datetime.now() - self.operation_started_at).total_seconds()))
         minutes, seconds = divmod(elapsed, 60)
-        self.operation_detail_var.set(f"Виконується {minutes:02d}:{seconds:02d}. Не закривайте програму.")
+        self.operation_detail_var.set(self.t(f"Виконується {minutes:02d}:{seconds:02d}. Не закривайте програму."))
         self.operation_tick_after_id = self.root.after(1000, self._operation_tick)
 
     def _start_operation(self, label: str) -> int | None:
+        label = self.t(label)
         if self.operation_running:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Операція вже виконується",
                 f"Зараз триває: {self.operation_var.get().removeprefix('Поточна операція: ')}",
                 parent=self.root,
@@ -568,8 +582,8 @@ class MainWindow:
         self.active_operation_id = operation_id
         self.operation_running = True
         self.operation_started_at = datetime.now()
-        self.operation_var.set(f"Поточна операція: {label}")
-        self.operation_detail_var.set("Запущено…")
+        self.operation_var.set(self.t(f"Поточна операція: {label}"))
+        self.operation_detail_var.set(self.t("Запущено…"))
         self.operation_progress.start(12)
         for button in self.operation_buttons:
             button.configure(state="disabled")
@@ -592,8 +606,8 @@ class MainWindow:
             except tk.TclError:
                 pass
             self.operation_timeout_after_id = None
-        self.operation_var.set("Поточна операція: помилка" if error else "Поточна операція: завершено")
-        self.operation_detail_var.set(detail)
+        self.operation_var.set(self.t("Поточна операція: помилка" if error else "Поточна операція: завершено"))
+        self.operation_detail_var.set(self.t(detail))
         for button in self.operation_buttons:
             button.configure(state="normal")
 
@@ -632,7 +646,7 @@ class MainWindow:
                 pass
         self.set_status("Помилка")
         self._finish_operation(timeout_message, error=True)
-        messagebox.showerror("UA FREE Content Tool", timeout_message, parent=self.root)
+        self.msg.showerror("UA FREE Content Tool", timeout_message, parent=self.root)
 
     def run_async(
         self,
@@ -688,10 +702,11 @@ class MainWindow:
     def _show_error(self, error: Exception) -> None:
         self.set_status("Помилка")
         self._finish_operation(str(error), error=True)
-        messagebox.showerror("UA FREE Content Tool", str(error), parent=self.root)
+        self.msg.showerror("UA FREE Content Tool", str(error), parent=self.root)
 
     def t(self, text: str) -> str:
-        return tr(text, self.config.ui_language)
+        config = getattr(self, 'config', None)
+        return tr(text, getattr(config, 'ui_language', 'uk'))
 
     def _apply_language(self, *, refresh: bool = True) -> None:
         language = normalize_language(
@@ -702,6 +717,9 @@ class MainWindow:
         self.config.ui_language = language
         self.root.title("UA FREE Content Tool — v1.1.0")
         localize_widget_tree(self.root, language)
+        for variable in (getattr(self, 'status_var', None), getattr(self, 'operation_var', None), getattr(self, 'operation_detail_var', None)):
+            if variable is not None:
+                variable.set(tr(original_text(variable.get()), language))
         if hasattr(self, "group_filter_box"):
             current = original_text(self.group_filter.get())
             values = tuple(tr(item, language) for item in GROUP_FILTERS)
@@ -774,7 +792,7 @@ class MainWindow:
         name = self.source_name.get().strip()
         url = self.source_url.get().strip()
         if not name or not url:
-            messagebox.showwarning("Джерело", "Вкажіть назву та адресу.", parent=self.root)
+            self.msg.showwarning("Джерело", "Вкажіть назву та адресу.", parent=self.root)
             return
         try:
             self.db.add_source(kind, name, url)
@@ -802,7 +820,7 @@ class MainWindow:
         ids = self._selected_source_ids()
         if not ids:
             return
-        if not messagebox.askyesno("Видалення", "Видалити вибране джерело і його матеріали?", parent=self.root):
+        if not self.msg.askyesno("Видалення", "Видалити вибране джерело і його матеріали?", parent=self.root):
             return
         for source_id in ids:
             self.db.delete_source(source_id)
@@ -1068,10 +1086,10 @@ class MainWindow:
     def _require_single_group_id(self, action: str) -> int | None:
         selection = self._selected_group_ids()
         if not selection:
-            messagebox.showinfo("Вхідні", "Оберіть блок у списку.", parent=self.root)
+            self.msg.showinfo("Вхідні", "Оберіть блок у списку.", parent=self.root)
             return None
         if len(selection) > 1:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Вхідні",
                 f"Для дії «{action}» залиште вибраним один блок. Зараз вибрано: {len(selection)}.",
                 parent=self.root,
@@ -1121,7 +1139,7 @@ class MainWindow:
     def delete_selected_groups(self) -> None:
         group_ids = self._selected_group_ids()
         if not group_ids:
-            messagebox.showinfo("Вхідні", "Оберіть одну або кілька новин у списку.", parent=self.root)
+            self.msg.showinfo("Вхідні", "Оберіть одну або кілька новин у списку.", parent=self.root)
             return
         shown = ", ".join(f"#{group_id}" for group_id in group_ids[:12])
         if len(group_ids) > 12:
@@ -1131,7 +1149,7 @@ class MainWindow:
             f"Вибрано: {shown}.\n\n"
             "Це просте видалення. Система не вчитиметься на цій дії й не блокуватиме схожі новини в майбутньому."
         )
-        if not messagebox.askyesno("Видалення новин", question, parent=self.root):
+        if not self.msg.askyesno("Видалення новин", question, parent=self.root):
             return
         try:
             changed = self.db.set_groups_status(group_ids, "rejected")
@@ -1144,14 +1162,14 @@ class MainWindow:
     def remember_and_exclude_selected_groups(self) -> None:
         group_ids = self._selected_group_ids()
         if not group_ids:
-            messagebox.showinfo("Вхідні", "Оберіть одну або кілька новин у списку.", parent=self.root)
+            self.msg.showinfo("Вхідні", "Оберіть одну або кілька новин у списку.", parent=self.root)
             return
         question = (
             f"Запам’ятати {len(group_ids)} вибрані новини як небажані?\n\n"
             "Вони зникнуть з активного списку. Під час наступних зборів програма локально відфільтровуватиме "
             "дуже схожі матеріали, не запускаючи Ollama. Дію можна скасувати, відновивши цей блок у «Відхилених»."
         )
-        if not messagebox.askyesno("Запам’ятати й виключати", question, parent=self.root):
+        if not self.msg.askyesno("Запам’ятати й виключати", question, parent=self.root):
             return
         try:
             remembered = self.db.remember_content_exclusions(group_ids)
@@ -1289,7 +1307,7 @@ class MainWindow:
     def merge_selected_groups(self) -> None:
         group_ids = self._selected_group_ids()
         if len(group_ids) < 2:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Об’єднання блоків",
                 "Оберіть щонайменше два блоки. Для суцільного діапазону використовуйте Shift, "
                 "для окремих рядків — Ctrl.",
@@ -1308,7 +1326,7 @@ class MainWindow:
         shown = ", ".join(f"#{group.id}" for group in groups[:12])
         if len(groups) > 12:
             shown += f" та ще {len(groups) - 12}"
-        if not messagebox.askyesno(
+        if not self.msg.askyesno(
             "Об’єднання блоків",
             f"Об’єднати {len(groups)} вибрані блоки в один?\n\n"
             f"Основним залишиться верхній вибраний блок #{target.id}:\n{target.canonical_title}\n\n"
@@ -1354,7 +1372,7 @@ class MainWindow:
             f"Перенесено джерел: {moved_articles}; у блоці тепер: {merged.source_count}. "
             f"Навчальних пар для тематичного пошуку додано: {learned_pairs}."
         )
-        messagebox.showinfo(
+        self.msg.showinfo(
             "Об’єднання завершено",
             f"Створено один блок #{target_group_id} із {merged.source_count} джерел. "
             "Відкрийте його в редакторі та виконайте новий рерайт.",
@@ -1743,7 +1761,7 @@ class MainWindow:
 
     def rewrite_current(self) -> None:
         if self.current_group_id is None:
-            messagebox.showinfo("Редактор", "Спочатку прийміть блок у роботу.", parent=self.root)
+            self.msg.showinfo("Редактор", "Спочатку прийміть блок у роботу.", parent=self.root)
             return
         self.db.set_group_options(self.current_group_id, include_source_link=self.include_source_var.get())
         group = self.db.get_group(self.current_group_id)
@@ -1867,7 +1885,7 @@ class MainWindow:
         try:
             validate_editorial_text(rewrite)
         except TextLimitError as exc:
-            messagebox.showwarning("Редактор", str(exc), parent=self.root)
+            self.msg.showwarning("Редактор", str(exc), parent=self.root)
             return False
         self.db.save_group_rewrite(
             self.current_group_id,
@@ -1990,10 +2008,10 @@ class MainWindow:
     def verify_media(self) -> None:
         drive_url = self.media_url_var.get().strip()
         if not drive_url:
-            messagebox.showwarning("Медіа", "Вставте посилання на файл Google Drive.", parent=self.root)
+            self.msg.showwarning("Медіа", "Вставте посилання на файл Google Drive.", parent=self.root)
             return
         if not self.config.platform_ready("google_drive"):
-            messagebox.showwarning(
+            self.msg.showwarning(
                 "Google Drive",
                 "Спочатку підключіть Google Drive у налаштуваннях.",
                 parent=self.root,
@@ -2111,7 +2129,7 @@ class MainWindow:
             return
         selected = [platform for platform, variable in self.target_vars.items() if variable.get()]
         if not selected:
-            messagebox.showwarning("Черга", "Оберіть хоча б одну платформу.", parent=self.root)
+            self.msg.showwarning("Черга", "Оберіть хоча б одну платформу.", parent=self.root)
             return
         group = self.db.get_group(self.current_group_id)
         headline, _fact_card, rewrite, _platform_texts = self._editor_values()
@@ -2191,7 +2209,7 @@ class MainWindow:
             lead = f"Пакет #{result.batch_id} створено на {scheduled.strftime('%d.%m.%Y %H:%M')} за Києвом."
         else:
             lead = f"Пакет #{result.batch_id} оновлено. Час: {scheduled.strftime('%d.%m.%Y %H:%M')} за Києвом."
-        messagebox.showinfo(
+        self.msg.showinfo(
             "Черга",
             lead + (("\n\n" + "\n".join(details)) if details else "") + "\n\nВідкрито вкладку «Черга».",
             parent=self.root,
@@ -2313,10 +2331,10 @@ class MainWindow:
     def _require_single_queue_batch_id(self, action: str) -> int | None:
         selection = self._selected_queue_batch_ids()
         if not selection:
-            messagebox.showinfo("Черга", "Оберіть пакет у списку.", parent=self.root)
+            self.msg.showinfo("Черга", "Оберіть пакет у списку.", parent=self.root)
             return None
         if len(selection) > 1:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Черга",
                 f"Для дії «{action}» залиште вибраним один пакет. Зараз вибрано: {len(selection)}.",
                 parent=self.root,
@@ -2360,7 +2378,7 @@ class MainWindow:
                 raise ValueError("Пакет уже публікується.")
             if batch.status in {"completed", "cancelled"}:
                 raise ValueError("Оберіть активний або призупинений пакет.")
-            if not messagebox.askyesno(
+            if not self.msg.askyesno(
                 "Повторна спроба",
                 "Повторити лише невідправлені платформи?\n\n"
                 "Уже успішні публікації не дублюватимуться. Перед повтором оновіть токен або права, якщо чергу було призупинено через помилку доступу.",
@@ -2373,7 +2391,7 @@ class MainWindow:
             self._show_error(exc)
             return
         self.refresh_queue()
-        messagebox.showinfo(
+        self.msg.showinfo(
             "Черга",
             f"Пакет #{batch_id} відновлено. У роботу підуть лише невідправлені платформи.",
             parent=self.root,
@@ -2394,7 +2412,7 @@ class MainWindow:
             key=lambda batch: ((parse_iso(batch.scheduled_at) or datetime.min.replace(tzinfo=KYIV)), batch.id)
         )
         if not recoverable:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Черга",
                 "Призупинених або прострочених невідправлених пакетів немає.",
                 parent=self.root,
@@ -2402,7 +2420,7 @@ class MainWindow:
             return
         paused_count = sum(batch.status == "paused" for batch in recoverable)
         overdue_count = len(recoverable) - paused_count
-        if not messagebox.askyesno(
+        if not self.msg.askyesno(
             "Відновлення розкладу",
             f"Перепланувати {len(recoverable)} пакетів на найближчі вільні слоти?\n\n"
             f"Призупинено: {paused_count}. Прострочено в очікуванні: {overdue_count}.\n\n"
@@ -2446,7 +2464,7 @@ class MainWindow:
             if first is not None and last is not None
             else ""
         )
-        messagebox.showinfo(
+        self.msg.showinfo(
             "Черга",
             f"Переплановано пакетів: {len(resumed)}.{range_text}",
             parent=self.root,
@@ -2463,7 +2481,7 @@ class MainWindow:
     def cancel_selected_batches(self) -> None:
         batch_ids = self._selected_queue_batch_ids()
         if not batch_ids:
-            messagebox.showinfo("Черга", "Оберіть один або кілька пакетів у списку.", parent=self.root)
+            self.msg.showinfo("Черга", "Оберіть один або кілька пакетів у списку.", parent=self.root)
             return
 
         if len(batch_ids) == 1:
@@ -2483,7 +2501,7 @@ class MainWindow:
                 "Операція виконується цілісно: якщо хоча б один пакет зараз публікується або вже завершений, жоден із вибраних пакетів не буде скасовано. "
                 "Уже опубліковані дописи не видаляються."
             )
-        if not messagebox.askyesno(title, question, parent=self.root):
+        if not self.msg.askyesno(title, question, parent=self.root):
             return
 
         try:
@@ -2499,7 +2517,7 @@ class MainWindow:
             result_text = f"Пакет #{cancelled[0]} скасовано й прибрано з активної черги."
         else:
             result_text = f"Скасовано й прибрано з активної черги: {len(cancelled)} пакетів."
-        messagebox.showinfo("Черга", result_text, parent=self.root)
+        self.msg.showinfo("Черга", result_text, parent=self.root)
 
     def _schedule_queue_refresh(self) -> None:
         if self.stop_event.is_set():
@@ -2591,14 +2609,14 @@ class MainWindow:
         if not isinstance(value, WorkerResult):
             return
         if value.busy:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Черга",
                 "Інша публікація вже виконується. Програма не запускає паралельний пакет; дочекайтеся завершення поточної платформи.",
                 parent=self.root,
             )
             return
         if not value.claimed:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Черга",
                 "Немає пакета, час публікації якого вже настав.",
                 parent=self.root,
@@ -2629,11 +2647,11 @@ class MainWindow:
             lines.append("Усі вибрані платформи опубліковано успішно.")
         else:
             lines.append("Пакет залишився активним, зокрема для завершення очищення Google Drive.")
-        messagebox.showwarning(
+        self.msg.showwarning(
             "Часткова публікація" if value.failed_platforms else "Результат публікації",
             "\n\n".join(lines),
             parent=self.root,
-        ) if value.failed_platforms else messagebox.showinfo(
+        ) if value.failed_platforms else self.msg.showinfo(
             "Результат публікації",
             "\n\n".join(lines),
             parent=self.root,
@@ -3158,7 +3176,7 @@ class MainWindow:
     def run_connection_diagnostics(self, *, automatic: bool = False) -> None:
         if self.connection_diagnostics_running:
             if not automatic:
-                messagebox.showinfo(
+                self.msg.showinfo(
                     "Діагностика підключень",
                     "Перевірка токенів і прав уже виконується.",
                     parent=self.root,
@@ -3210,7 +3228,7 @@ class MainWindow:
         if hasattr(self, "connection_diagnostics_status_var"):
             self.connection_diagnostics_status_var.set(text)
         if not automatic:
-            messagebox.showerror(
+            self.msg.showerror(
                 "Діагностика підключень",
                 text + "\n\n" + str(error),
                 parent=self.root,
@@ -3355,7 +3373,7 @@ class MainWindow:
             lines = ["Програма виявила підключення, які потребують дії:"]
             for item in action_items:
                 lines.append(f"• {item.label}: {item.message}")
-            messagebox.showwarning(
+            self.msg.showwarning(
                 "Потрібно оновити токен або права",
                 "\n\n".join(lines),
                 parent=self.root,
@@ -3364,7 +3382,7 @@ class MainWindow:
             details = [summary]
             if temporary_items:
                 details.extend(f"• {item.label}: {item.message}" for item in temporary_items)
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Діагностика підключень",
                 "\n\n".join(details),
                 parent=self.root,
@@ -3676,7 +3694,7 @@ class MainWindow:
                 f"Публікація підключена: {display_name}; {expiry}.{extra}"
             )
             self._persist_connected_config("Новий Threads-токен і профіль збережено")
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Threads",
                 f"Профіль визначено: {display_name}. Токен збережено.\n\n{expiry}."
                 + (("\n\n" + lifecycle_note) if lifecycle_note else "")
@@ -3702,7 +3720,7 @@ class MainWindow:
         token = self.settings_vars["threads_token"].get().strip()
         if not token:
             self.threads_search_status_var.set("Пошук трендів Threads: вставте токен.")
-            messagebox.showwarning("Threads", "Вставте Threads access token.", parent=self.root)
+            self.msg.showwarning("Threads", "Вставте Threads access token.", parent=self.root)
             return
         self.threads_search_status_var.set(
             "Пошук трендів Threads: перевіряю keyword_search, очікування до 12 секунд…"
@@ -3716,7 +3734,7 @@ class MainWindow:
                     "Пошук трендів Threads: ПІДКЛЮЧЕНО. Токен збережено."
                 )
                 self._persist_connected_config("Threads keyword search підключено; токен збережено")
-                messagebox.showinfo(
+                self.msg.showinfo(
                     "Threads",
                     "Пошук трендів підключено. Дозвіл threads_keyword_search працює.",
                     parent=getattr(self, "root", None),
@@ -3726,7 +3744,7 @@ class MainWindow:
                 "Пошук трендів Threads: НЕ ПІДКЛЮЧЕНО. "
                 f"{detail}"
             )
-            messagebox.showwarning(
+            self.msg.showwarning(
                 "Threads",
                 "Пошук трендів не підключено.\n\n" + str(detail),
                 parent=getattr(self, "root", None),
@@ -3897,7 +3915,7 @@ class MainWindow:
         self._mark_settings_saved("Збережено в портативній папці" if portable_mode() else "Збережено на цьому комп’ютері")
         self.set_status("Налаштування й токени зашифровано та збережено в папці програми" if portable_mode() else "Налаштування й токени зашифровано та збережено")
         if show_confirmation:
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Налаштування",
                 (
                     "Зміни збережено в папці Data. Після перенесення всієї папки програми на інший Windows-комп’ютер ці налаштування залишаться."
@@ -3934,7 +3952,7 @@ class MainWindow:
             )
 
     def export_learning_data_ui(self) -> None:
-        selected = filedialog.asksaveasfilename(
+        selected = self.files.asksaveasfilename(
             parent=self.root, title=self.t("Експортувати навчальні дані"),
             defaultextension=".json", filetypes=[("JSON", "*.json")],
             initialfile="UA_FREE_learning_data.json",
@@ -3946,10 +3964,10 @@ class MainWindow:
         except Exception as exc:
             self._show_error(exc)
             return
-        messagebox.showinfo(self.t("Локальне навчання"), str(path), parent=self.root)
+        self.msg.showinfo(self.t("Локальне навчання"), str(path), parent=self.root)
 
     def import_learning_data_ui(self) -> None:
-        selected = filedialog.askopenfilename(
+        selected = self.files.askopenfilename(
             parent=self.root, title=self.t("Імпортувати навчальні дані"),
             filetypes=[("JSON", "*.json")],
         )
@@ -3961,7 +3979,7 @@ class MainWindow:
             self._show_error(exc)
             return
         self.refresh_learning_stats()
-        messagebox.showinfo(self.t("Локальне навчання"), str(counts), parent=self.root)
+        self.msg.showinfo(self.t("Локальне навчання"), str(counts), parent=self.root)
 
     def clear_learning_history_ui(self) -> None:
         question = (
@@ -3969,7 +3987,7 @@ class MainWindow:
             if self.config.ui_language == "en"
             else "Видалити редакційні приклади, рішення про об’єднання та навчальні події? Постійні виключення новин залишаться."
         )
-        if not messagebox.askyesno(self.t("Очистити навчальну історію"), question, parent=self.root):
+        if not self.msg.askyesno(self.t("Очистити навчальну історію"), question, parent=self.root):
             return
         self.db.clear_learning_history()
         self.refresh_learning_stats()
@@ -3977,16 +3995,16 @@ class MainWindow:
     def create_backup_ui(self) -> None:
         self.run_async(
             create_backup,
-            lambda path: messagebox.showinfo("Backup", f"Створено:\n{path}", parent=self.root),
+            lambda path: self.msg.showinfo("Backup", f"Створено:\n{path}", parent=self.root),
             label="Створюю резервну копію",
             done_label="Резервну копію створено",
         )
 
     def import_backup_ui(self) -> None:
-        selected = filedialog.askopenfilename(parent=self.root, title="Оберіть backup", filetypes=[("UA FREE backup", "*.zip")])
+        selected = self.files.askopenfilename(parent=self.root, title="Оберіть backup", filetypes=[("UA FREE backup", "*.zip")])
         if not selected:
             return
-        if not messagebox.askyesno("Імпорт", "Поточні дані спочатку буде збережено в safety backup. Продовжити?", parent=self.root):
+        if not self.msg.askyesno("Імпорт", "Поточні дані спочатку буде збережено в safety backup. Продовжити?", parent=self.root):
             return
 
         def success(result: object) -> None:
@@ -4004,7 +4022,7 @@ class MainWindow:
             self.ui_language_var.set(language_label(self.config.ui_language))
             self._apply_language()
             self.refresh_learning_stats()
-            messagebox.showinfo(
+            self.msg.showinfo(
                 "Імпорт",
                 f"Імпорт завершено. Safety backup: {getattr(result, 'safety_backup', '')}",
                 parent=self.root,

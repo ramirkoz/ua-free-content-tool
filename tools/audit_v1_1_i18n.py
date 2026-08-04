@@ -52,4 +52,6 @@ for path in FILES:
 print("I18N_AUDIT_BEGIN")
 print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
 print("I18N_AUDIT_END")
-print("UNTRANSLATED_VISIBLE_LITERALS=" + str(sum(len(items) for items in report.values())))
+missing_count = sum(len(items) for items in report.values())
+print("UNTRANSLATED_VISIBLE_LITERALS=" + str(missing_count))
+raise SystemExit(1 if missing_count else 0)
