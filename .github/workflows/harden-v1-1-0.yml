@@ -7,6 +7,12 @@ on:
     paths:
       - tools/apply_v1_1_0_hardening.py
       - .github/workflows/harden-v1-1-0.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - tools/apply_v1_1_0_hardening.py
+      - .github/workflows/harden-v1-1-0.yml
   workflow_dispatch:
 
 permissions:
