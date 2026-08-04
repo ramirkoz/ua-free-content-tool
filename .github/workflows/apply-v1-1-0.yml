@@ -7,6 +7,14 @@ on:
     paths:
       - tools/apply_v1_1_0.py
       - .github/workflows/apply-v1-1-0.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - tools/apply_v1_1_0.py
+      - .github/workflows/apply-v1-1-0.yml
+      - content_agent/i18n.py
+      - content_agent/ui/topic_candidates_dialog.py
   workflow_dispatch:
 
 permissions:
