@@ -1,0 +1,178 @@
+name: Publish UA FREE Content Tool v1.1.0
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: windows-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate release metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          $internal = (Get-Content VERSION.txt -Raw).Trim()
+          if ($version -ne "1.1.0") { throw "Unexpected public version: $version" }
+          if ($internal -ne "1.1.0") { throw "Unexpected internal version: $internal" }
+          if (-not (Test-Path "RELEASE_NOTES_v1.1.0.md")) { throw "v1.1.0 release notes are missing" }
+
+      - name: Refresh and commit repository manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          from pathlib import Path
+          import hashlib
+
+          root = Path.cwd()
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+          (root / "FILE_MANIFEST.sha256").write_text(
+              "\n".join(lines) + "\n", encoding="ascii", newline="\n"
+          )
+          '@ | python -
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add FILE_MANIFEST.sha256
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Refresh manifest for v1.1.0 [skip release]"
+            git push origin HEAD:main
+          } else {
+            Write-Host "Manifest already current."
+          }
+
+      - name: Build validated portable application
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate startup and prepare assets
+        id: assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "1.1.0"
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          $exe = Join-Path $root "UA_FREE_Content_Tool.exe"
+          if (-not (Test-Path $exe)) { throw "Executable missing: $exe" }
+          if (-not (Test-Path (Join-Path $root "_internal"))) { throw "_internal missing" }
+          if (-not (Test-Path (Join-Path $root "portable.flag"))) { throw "portable.flag missing" }
+          if (-not (Test-Path (Join-Path $root "clean_start.flag"))) { throw "clean_start.flag missing" }
+          if (-not (Test-Path (Join-Path $root "Data"))) { throw "Data directory missing" }
+
+          $forbidden = Get-ChildItem $root -Recurse -Force -File | Where-Object {
+            $_.Name -match 'config\.portable|portable\.key|\.sqlite3?$|\.db$|\.log$' -or
+            $_.Name -match 'token|secret'
+          }
+          if ($forbidden) {
+            $forbidden | ForEach-Object { Write-Host $_.FullName }
+            throw "Working data or secret-like files found in release package"
+          }
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 6
+          if ($process.HasExited) {
+            throw "Portable executable exited during startup smoke test with code $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+
+          $portableZip = "UA_FREE_Content_Tool_v${version}_Windows_Portable.zip"
+          $sourceZip = "UA_FREE_Content_Tool_v${version}_Source.zip"
+          $checksums = "SHA256SUMS.txt"
+          Compress-Archive -Path "$root\*" -DestinationPath $portableZip -CompressionLevel Optimal
+          git archive --format=zip --output=$sourceZip HEAD
+
+          @'
+          from pathlib import Path, PurePosixPath
+          import zipfile
+
+          for archive in (
+              Path("UA_FREE_Content_Tool_v1.1.0_Windows_Portable.zip"),
+              Path("UA_FREE_Content_Tool_v1.1.0_Source.zip"),
+          ):
+              with zipfile.ZipFile(archive) as handle:
+                  bad = handle.testzip()
+                  if bad:
+                      raise SystemExit(f"CRC failure in {archive}: {bad}")
+                  names = [info.filename for info in handle.infolist()]
+                  if not names or len(names) != len(set(names)):
+                      raise SystemExit(f"empty or duplicate entries in {archive}")
+                  for name in names:
+                      normalized = name.replace("\\", "/")
+                      path = PurePosixPath(normalized)
+                      if path.is_absolute() or ".." in path.parts or "\\" in name:
+                          raise SystemExit(f"unsafe ZIP path in {archive}: {name}")
+          '@ | python -
+
+          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceHash = (Get-FileHash $sourceZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "$portableHash  $portableZip",
+            "$sourceHash  $sourceZip"
+          ) | Set-Content -Path $checksums -Encoding ascii
+
+          "portable=$portableZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "source=$sourceZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "checksums=$checksums" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create v1.1.0 tag and GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v1.1.0"
+          $head = (git rev-parse HEAD).Trim()
+          $portable = "${{ steps.assets.outputs.portable }}"
+          $source = "${{ steps.assets.outputs.source }}"
+          $checksums = "${{ steps.assets.outputs.checksums }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force $tag $head
+          git push origin "refs/tags/$tag" --force
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $portable $source $checksums --clobber
+            gh release edit $tag --target main --title "UA FREE Content Tool v1.1.0" --notes-file RELEASE_NOTES_v1.1.0.md --latest
+          } else {
+            gh release create $tag $portable $source $checksums --target main --title "UA FREE Content Tool v1.1.0" --notes-file RELEASE_NOTES_v1.1.0.md --latest
+          }
+
+      - name: Upload immutable workflow evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.1.0_release_evidence
+          path: |
+            UA_FREE_Content_Tool_v1.1.0_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.1.0_Source.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
