@@ -1,13 +1,39 @@
 # Changelog
 
-## 1.1.0
+## v1.1.0 — 2026-08-04
 
-- Added Ukrainian and English application modes; the selected language now controls Ollama prompts and rewrite output.
-- Added a focused merge-candidate dialog instead of selecting matches across the full inbox.
-- Added a visible inbox scrollbar, keyboard paging, one-row actions, approved-row highlighting, and removed the confusing visible in-work status.
-- Added local learning connectors, language-separated editorial examples, import/export, statistics, and history controls.
-- Split Facebook and Threads application credentials so different Meta accounts and apps can be used safely.
+### Added
 
+- Ukrainian and English application modes.
+- Language-specific Ollama rewrite, repair, and queue-compression prompts.
+- A focused topic-candidate dialog with explicit human confirmation before merging.
+- Local learning statistics, configurable example limits, export, import, and history clearing.
+- Learning events for generated rewrites, approved publications, manual merges, rejected candidate pairs, exclusions, and restored exclusions.
+- Visible Inbox scrollbar and keyboard navigation with Page Up, Page Down, Home, and End.
+- Approved-row highlighting and clearer one-row actions.
+- Separate Facebook and Threads App IDs and App Secrets.
+
+### Changed
+
+- The selected interface language now controls final rewrite output and fact-card language.
+- Ukrainian and English editorial examples and topic feedback use separate language-scoped signatures.
+- Topic search no longer marks candidates across the full Inbox.
+- Simple deletion remains separate from permanent “remember and exclude”.
+- The portable build path and release workflow are version-aware instead of being tied to internal build R8 FIX30.
+- Database schema upgraded from version 7 to 8 while preserving existing data and queue state.
+
+### Fixed
+
+- Completed localization of secondary dialogs, file dialogs, diagnostics, dynamic status messages, and the one-time queue migration window.
+- Learning export/import now round-trips permanent content exclusions.
+- Legacy UI regression tests remain compatible with localized dialog proxies.
+- Windows timeout regression test tolerates hosted-runner scheduling jitter while still proving non-blocking behavior.
+
+### Validation
+
+- 238 automated tests passed on Windows with Python 3.12.
+- `compileall`, entrypoint import validation, and `import content_agent.main` passed.
+- Interface audit reported zero untranslated visible Ukrainian literals in the audited windows.
 
 ## v1.0.0 — 2026-08-02
 
