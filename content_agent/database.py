@@ -1220,7 +1220,7 @@ class Database:
         if not source_text or not final:
             return False
         lang = "en" if str(language).lower() == "en" else "uk"
-        fingerprint = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        fingerprint = hashlib.sha256(f"{lang}\0{source_text}".encode("utf-8")).hexdigest()
         with self.connect() as db:
             cursor = db.execute(
                 """
@@ -1271,8 +1271,9 @@ class Database:
         right = " ".join(str(candidate_text or "").split())
         if not left or not right:
             return False
-        left_sig = hashlib.sha256(left.encode("utf-8")).hexdigest()
-        right_sig = hashlib.sha256(right.encode("utf-8")).hexdigest()
+        lang = "en" if str(language).lower() == "en" else "uk"
+        left_sig = hashlib.sha256(f"{lang}\0{left}".encode("utf-8")).hexdigest()
+        right_sig = hashlib.sha256(f"{lang}\0{right}".encode("utf-8")).hexdigest()
         if right_sig < left_sig:
             left_sig, right_sig = right_sig, left_sig
             left, right = right, left
@@ -1285,7 +1286,7 @@ class Database:
                 """,
                 (
                     left_sig, right_sig, decision, left, right,
-                    "en" if str(language).lower() == "en" else "uk", _iso(),
+                    lang, _iso(),
                 ),
             )
         return cursor.rowcount == 1
@@ -1390,7 +1391,7 @@ class Database:
         return int(cursor.rowcount or 0)
 
     def list_content_exclusions(self, *, active_only: bool = True, limit: int = 500) -> list[dict[str, object]]:
-        query = "SELECT id,group_id,title,source_text,active,created_at,updated_at FROM content_exclusions"
+        query = "SELECT id,group_id,signature,title,source_text,active,created_at,updated_at FROM content_exclusions"
         params: list[object] = []
         if active_only:
             query += " WHERE active=1"
@@ -1544,6 +1545,34 @@ class Database:
                          str(row.get("created_at") or _iso())),
                     )
                     counts["topic_feedback"] += int(bool(cursor.rowcount))
+                for row in payload.get("content_exclusions", []):
+                    if not isinstance(row, dict):
+                        continue
+                    source_text = str(row.get("source_text") or "").strip()
+                    if not source_text:
+                        continue
+                    signature = str(row.get("signature") or "").strip()
+                    if not signature:
+                        signature = sha256_bytes(source_text.casefold().encode("utf-8"))
+                    cursor = db.execute(
+                        """
+                        INSERT INTO content_exclusions(
+                            group_id,signature,title,source_text,active,created_at,updated_at
+                        ) VALUES(?,?,?,?,?,?,?)
+                        ON CONFLICT(signature) DO UPDATE SET
+                            title=excluded.title,
+                            source_text=excluded.source_text,
+                            active=excluded.active,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            row.get("group_id"), signature, str(row.get("title") or ""), source_text,
+                            1 if bool(row.get("active", True)) else 0,
+                            str(row.get("created_at") or _iso()),
+                            str(row.get("updated_at") or _iso()),
+                        ),
+                    )
+                    counts["content_exclusions"] += int(bool(cursor.rowcount))
                 for row in payload.get("learning_events", []):
                     if not isinstance(row, dict):
                         continue

@@ -1093,7 +1093,12 @@ class MainWindow:
         group = self.db.get_group(group_id)
         if group.status == "rejected":
             self.db.set_group_status(group_id, "new")
-        self.db.forget_content_exclusion_for_group(group_id)
+        forgotten = self.db.forget_content_exclusion_for_group(group_id)
+        if forgotten and self.config.learning_enabled:
+            self.db.record_learning_event(
+                "exclusion_restored", language=self.config.ui_language, group_id=group_id,
+                payload={"rules_deactivated": forgotten},
+            )
         self.load_group(group_id)
         self.refresh_groups()
         self.notebook.select(self.editor_tab)
@@ -1150,6 +1155,12 @@ class MainWindow:
             return
         try:
             remembered = self.db.remember_content_exclusions(group_ids)
+            if self.config.learning_enabled:
+                for group_id in group_ids:
+                    self.db.record_learning_event(
+                        "content_excluded", language=self.config.ui_language, group_id=group_id,
+                        payload={"selected_group_ids": group_ids},
+                    )
         except Exception as exc:
             self._show_error(exc)
             return
@@ -1321,6 +1332,12 @@ class MainWindow:
                     language=self.config.ui_language,
                 )
             )
+            if self.config.learning_enabled:
+                self.db.record_learning_event(
+                    "manual_groups_merged", language=self.config.ui_language,
+                    group_id=target_group_id, anchor_group_id=target_group_id,
+                    payload={"merged_group_ids": group_ids[1:], "moved_articles": moved_articles},
+                )
         except Exception as exc:
             self._show_error(exc)
             return
@@ -2141,6 +2158,11 @@ class MainWindow:
             headline=headline,
             language=self.config.ui_language,
         )
+        if self.config.learning_enabled:
+            self.db.record_learning_event(
+                "publication_approved", language=self.config.ui_language, group_id=group.id,
+                payload={"batch_id": result.batch_id, "targets": sorted(targets), "example_added": learned},
+            )
         if learned:
             self.editorial_memory_var.set(
                 (f"Editorial memory: {self.db.editorial_example_count(language=self.config.ui_language)} approved examples"
