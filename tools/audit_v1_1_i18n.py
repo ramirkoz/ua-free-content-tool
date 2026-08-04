@@ -3,11 +3,15 @@ from __future__ import annotations
 import ast
 import json
 import re
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from content_agent.i18n import tr
 
-ROOT = Path(__file__).resolve().parents[1]
 CYRILLIC = re.compile(r"[А-Яа-яІіЇїЄєҐґ]")
 FILES = [
     ROOT / "content_agent" / "ui" / "main_window.py",
