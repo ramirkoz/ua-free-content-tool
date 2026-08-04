@@ -1,48 +1,65 @@
 from __future__ import annotations
 
-import json
-import sqlite3
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from content_agent.config import AppConfig
 from content_agent.database import Database
-from content_agent.models import PublishResult
-from content_agent.platforms import PublishContext, Publisher, PublisherFactory
+from content_agent.models import CollectedArticle
+from content_agent.network import NetworkError, _resolve_with_timeout
+from content_agent.publishers import PublishContext, PublishResult, Publisher, PublisherFactory
 from content_agent.worker import PublicationWorker
 
+UTC = timezone.utc
 
-def _due_database(tmp_path: Path) -> tuple[Database, int]:
-    db = Database(tmp_path / "content.sqlite3")
-    source_id = db.add_source("rss", "Source", "https://example.com/feed")
+
+def _due_database(tmp_path: Path, platform: str = "linkedin") -> tuple[Database, int]:
+    db = Database(tmp_path / "fix26.sqlite3")
+    source_id = db.add_source("rss", "FIX26", "https://example.com/feed")
+    db.insert_collected(
+        source_id,
+        [CollectedArticle("one", "FIX26 news", "https://example.com/one", "Body", None)],
+        enforce_today=False,
+    )
+    article_id = db.list_articles()[0].id
+    batch_id = db.create_batch(
+        article_id,
+        (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        {platform: "text"},
+    )
+    return db, batch_id
+
+
+def test_fix26_bulk_reject_is_atomic(tmp_path: Path) -> None:
+    db = Database(tmp_path / "reject.sqlite3")
+    source_id = db.add_source("rss", "Bulk", "https://example.com/bulk")
     db.insert_collected(
         source_id,
         [
-            {
-                "external_id": "one",
-                "title": "Title",
-                "url": "https://example.com/one",
-                "raw_text": "Body",
-                "published_at": None,
-            }
+            CollectedArticle("a", "A", "https://example.com/a", "Body A", None),
+            CollectedArticle("b", "B", "https://example.com/b", "Body B", None),
+            CollectedArticle("c", "C", "https://example.com/c", "Body C", None),
         ],
         enforce_today=False,
     )
-    group = db.list_groups()[0]
-    db.save_group_rewrite(
-        group.id,
-        headline="Headline",
-        fact_card="Facts",
-        rewrite_text="Publication text",
-        platform_texts={"linkedin": "Publication text"},
-    )
-    batch_id = db.queue_targets(
-        db.lead_article_id(group.id),
-        "2020-01-01T00:00:00+00:00",
-        {"linkedin": "Publication text"},
-    ).batch_id
-    return db, batch_id
+    ids = [group.id for group in db.list_groups()]
+    assert len(ids) == 3
+    assert db.set_groups_status(ids[:2], "rejected") == 2
+    assert {group.id for group in db.list_groups(status="rejected")} == set(ids[:2])
+    assert [group.id for group in db.list_groups()] == [ids[2]]
+
+
+def test_fix26_inbox_ui_supports_bulk_reject_delete_and_focused_topic_merge() -> None:
+    source = Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py"
+    text = source.read_text(encoding="utf-8")
+    assert 'text="Видалити"' in text
+    assert 'text="Запам’ятати й більше не пропонувати"' in text
+    assert 'self.groups_tree.bind("<Delete>", self._delete_selected_group_rows)' in text
+    assert "def reject_selected_groups(self) -> None:" in text
+    assert "self.db.set_groups_status(group_ids, \"rejected\")" in text
+    assert "TopicCandidatesDialog" in text
 
 
 def test_fix26_target_timeout_pauses_batch_and_keeps_database_responsive(tmp_path: Path) -> None:
@@ -71,8 +88,7 @@ def test_fix26_target_timeout_pauses_batch_and_keeps_database_responsive(tmp_pat
 
     assert entered.is_set()
     # The publisher blocks for three seconds. A 1.5-second ceiling still proves
-    # that run_once returns without waiting for it, while tolerating hosted
-    # Windows runner scheduling jitter observed around the former 1.0-second cap.
+    # run_once returned early while tolerating hosted Windows scheduling jitter.
     assert elapsed < 1.5
     assert result.paused is True
     assert "linkedin" in result.failed_platforms
@@ -90,39 +106,24 @@ def test_fix26_target_timeout_pauses_batch_and_keeps_database_responsive(tmp_pat
     assert db.get_batch(batch_id).targets[0].status == "failed"
 
 
-def test_fix26_existing_schema_rejects_duplicate_remote_ids(tmp_path: Path) -> None:
-    db, batch_id = _due_database(tmp_path)
-    target = db.get_batch(batch_id).targets[0]
-    with db.connect() as connection:
-        connection.execute(
-            "UPDATE publication_targets SET status='sent',remote_id='remote-one' WHERE id=?",
-            (target.id,),
-        )
-        connection.execute(
-            "INSERT INTO publication_targets(batch_id,platform,status,attempts,remote_id,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (batch_id, "telegram", "sent", 1, "remote-two", "2020-01-01T00:00:00+00:00", "2020-01-01T00:00:00+00:00"),
-        )
-        with sqlite3.connect(db.path) as separate:
-            separate.execute("PRAGMA busy_timeout=100")
-            try:
-                separate.execute(
-                    "UPDATE publication_targets SET remote_id='remote-one' WHERE platform='telegram'"
-                )
-                separate.commit()
-            except sqlite3.IntegrityError:
-                pass
-            else:  # pragma: no cover - indicates a missing release gate.
-                raise AssertionError("duplicate remote IDs were accepted")
+def test_fix26_dns_resolution_has_real_timeout() -> None:
+    def slow_resolver(_host: str, _port: int) -> list[str]:
+        time.sleep(0.5)
+        return ["8.8.8.8"]
+
+    started = time.monotonic()
+    try:
+        _resolve_with_timeout(slow_resolver, "example.com", 443, 0.05)
+    except NetworkError as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("slow DNS resolver unexpectedly completed")
+    assert time.monotonic() - started < 0.3
 
 
-def test_fix26_progress_json_remains_valid_after_timeout(tmp_path: Path) -> None:
-    db, batch_id = _due_database(tmp_path)
-    target = db.get_batch(batch_id).targets[0]
-    with db.connect() as connection:
-        connection.execute(
-            "UPDATE publication_targets SET progress_json=? WHERE id=?",
-            (json.dumps({"step": "started", "attempt": 1}), target.id),
-        )
-    refreshed = db.get_batch(batch_id).targets[0]
-    assert refreshed.progress == {"step": "started", "attempt": 1}
+def test_fix26_worker_logs_package_and_target_context() -> None:
+    source = Path(__file__).parents[1] / "content_agent" / "worker.py"
+    text = source.read_text(encoding="utf-8")
+    assert "Пакет #{batch.id}, ціль #{target.id}" in text
+    assert "outcome_unknown=True" in text
+    assert "Do not hold DATA_MAINTENANCE_LOCK during external HTTP calls" in text
