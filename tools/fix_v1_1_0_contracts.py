@@ -82,12 +82,29 @@ for test_path in sorted((ROOT / "tests").glob("test_r8_fix*.py")):
     text = text.replace("DATABASE_SCHEMA_VERSION == 7", "DATABASE_SCHEMA_VERSION == 8")
     text = text.replace('"DATABASE_SCHEMA_VERSION = 7"', '"DATABASE_SCHEMA_VERSION = 8"')
     text = text.replace(
+        'PRAGMA user_version").fetchone()[0] == 7',
+        'PRAGMA user_version").fetchone()[0] == 8',
+    )
+    text = text.replace(
         'self.groups_tree = ttk.Treeview(tab, columns=columns, show="headings", selectmode="extended")',
         'self.groups_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")',
     )
     text = text.replace(
         'text="Запам’ятати й виключати"',
         'text="Запам’ятати й більше не пропонувати"',
+    )
+    text = text.replace(
+        'text="Знайти все по темі"',
+        'text="Пошук схожих за темою матеріалів"',
+    )
+    text = text.replace(
+        'assert "Автоматичного об’єднання немає" in text',
+        'assert "TopicCandidatesDialog" in text',
+    )
+    text = text.replace(
+        'assert \'self.settings_vars["meta_app_secret"]\' in source',
+        'assert \'self.settings_vars["facebook_app_secret"]\' in source\n'
+        '    assert \'self.settings_vars["threads_app_secret"]\' in source',
     )
     test_path.write_text(text, encoding="utf-8", newline="\n")
 
