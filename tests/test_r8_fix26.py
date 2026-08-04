@@ -55,11 +55,11 @@ def test_fix26_inbox_ui_supports_bulk_reject_and_delete() -> None:
     source = Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py"
     text = source.read_text(encoding="utf-8")
     assert 'text="Видалити"' in text
-    assert 'text="Запам’ятати й виключати"' in text
+    assert 'text="Запам’ятати й більше не пропонувати"' in text
     assert 'self.groups_tree.bind("<Delete>", self._delete_selected_group_rows)' in text
     assert "def reject_selected_groups(self) -> None:" in text
     assert "self.db.set_groups_status(group_ids, \"rejected\")" in text
-    assert "Автоматичного об’єднання немає" in text
+    assert "TopicCandidatesDialog" in text
 
 
 def test_fix26_target_timeout_pauses_batch_and_keeps_database_responsive(tmp_path: Path) -> None:

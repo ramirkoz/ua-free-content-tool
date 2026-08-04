@@ -347,3 +347,11 @@ UA FREE Content Tool grew from real content operations rather than from a generi
 ## License
 
 GPL-2.0-or-later. See [LICENSE](LICENSE).
+
+
+## v1.1.0 development highlights
+
+- **Bilingual interface:** Ukrainian and English modes are selected in Settings. The same setting controls Ollama prompts and final rewrite language.
+- **Focused topic merging:** topic search opens a dedicated candidate window, so editors never have to hunt through the full inbox.
+- **Local learning connectors:** approved edits, manual merges, rejected candidates, exclusions, and generated rewrites feed a local, exportable learning store. No training data is uploaded to a cloud service.
+- **Independent Meta applications:** Facebook and Threads App IDs and secrets are configured separately.

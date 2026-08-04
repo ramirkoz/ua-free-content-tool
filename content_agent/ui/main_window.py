@@ -26,6 +26,15 @@ from ..connection_diagnostics import (
 )
 from ..database import Database
 from ..editorial_memory import rank_editorial_examples, rank_topic_candidates
+from ..i18n import (
+    LANGUAGE_LABELS,
+    language_from_label,
+    language_label,
+    localize_widget_tree,
+    normalize_language,
+    original_text,
+    tr,
+)
 from ..google_drive import (
     GoogleDriveClient,
     GoogleDriveError,
@@ -65,6 +74,7 @@ from ..trends import ThreadsTrendSample, check_threads_keyword_access, threads_k
 from ..worker import PublicationWorker, WorkerResult
 from .editing import install_edit_support
 from .queue_migration_dialog import QueueMigrationDialog
+from .topic_candidates_dialog import TopicCandidatesDialog
 
 
 AUTO_COLLECT_INTERVAL_MS = 5 * 60 * 1000
@@ -81,14 +91,13 @@ DIAGNOSTIC_STATUS_LABELS = {
 GROUP_FILTERS: dict[str, str | None] = {
     "Активні": None,
     "Нові": "new",
-    "У роботі": "draft",
     "Схвалені": "approved",
     "Відхилені": "rejected",
     "Архів": "archived",
 }
 GROUP_STATUS_LABELS = {
     "new": "нова",
-    "draft": "у роботі",
+    "draft": "",
     "approved": "схвалено",
     "rejected": "відхилено",
     "archived": "архів",
@@ -238,7 +247,7 @@ class MainWindow:
             daemon=True,
         )
 
-        root.title("UA FREE Content Tool — R8 FIX30")
+        root.title("UA FREE Content Tool — v1.1.0")
         self._apply_ui_font_size(config.ui_font_size)
         root.geometry("1440x920")
         root.minsize(900, 650)
@@ -274,6 +283,7 @@ class MainWindow:
         self._build_editor_tab()
         self._build_queue_tab()
         self._build_settings_tab()
+        self._apply_language(refresh=False)
 
         ttk.Label(root, textvariable=self.status_var, anchor="w").pack(fill="x", padx=10, pady=(2, 8))
         self.db.archive_stale_groups()
@@ -521,6 +531,9 @@ class MainWindow:
             self.publish_end_var,
             self.publish_interval_var,
             self.ui_font_size_var,
+            self.ui_language_var,
+            self.learning_enabled_var,
+            self.learning_examples_limit_var,
         ]
         for variable in variables:
             variable.trace_add("write", self._mark_settings_dirty)
@@ -676,6 +689,42 @@ class MainWindow:
         self.set_status("Помилка")
         self._finish_operation(str(error), error=True)
         messagebox.showerror("UA FREE Content Tool", str(error), parent=self.root)
+
+    def t(self, text: str) -> str:
+        return tr(text, self.config.ui_language)
+
+    def _apply_language(self, *, refresh: bool = True) -> None:
+        language = normalize_language(
+            language_from_label(self.ui_language_var.get())
+            if hasattr(self, "ui_language_var")
+            else self.config.ui_language
+        )
+        self.config.ui_language = language
+        self.root.title("UA FREE Content Tool — v1.1.0")
+        localize_widget_tree(self.root, language)
+        if hasattr(self, "group_filter_box"):
+            current = original_text(self.group_filter.get())
+            values = tuple(tr(item, language) for item in GROUP_FILTERS)
+            self.group_filter_box.configure(values=values)
+            self.group_filter.set(tr(current if current in GROUP_FILTERS else "Активні", language))
+        if hasattr(self, "queue_filter_box"):
+            current = original_text(self.queue_filter.get())
+            values = tuple(tr(item, language) for item in QUEUE_FILTERS)
+            self.queue_filter_box.configure(values=values)
+            self.queue_filter.set(tr(current if current in QUEUE_FILTERS else "Активні", language))
+        if hasattr(self, "settings_language_status_var"):
+            self.settings_language_status_var.set(
+                "Interface and Ollama output: English"
+                if language == "en"
+                else "Інтерфейс і вихід Ollama: українська"
+            )
+        if refresh and hasattr(self, "groups_tree"):
+            self.refresh_groups()
+            self.refresh_queue()
+
+    def preview_language(self, *_args: object) -> None:
+        self._apply_language()
+        self._mark_settings_dirty()
 
     # Sources
     def _build_sources_tab(self) -> None:
@@ -836,97 +885,114 @@ class MainWindow:
     def _build_inbox_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(tab, text="Вхідні")
-        top = ttk.Frame(tab)
-        top.pack(fill="x", pady=(0, 6))
-        self.group_filter = tk.StringVar(value="Активні")
-        ttk.Label(top, text="Показати").pack(side="left")
-        filter_box = ttk.Combobox(
-            top,
-            textvariable=self.group_filter,
-            values=tuple(GROUP_FILTERS),
-            state="readonly",
-            width=14,
-        )
-        filter_box.pack(side="left", padx=6)
-        filter_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh_groups())
-        ttk.Button(top, text="Оновити", command=self.refresh_groups).pack(side="left")
-        ttk.Button(top, text="Відновити / прийняти", command=self.accept_selected_group).pack(side="left", padx=6)
-        ttk.Button(top, text="Видалити", command=self.delete_selected_groups).pack(side="left")
-        ttk.Button(
-            top,
-            text="Запам’ятати й виключати",
-            command=self.remember_and_exclude_selected_groups,
-        ).pack(side="left", padx=6)
 
-        topic_tools = ttk.Frame(tab)
-        topic_tools.pack(fill="x", pady=(0, 6))
-        ttk.Button(topic_tools, text="Знайти все по темі", command=self.find_all_by_topic).pack(side="left")
-        ttk.Button(topic_tools, text="Об’єднати в один блок", command=self.merge_selected_groups).pack(side="left", padx=6)
-        ttk.Label(
-            topic_tools,
-            text="Delete видаляє лише зараз. «Запам’ятати й виключати» фільтрує схожі новини під час майбутнього збору.",
-            foreground="#555",
-        ).pack(side="left", padx=(10, 0))
+        actions = ttk.Frame(tab)
+        actions.pack(fill="x", pady=(0, 6))
+        self.group_filter = tk.StringVar(value="Активні")
+        ttk.Label(actions, text="Показати").grid(row=0, column=0, sticky="w", padx=(0, 4))
+        self.group_filter_box = ttk.Combobox(
+            actions, textvariable=self.group_filter, values=tuple(GROUP_FILTERS),
+            state="readonly", width=13,
+        )
+        self.group_filter_box.grid(row=0, column=1, sticky="w", padx=(0, 5))
+        self.group_filter_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh_groups())
+        ttk.Button(actions, text="Оновити", command=self.refresh_groups).grid(row=0, column=2, padx=3)
+        ttk.Button(actions, text="Відновити / прийняти", command=self.accept_selected_group).grid(row=0, column=3, padx=3)
+        ttk.Button(actions, text="Видалити", command=self.delete_selected_groups).grid(row=0, column=4, padx=3)
+        tk.Button(
+            actions, text="Запам’ятати й більше не пропонувати",
+            command=self.remember_and_exclude_selected_groups, bg="#b3261e", fg="white",
+            activebackground="#8f1f19", activeforeground="white", relief="flat", padx=9, pady=4,
+        ).grid(row=0, column=5, padx=3)
+        ttk.Button(
+            actions, text="Пошук схожих за темою матеріалів", command=self.find_all_by_topic
+        ).grid(row=0, column=6, padx=3)
+        tk.Button(
+            actions, text="Об’єднати в один блок", command=self.merge_selected_groups,
+            bg="#2e7d32", fg="white", activebackground="#256628", activeforeground="white",
+            relief="flat", padx=9, pady=4,
+        ).grid(row=0, column=7, padx=3)
+        actions.columnconfigure(8, weight=1)
 
         self.topic_search_status_var = tk.StringVar(
-            value="Оберіть одну цікаву новину й натисніть «Знайти все по темі». Ollama лише підсвітить кандидатів."
+            value="Оберіть одну новину й натисніть «Пошук схожих за темою матеріалів»."
+        )
+        ttk.Label(tab, textvariable=self.topic_search_status_var, foreground="#555", wraplength=1350).pack(
+            fill="x", pady=(0, 4)
         )
         ttk.Label(
             tab,
-            textvariable=self.topic_search_status_var,
-            foreground="#555",
-            wraplength=1350,
-        ).pack(fill="x", pady=(0, 4))
-        ttk.Label(
-            tab,
-            text="Вибір: Shift — діапазон, Ctrl — окремі блоки, Ctrl+A — усі видимі, Delete — просте видалення. "
-            "Автоматичного об’єднання немає; ручні об’єднання поповнюють навчальну пам’ять пошуку.",
+            text="Вибір: Shift — діапазон, Ctrl — окремі блоки, Ctrl+A — усі видимі, Delete — просте видалення.",
         ).pack(fill="x", pady=(0, 6))
 
+        tree_frame = ttk.Frame(tab)
+        tree_frame.pack(fill="both", expand=True)
         columns = ("id", "status", "title", "sources", "published", "score")
-        self.groups_tree = ttk.Treeview(tab, columns=columns, show="headings", selectmode="extended")
+        self.groups_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")
         headings = {
-            "id": "Блок",
-            "status": "Статус",
-            "title": "Подія",
-            "sources": "Джерел",
-            "published": "Остання згадка",
-            "score": "Вибуховість",
+            "id": "Блок", "status": "Статус", "title": "Подія", "sources": "Джерел",
+            "published": "Остання згадка", "score": "Вибуховість",
         }
         widths = {"id": 70, "status": 100, "title": 650, "sources": 90, "published": 190, "score": 120}
         for column in columns:
             self.groups_tree.heading(column, text=headings[column])
             self.groups_tree.column(column, width=widths[column], anchor="w")
+        self.groups_tree.tag_configure("approved", background="#e7f5e8")
         self.groups_tree.tag_configure("topic_strong", background="#dff2df")
         self.groups_tree.tag_configure("topic_possible", background="#fff4cc")
-        self.groups_tree.pack(fill="both", expand=True)
+        groups_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.groups_tree.yview)
+        self.groups_tree.configure(yscrollcommand=groups_scroll.set)
+        self.groups_tree.pack(side="left", fill="both", expand=True)
+        groups_scroll.pack(side="right", fill="y")
         self.groups_tree.bind("<Button-1>", self._remember_group_selection_anchor, add="+")
         self.groups_tree.bind("<Shift-Button-1>", self._select_group_range)
         self.groups_tree.bind("<Double-1>", lambda _event: self.accept_selected_group())
         self.groups_tree.bind("<Control-a>", self._select_all_group_rows)
         self.groups_tree.bind("<Control-A>", self._select_all_group_rows)
         self.groups_tree.bind("<Delete>", self._delete_selected_group_rows)
+        self.groups_tree.bind("<Prior>", self._page_group_tree)
+        self.groups_tree.bind("<Next>", self._page_group_tree)
+        self.groups_tree.bind("<Home>", self._page_group_tree)
+        self.groups_tree.bind("<End>", self._page_group_tree)
+
+    def _page_group_tree(self, event: tk.Event) -> str:
+        key = str(getattr(event, "keysym", ""))
+        if key == "Prior":
+            self.groups_tree.yview_scroll(-1, "pages")
+        elif key == "Next":
+            self.groups_tree.yview_scroll(1, "pages")
+        elif key == "Home":
+            self.groups_tree.yview_moveto(0.0)
+        elif key == "End":
+            self.groups_tree.yview_moveto(1.0)
+        return "break"
 
     def refresh_groups(self) -> None:
-        self._groups_selection_anchor = None
+        selected_before = tuple(self.groups_tree.selection())
+        focus_before = self.groups_tree.focus()
+        yview_before = self.groups_tree.yview()
         self.groups_tree.delete(*self.groups_tree.get_children())
-        selected_filter = self.group_filter.get()
+        selected_filter = original_text(self.group_filter.get())
         status = GROUP_FILTERS.get(selected_filter)
         for group in self.db.list_groups(status=status):
             score = f"{group.explosiveness_score}/100" if group.explosiveness_score else "—"
+            tags = ("approved",) if group.status == "approved" else ()
             self.groups_tree.insert(
-                "",
-                "end",
-                iid=str(group.id),
+                "", "end", iid=str(group.id),
                 values=(
                     group.id,
-                    GROUP_STATUS_LABELS.get(group.status, group.status),
-                    group.canonical_title,
-                    group.source_count,
-                    group.last_published_at or "—",
-                    score,
+                    tr(GROUP_STATUS_LABELS.get(group.status, group.status), self.config.ui_language),
+                    group.canonical_title, group.source_count, group.last_published_at or "—", score,
                 ),
+                tags=tags,
             )
+        existing = [iid for iid in selected_before if self.groups_tree.exists(iid)]
+        if existing:
+            self.groups_tree.selection_set(existing)
+        if focus_before and self.groups_tree.exists(focus_before):
+            self.groups_tree.focus(focus_before)
+        if yview_before:
+            self.groups_tree.yview_moveto(float(yview_before[0]))
 
     def refresh_articles(self) -> None:
         self.refresh_groups()
@@ -1025,8 +1091,8 @@ class MainWindow:
         if group_id is None:
             return
         group = self.db.get_group(group_id)
-        if group.status in {"new", "rejected"}:
-            self.db.set_group_status(group_id, "draft")
+        if group.status == "rejected":
+            self.db.set_group_status(group_id, "new")
         self.db.forget_content_exclusion_for_group(group_id)
         self.load_group(group_id)
         self.refresh_groups()
@@ -1094,7 +1160,7 @@ class MainWindow:
         )
 
     def find_all_by_topic(self) -> None:
-        anchor_id = self._require_single_group_id("Знайти все по темі")
+        anchor_id = self._require_single_group_id("Пошук схожих за темою матеріалів")
         if anchor_id is None:
             return
         try:
@@ -1103,28 +1169,32 @@ class MainWindow:
             self._show_error(exc)
             return
         candidate_rows = self.db.topic_candidate_rows(anchor_id)
-        topic_feedback = self.db.list_topic_feedback()
+        topic_feedback = (
+            self.db.list_topic_feedback(language=self.config.ui_language)
+            if self.config.learning_enabled
+            else []
+        )
         local_candidates = rank_topic_candidates(
             anchor.combined_text or anchor.canonical_title,
             candidate_rows,
             feedback=topic_feedback,
             limit=12,
+            language=self.config.ui_language,
         )
         if not local_candidates:
-            self.topic_search_status_var.set("Схожих активних новин у «Вхідних» не знайдено.")
+            self.topic_search_status_var.set(self.t("Схожих матеріалів для об’єднання не знайдено."))
             return
         rows_by_id = {int(row["group_id"]): row for row in candidate_rows}
         shortlisted = [rows_by_id[item.group_id] for item in local_candidates if item.group_id in rows_by_id]
         self.topic_search_status_var.set(
-            f"Ollama перевіряє {len(shortlisted)} найближчих кандидатів. Блоки не об’єднуються автоматично."
+            (f"Ollama is checking {len(shortlisted)} candidates…" if self.config.ui_language == "en"
+             else f"Ollama перевіряє {len(shortlisted)} кандидатів…")
         )
 
         def action() -> object:
             prompt = build_topic_prompt(
-                anchor.canonical_title,
-                anchor.combined_text,
-                shortlisted,
-                feedback=topic_feedback,
+                anchor.canonical_title, anchor.combined_text, shortlisted,
+                feedback=topic_feedback, language=self.config.ui_language,
             )
             try:
                 client = OllamaClient(self.config.ollama_base_url, timeout=180, load_timeout=120)
@@ -1134,44 +1204,75 @@ class MainWindow:
             except OllamaError as exc:
                 model_matches = {}
                 error = str(exc)
-            matches = merge_local_and_ollama(local_candidates, model_matches, minimum_score=45)
-            return matches, error
+            return merge_local_and_ollama(local_candidates, model_matches, minimum_score=45), error
 
         def success(result: object) -> None:
             matches, error = result  # type: ignore[misc]
-            for item in self.groups_tree.get_children():
-                self.groups_tree.item(item, tags=())
-            anchor_iid = str(anchor_id)
-            selected = [anchor_iid]
-            if self.groups_tree.exists(anchor_iid):
-                self.groups_tree.item(anchor_iid, tags=("topic_strong",))
-            details: list[str] = []
+            candidate_data: list[dict[str, object]] = []
             for match in matches:
-                iid = str(match.group_id)
-                if not self.groups_tree.exists(iid):
+                row = rows_by_id.get(match.group_id)
+                if row is None:
                     continue
-                tag = "topic_strong" if match.score >= 75 else "topic_possible"
-                self.groups_tree.item(iid, tags=(tag,))
-                selected.append(iid)
-                details.append(f"#{match.group_id} — {match.score}%: {match.reason}")
-            self.groups_tree.selection_set(selected)
-            if self.groups_tree.exists(anchor_iid):
-                self.groups_tree.focus(anchor_iid)
-                self.groups_tree.see(anchor_iid)
-            if details:
-                suffix = f" Ollama недоступна: {error}. Використано локальний пошук." if error else ""
-                self.topic_search_status_var.set(
-                    f"Підсвічено кандидатів: {len(details)}. " + "; ".join(details[:5]) + suffix
-                )
-            else:
-                suffix = f" Причина: {error}" if error else ""
-                self.topic_search_status_var.set("Ollama не підтвердила інших матеріалів про цю саму подію." + suffix)
+                candidate_data.append({**row, "score": match.score, "reason": match.reason})
+            if not candidate_data:
+                suffix = f" {error}" if error else ""
+                self.topic_search_status_var.set(self.t("Схожих матеріалів для об’єднання не знайдено.") + suffix)
+                return
+            self.topic_search_status_var.set(
+                (f"Merge candidates: {len(candidate_data)}" if self.config.ui_language == "en"
+                 else f"Кандидатів на об’єднання: {len(candidate_data)}")
+            )
+            TopicCandidatesDialog(
+                self.root, anchor_id=anchor_id, anchor_title=anchor.canonical_title,
+                candidates=candidate_data, language=self.config.ui_language,
+                on_merge=lambda selected, all_ids: self._merge_topic_candidates(
+                    anchor_id, selected, all_ids
+                ),
+            )
 
         self.run_async(
-            action,
-            success,
-            label=f"Пошук усіх матеріалів по темі блоку #{anchor_id}",
-            done_label="Тематичний пошук завершено",
+            action, success,
+            label=(f"Topic search for block #{anchor_id}" if self.config.ui_language == "en"
+                   else f"Пошук матеріалів по темі блоку #{anchor_id}"),
+            done_label=("Topic search completed" if self.config.ui_language == "en"
+                        else "Тематичний пошук завершено"),
+        )
+
+    def _merge_topic_candidates(
+        self, anchor_id: int, selected_ids: list[int], all_candidate_ids: list[int]
+    ) -> None:
+        if not selected_ids:
+            return
+        group_ids = [anchor_id, *selected_ids]
+        try:
+            anchor = self.db.get_group(anchor_id)
+            candidate_groups = {group_id: self.db.get_group(group_id) for group_id in all_candidate_ids}
+            moved = self.db.merge_groups(anchor_id, group_ids)
+            if self.config.learning_enabled:
+                for group_id, candidate in candidate_groups.items():
+                    decision = "merged" if group_id in selected_ids else "not_related"
+                    self.db.record_topic_feedback(
+                        anchor.combined_text or anchor.canonical_title,
+                        candidate.combined_text or candidate.canonical_title,
+                        decision=decision, language=self.config.ui_language,
+                    )
+                self.db.record_learning_event(
+                    "topic_candidate_selection", language=self.config.ui_language,
+                    group_id=anchor_id, anchor_group_id=anchor_id,
+                    payload={"selected": selected_ids, "rejected": [i for i in all_candidate_ids if i not in selected_ids]},
+                )
+        except Exception as exc:
+            self._show_error(exc)
+            return
+        self.refresh_groups()
+        if self.groups_tree.exists(str(anchor_id)):
+            self.groups_tree.selection_set(str(anchor_id))
+            self.groups_tree.focus(str(anchor_id))
+            self.groups_tree.see(str(anchor_id))
+        self.set_status(
+            (f"Merged {len(selected_ids)} candidates; moved sources: {moved}."
+             if self.config.ui_language == "en"
+             else f"Об’єднано кандидатів: {len(selected_ids)}; перенесено джерел: {moved}.")
         )
 
     def merge_selected_groups(self) -> None:
@@ -1217,6 +1318,7 @@ class MainWindow:
                     target.combined_text or target.canonical_title,
                     source_group.combined_text or source_group.canonical_title,
                     decision="merged",
+                    language=self.config.ui_language,
                 )
             )
         except Exception as exc:
@@ -1639,8 +1741,8 @@ class MainWindow:
                 event.wait(timeout=120)
             examples = rank_editorial_examples(
                 group.combined_text,
-                self.db.list_editorial_examples(),
-                limit=3,
+                self.db.list_editorial_examples(language=config.ui_language),
+                limit=config.learning_examples_limit if config.learning_enabled else 0,
             )
             primary_client = OllamaClient(config.ollama_base_url, timeout=240, load_timeout=120)
             fallback_client = OllamaClient(config.ollama_base_url, timeout=180, load_timeout=120)
@@ -1651,6 +1753,7 @@ class MainWindow:
                 group,
                 fallback_client=fallback_client,
                 editorial_examples=examples,
+                language=config.ui_language,
             )
             return rewrite_result, model_used, used_fallback, len(examples)
 
@@ -1669,6 +1772,11 @@ class MainWindow:
                 rewrite_text=rewrite_result.rewrite,
                 platform_texts=rewrite_result.platform_texts,
             )
+            if config.learning_enabled:
+                self.db.record_learning_event(
+                    "rewrite_generated", language=config.ui_language, group_id=group.id,
+                    payload={"model": model_used, "fallback": bool(used_fallback), "examples": example_count},
+                )
             self.refresh_groups()
             self.update_text_metrics()
             memory_note = (
@@ -2031,10 +2139,13 @@ class MainWindow:
             group.id,
             final_text=rewrite,
             headline=headline,
+            language=self.config.ui_language,
         )
         if learned:
             self.editorial_memory_var.set(
-                f"Редакційна пам’ять: {self.db.editorial_example_count()} схвалених прикладів"
+                (f"Editorial memory: {self.db.editorial_example_count(language=self.config.ui_language)} approved examples"
+                 if self.config.ui_language == "en"
+                 else f"Редакційна пам’ять: {self.db.editorial_example_count(language=self.config.ui_language)} схвалених прикладів")
             )
         self.worker.wake()
         self.refresh_groups()
@@ -2530,6 +2641,8 @@ class MainWindow:
             )
         )
         self.ui_font_size_var = tk.StringVar(value=str(self.config.ui_font_size))
+        self.ui_language_var = tk.StringVar(value=language_label(self.config.ui_language))
+        self.settings_language_status_var = tk.StringVar()
 
         font_controls = ttk.Frame(sticky)
         font_controls.grid(row=0, column=0, sticky="w")
@@ -2545,6 +2658,14 @@ class MainWindow:
         self.ui_font_size_combo.pack(side="left", padx=2)
         self.ui_font_size_combo.bind("<<ComboboxSelected>>", self.preview_font_size)
         ttk.Button(font_controls, text="A+", width=4, command=lambda: self.change_font_size(1)).pack(side="left", padx=(2, 10))
+        ttk.Label(font_controls, text="Мова програми").pack(side="left", padx=(12, 4))
+        self.ui_language_combo = ttk.Combobox(
+            font_controls, textvariable=self.ui_language_var,
+            values=tuple(LANGUAGE_LABELS.values()), state="readonly", width=12,
+        )
+        self.ui_language_combo.pack(side="left", padx=(0, 6))
+        self.ui_language_combo.bind("<<ComboboxSelected>>", self.preview_language)
+        ttk.Label(font_controls, textvariable=self.settings_language_status_var, foreground="#555").pack(side="left")
 
         ttk.Label(sticky, textvariable=self.settings_dirty_var, foreground="#555").grid(
             row=0, column=1, sticky="w", padx=10
@@ -2658,39 +2779,43 @@ class MainWindow:
             wraplength=1050,
         ).pack(fill="x", pady=(5, 0))
 
-        meta_app = ttk.LabelFrame(platforms, text="Meta застосунок — спільний для Facebook і Threads", padding=8)
-        meta_app.pack(fill="x", pady=4)
-        self.settings_vars["meta_app_id"] = tk.StringVar(value=self.config.meta_app_id)
-        self.settings_vars["meta_app_secret"] = tk.StringVar(value=self.config.meta_app_secret)
-        ttk.Label(meta_app, text="Meta App ID").grid(row=0, column=0, sticky="w")
-        ttk.Entry(meta_app, textvariable=self.settings_vars["meta_app_id"], width=32).grid(
+        facebook_app = ttk.LabelFrame(platforms, text="Facebook застосунок", padding=8)
+        facebook_app.pack(fill="x", pady=4)
+        self.settings_vars["facebook_app_id"] = tk.StringVar(value=self.config.facebook_app_id)
+        self.settings_vars["facebook_app_secret"] = tk.StringVar(value=self.config.facebook_app_secret)
+        ttk.Label(facebook_app, text="Facebook App ID").grid(row=0, column=0, sticky="w")
+        ttk.Entry(facebook_app, textvariable=self.settings_vars["facebook_app_id"], width=32).grid(
             row=1, column=0, sticky="ew", padx=(0, 8)
         )
-        ttk.Label(meta_app, text="Meta App Secret").grid(row=0, column=1, sticky="w")
+        ttk.Label(facebook_app, text="Facebook App Secret").grid(row=0, column=1, sticky="w")
         ttk.Entry(
-            meta_app,
-            textvariable=self.settings_vars["meta_app_secret"],
-            show="•",
-            width=48,
+            facebook_app, textvariable=self.settings_vars["facebook_app_secret"], show="•", width=48
         ).grid(row=1, column=1, sticky="ew")
-        meta_app_actions = ttk.Frame(meta_app)
-        meta_app_actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(
-            meta_app_actions,
-            text="Відкрити налаштування застосунку",
+            facebook_app, text="Відкрити налаштування застосунку",
             command=lambda: webbrowser.open("https://developers.facebook.com/apps/", new=2),
-        ).pack(side="left")
-        ttk.Label(
-            meta_app,
-            text=(
-                "Ці дані потрібні лише для автоматичного обміну коротких токенів на довготривалі. "
-                "App Secret зберігається в зашифрованій конфігурації й не потрапляє до журналів."
-            ),
-            foreground="#666",
-            wraplength=1050,
-        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(5, 0))
-        meta_app.columnconfigure(0, weight=1)
-        meta_app.columnconfigure(1, weight=1)
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        facebook_app.columnconfigure(0, weight=1)
+        facebook_app.columnconfigure(1, weight=1)
+
+        threads_app = ttk.LabelFrame(platforms, text="Threads застосунок", padding=8)
+        threads_app.pack(fill="x", pady=4)
+        self.settings_vars["threads_app_id"] = tk.StringVar(value=self.config.threads_app_id)
+        self.settings_vars["threads_app_secret"] = tk.StringVar(value=self.config.threads_app_secret)
+        ttk.Label(threads_app, text="Threads App ID").grid(row=0, column=0, sticky="w")
+        ttk.Entry(threads_app, textvariable=self.settings_vars["threads_app_id"], width=32).grid(
+            row=1, column=0, sticky="ew", padx=(0, 8)
+        )
+        ttk.Label(threads_app, text="Threads App Secret").grid(row=0, column=1, sticky="w")
+        ttk.Entry(
+            threads_app, textvariable=self.settings_vars["threads_app_secret"], show="•", width=48
+        ).grid(row=1, column=1, sticky="ew")
+        ttk.Button(
+            threads_app, text="Відкрити налаштування застосунку",
+            command=lambda: webbrowser.open("https://developers.facebook.com/apps/", new=2),
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        threads_app.columnconfigure(0, weight=1)
+        threads_app.columnconfigure(1, weight=1)
 
         meta = ttk.LabelFrame(platforms, text="Facebook Pages", padding=8)
         meta.pack(fill="x", pady=4)
@@ -2869,6 +2994,33 @@ class MainWindow:
             text="Усі увімкнені джерела перевіряються автоматично після запуску і кожні 5 хвилин.",
         ).pack(anchor="w")
         ttk.Checkbutton(workflow, text="Використовувати Threads для оцінки вибуховості, якщо дозвіл доступний", variable=self.threads_trend_var).pack(anchor="w")
+
+        learning = ttk.LabelFrame(form, text="Локальне навчання", padding=8)
+        learning.pack(fill="x", pady=(0, 8))
+        self.learning_enabled_var = tk.BooleanVar(value=self.config.learning_enabled)
+        self.learning_examples_limit_var = tk.StringVar(value=str(self.config.learning_examples_limit))
+        self.learning_stats_var = tk.StringVar(value="")
+        ttk.Checkbutton(
+            learning, text="Використовувати навчальні приклади в промптах Ollama",
+            variable=self.learning_enabled_var,
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(learning, text="Кількість прикладів у промпті").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        ttk.Combobox(
+            learning, textvariable=self.learning_examples_limit_var,
+            values=tuple(str(value) for value in range(1, 13)), state="readonly", width=6,
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=(7, 0))
+        ttk.Button(learning, text="Оновити статистику", command=self.refresh_learning_stats).grid(
+            row=1, column=2, sticky="w", pady=(7, 0)
+        )
+        ttk.Label(learning, textvariable=self.learning_stats_var, foreground="#555").grid(
+            row=2, column=0, columnspan=3, sticky="w", pady=(6, 3)
+        )
+        learning_actions = ttk.Frame(learning)
+        learning_actions.grid(row=3, column=0, columnspan=3, sticky="w", pady=(5, 0))
+        ttk.Button(learning_actions, text="Експортувати навчальні дані", command=self.export_learning_data_ui).pack(side="left")
+        ttk.Button(learning_actions, text="Імпортувати навчальні дані", command=self.import_learning_data_ui).pack(side="left", padx=6)
+        ttk.Button(learning_actions, text="Очистити навчальну історію", command=self.clear_learning_history_ui).pack(side="left")
+        self.refresh_learning_stats()
 
         schedule = ttk.LabelFrame(form, text="5. Розклад", padding=10)
         schedule.pack(fill="x", pady=(0, 8))
@@ -3355,11 +3507,11 @@ class MainWindow:
 
     def connect_meta(self) -> None:
         user_token = self.settings_vars["meta_user_access_token"].get().strip()
-        app_id_var = self.settings_vars.get("meta_app_id")
-        app_secret_var = self.settings_vars.get("meta_app_secret")
-        app_id = app_id_var.get().strip() if app_id_var is not None else self.config.meta_app_id
-        app_secret = app_secret_var.get().strip() if app_secret_var is not None else self.config.meta_app_secret
-        graph_version = self.config.meta_graph_version or "v24.0"
+        app_id_var = self.settings_vars.get("facebook_app_id")
+        app_secret_var = self.settings_vars.get("facebook_app_secret")
+        app_id = app_id_var.get().strip() if app_id_var is not None else self.config.facebook_app_id
+        app_secret = app_secret_var.get().strip() if app_secret_var is not None else self.config.facebook_app_secret
+        graph_version = self.config.meta_graph_version or "v26.0"
         self.meta_status_var.set("Перевіряється токен і завантажуються сторінки…")
 
         def action() -> object:
@@ -3408,10 +3560,12 @@ class MainWindow:
         pages: object,
         lifecycle_note: str = "",
     ) -> None:
-        app_id_var = self.settings_vars.get("meta_app_id")
-        app_secret_var = self.settings_vars.get("meta_app_secret")
-        self.config.meta_app_id = app_id_var.get().strip() if app_id_var is not None else self.config.meta_app_id
-        self.config.meta_app_secret = app_secret_var.get().strip() if app_secret_var is not None else self.config.meta_app_secret
+        app_id_var = self.settings_vars.get("facebook_app_id")
+        app_secret_var = self.settings_vars.get("facebook_app_secret")
+        self.config.facebook_app_id = app_id_var.get().strip() if app_id_var is not None else self.config.facebook_app_id
+        self.config.facebook_app_secret = app_secret_var.get().strip() if app_secret_var is not None else self.config.facebook_app_secret
+        self.config.meta_app_id = self.config.facebook_app_id
+        self.config.meta_app_secret = self.config.facebook_app_secret
         self.config.meta_user_access_token = user_token
         self.config.meta_user_token_expires_at = expires_at
         self.settings_vars["meta_user_access_token"].set(user_token)
@@ -3433,8 +3587,8 @@ class MainWindow:
 
     def connect_threads(self) -> None:
         token = self.settings_vars["threads_token"].get().strip()
-        app_secret_var = self.settings_vars.get("meta_app_secret")
-        app_secret = app_secret_var.get().strip() if app_secret_var is not None else self.config.meta_app_secret
+        app_secret_var = self.settings_vars.get("threads_app_secret")
+        app_secret = app_secret_var.get().strip() if app_secret_var is not None else self.config.threads_app_secret
         self.threads_status_var.set(
             "Профіль Threads: перевіряю токен і строк дії…"
         )
@@ -3479,9 +3633,11 @@ class MainWindow:
 
         def success(result: object) -> None:
             profile, final_token, expires_at, lifecycle_note = result  # type: ignore[misc]
-            app_id_var = self.settings_vars.get("meta_app_id")
-            self.config.meta_app_id = app_id_var.get().strip() if app_id_var is not None else self.config.meta_app_id
-            self.config.meta_app_secret = app_secret
+            app_id_var = self.settings_vars.get("threads_app_id")
+            self.config.threads_app_id = app_id_var.get().strip() if app_id_var is not None else self.config.threads_app_id
+            self.config.threads_app_secret = app_secret
+            self.config.meta_app_id = self.config.facebook_app_id or self.config.threads_app_id
+            self.config.meta_app_secret = self.config.facebook_app_secret or self.config.threads_app_secret
             self.config.threads_token = str(final_token)
             self.config.threads_token_expires_at = str(expires_at)
             self.config.threads_token_refreshed_at = datetime.now(KYIV).isoformat(timespec="seconds")
@@ -3631,8 +3787,10 @@ class MainWindow:
         try:
             old_meta_token = self.config.meta_user_access_token
             old_threads_token = self.config.threads_token
-            new_meta_app_id = self.settings_vars["meta_app_id"].get().strip()
-            new_meta_app_secret = self.settings_vars["meta_app_secret"].get().strip()
+            new_facebook_app_id = self.settings_vars["facebook_app_id"].get().strip()
+            new_facebook_app_secret = self.settings_vars["facebook_app_secret"].get().strip()
+            new_threads_app_id = self.settings_vars["threads_app_id"].get().strip()
+            new_threads_app_secret = self.settings_vars["threads_app_secret"].get().strip()
             new_meta_token = self.settings_vars["meta_user_access_token"].get().strip()
             new_threads_token = self.settings_vars["threads_token"].get().strip()
             new_google_id = self.settings_vars["google_client_id"].get().strip()
@@ -3657,8 +3815,15 @@ class MainWindow:
                     "ollama_fallback_model": ""
                     if self.ollama_fallback_var.get() == "Без запасної моделі"
                     else self.ollama_fallback_var.get().strip(),
-                    "meta_app_id": new_meta_app_id,
-                    "meta_app_secret": new_meta_app_secret,
+                    "facebook_app_id": new_facebook_app_id,
+                    "facebook_app_secret": new_facebook_app_secret,
+                    "threads_app_id": new_threads_app_id,
+                    "threads_app_secret": new_threads_app_secret,
+                    "meta_app_id": new_facebook_app_id or new_threads_app_id,
+                    "meta_app_secret": new_facebook_app_secret or new_threads_app_secret,
+                    "ui_language": language_from_label(self.ui_language_var.get()),
+                    "learning_enabled": self.learning_enabled_var.get(),
+                    "learning_examples_limit": int(self.learning_examples_limit_var.get()),
                     "meta_user_access_token": new_meta_token,
                     "threads_token": new_threads_token,
                     "linkedin_token": self.settings_vars["linkedin_token"].get().strip(),
@@ -3672,7 +3837,7 @@ class MainWindow:
                     "publish_end_hour": int(self.publish_end_var.get()),
                     "publish_interval_minutes": int(self.publish_interval_var.get()),
                     "ui_font_size": int(self.ui_font_size_var.get()),
-                    "meta_graph_version": self.config.meta_graph_version or "v24.0",
+                    "meta_graph_version": self.config.meta_graph_version or "v26.0",
                     "linkedin_version": self.config.linkedin_version or "202607",
                     "facebook_pages": pages,
                 }
@@ -3697,6 +3862,8 @@ class MainWindow:
                 self.worker.wake()
         self._prewarm_ollama_model_async(config.ollama_model)
         self._apply_ui_font_size(config.ui_font_size)
+        self.ui_language_var.set(language_label(config.ui_language))
+        self._apply_language(refresh=False)
         self._refresh_meta_pages_view()
         self.meta_status_var.set(self._meta_status_text())
         self.threads_status_var.set(self._threads_status_text())
@@ -3726,6 +3893,65 @@ class MainWindow:
             return
         self._rebuild_target_controls()
 
+    def refresh_learning_stats(self) -> None:
+        if not hasattr(self, "learning_stats_var"):
+            return
+        stats = self.db.learning_stats()
+        examples = stats.get("editorial_examples", {})
+        if self.config.ui_language == "en":
+            self.learning_stats_var.set(
+                f"Examples: UK {examples.get('uk', 0)} · EN {examples.get('en', 0)} · "
+                f"merge feedback: {stats.get('topic_feedback', 0)} · events: {stats.get('events', 0)} · "
+                f"active exclusions: {stats.get('active_exclusions', 0)}"
+            )
+        else:
+            self.learning_stats_var.set(
+                f"Приклади: UK {examples.get('uk', 0)} · EN {examples.get('en', 0)} · "
+                f"рішень про об’єднання: {stats.get('topic_feedback', 0)} · подій: {stats.get('events', 0)} · "
+                f"активних виключень: {stats.get('active_exclusions', 0)}"
+            )
+
+    def export_learning_data_ui(self) -> None:
+        selected = filedialog.asksaveasfilename(
+            parent=self.root, title=self.t("Експортувати навчальні дані"),
+            defaultextension=".json", filetypes=[("JSON", "*.json")],
+            initialfile="UA_FREE_learning_data.json",
+        )
+        if not selected:
+            return
+        try:
+            path = self.db.export_learning_data(Path(selected))
+        except Exception as exc:
+            self._show_error(exc)
+            return
+        messagebox.showinfo(self.t("Локальне навчання"), str(path), parent=self.root)
+
+    def import_learning_data_ui(self) -> None:
+        selected = filedialog.askopenfilename(
+            parent=self.root, title=self.t("Імпортувати навчальні дані"),
+            filetypes=[("JSON", "*.json")],
+        )
+        if not selected:
+            return
+        try:
+            counts = self.db.import_learning_data(Path(selected))
+        except Exception as exc:
+            self._show_error(exc)
+            return
+        self.refresh_learning_stats()
+        messagebox.showinfo(self.t("Локальне навчання"), str(counts), parent=self.root)
+
+    def clear_learning_history_ui(self) -> None:
+        question = (
+            "Delete editorial examples, merge feedback, and learning events? Permanent inbox exclusions will remain."
+            if self.config.ui_language == "en"
+            else "Видалити редакційні приклади, рішення про об’єднання та навчальні події? Постійні виключення новин залишаться."
+        )
+        if not messagebox.askyesno(self.t("Очистити навчальну історію"), question, parent=self.root):
+            return
+        self.db.clear_learning_history()
+        self.refresh_learning_stats()
+
     def create_backup_ui(self) -> None:
         self.run_async(
             create_backup,
@@ -3753,6 +3979,9 @@ class MainWindow:
             self.refresh_groups()
             self.refresh_queue()
             self._update_target_availability()
+            self.ui_language_var.set(language_label(self.config.ui_language))
+            self._apply_language()
+            self.refresh_learning_stats()
             messagebox.showinfo(
                 "Імпорт",
                 f"Імпорт завершено. Safety backup: {getattr(result, 'safety_backup', '')}",

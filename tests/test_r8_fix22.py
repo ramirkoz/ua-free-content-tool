@@ -116,7 +116,7 @@ def test_fix22_inbox_ui_supports_standard_multiselect_and_manual_merge() -> None
     source = Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py"
     text = source.read_text(encoding="utf-8")
 
-    assert 'self.groups_tree = ttk.Treeview(tab, columns=columns, show="headings", selectmode="extended")' in text
+    assert 'self.groups_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")' in text
     assert 'text="Об’єднати в один блок"' in text
     assert 'self.groups_tree.bind("<Control-a>", self._select_all_group_rows)' in text
     assert "Shift — діапазон" in text

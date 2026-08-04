@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Iterable, Mapping
 
 from .editorial_memory import TopicCandidate
+from .i18n import normalize_language
 
 _LINE_RE = re.compile(
     r"(?im)^\s*(?P<id>\d+)\s*[|;]\s*(?P<score>\d{1,3})\s*[|;]\s*"
@@ -26,14 +27,19 @@ def build_topic_prompt(
     candidates: Iterable[Mapping[str, object]],
     *,
     feedback: Iterable[Mapping[str, object]] = (),
+    language: str = "uk",
 ) -> str:
+    language = normalize_language(language)
     blocks: list[str] = []
     for row in candidates:
         group_id = int(row.get("group_id") or row.get("id") or 0)
         title = str(row.get("title") or "")
         text = " ".join(str(row.get("text") or "").split())[:750]
         if group_id:
-            blocks.append(f"ID {group_id}\nЗАГОЛОВОК: {title}\nТЕКСТ: {text}")
+            if language == "en":
+                blocks.append(f"ID {group_id}\nHEADLINE: {title}\nTEXT: {text}")
+            else:
+                blocks.append(f"ID {group_id}\nЗАГОЛОВОК: {title}\nТЕКСТ: {text}")
     candidate_block = "\n\n---\n\n".join(blocks)
     learned_blocks: list[str] = []
     for index, row in enumerate(feedback, start=1):
@@ -41,11 +47,45 @@ def build_topic_prompt(
             break
         if str(row.get("decision") or "merged") != "merged":
             continue
-        learned_blocks.append(
-            f"НАВЧАЛЬНИЙ ПРИКЛАД {index}: редактор об'єднав ці матеріали як одну подію.\n"
-            f"A: {' '.join(str(row.get('anchor_text') or '').split())[:550]}\n"
-            f"B: {' '.join(str(row.get('candidate_text') or '').split())[:550]}"
-        )
+        left = " ".join(str(row.get("anchor_text") or "").split())[:550]
+        right = " ".join(str(row.get("candidate_text") or "").split())[:550]
+        if language == "en":
+            learned_blocks.append(
+                f"LEARNING EXAMPLE {index}: the editor merged these materials as one event.\n"
+                f"A: {left}\nB: {right}"
+            )
+        else:
+            learned_blocks.append(
+                f"НАВЧАЛЬНИЙ ПРИКЛАД {index}: редактор об'єднав ці матеріали як одну подію.\n"
+                f"A: {left}\nB: {right}"
+            )
+    if language == "en":
+        learned_block = "\n\n".join(learned_blocks) or "There are no learning examples yet."
+        return f"""
+You help an editor find reports about one specific news event.
+Do not merge or rewrite anything. Classify each candidate as:
+- same_event: the same event, a direct update, consequence, or reaction to it;
+- related: a close topic but a different event;
+- other: unrelated to this event.
+
+The 0–100 score is confidence that the candidate is same_event. Do not inflate
+the score because of generic shared words. Consider date, place, participants,
+numbers, object, and causal connection. Previous manual merges are examples of
+grouping logic only; never copy facts from them.
+
+PREVIOUS MANUAL MERGES:
+{learned_block}
+
+Return ONLY one line per candidate:
+ID|SCORE|same_event/related/other|short reason
+
+ANCHOR STORY:
+HEADLINE: {anchor_title}
+TEXT: {" ".join(anchor_text.split())[:1800]}
+
+CANDIDATES:
+{candidate_block}
+""".strip()
     learned_block = "\n\n".join(learned_blocks) or "Навчальних прикладів ще немає."
     return f"""
 Ти допомагаєш редактору знайти матеріали про одну конкретну новинну подію.
@@ -55,15 +95,14 @@ def build_topic_prompt(
 - other: не стосується цієї події.
 
 Оцінка 0–100 має показувати впевненість, що це same_event. Не завищуй оцінку
-лише через однакові слова «Запоріжжя», «атака», «влада» або ім'я посадовця.
-Враховуй дату, місце, учасників, числа, об'єкт і причинно-наслідковий зв'язок.
-Нижче також наведено попередні ручні об'єднання редактора. Використовуй їх
-як приклади логіки групування, але не підтягуй із них факти до поточної теми.
+лише через однакові загальні слова. Враховуй дату, місце, учасників, числа,
+об'єкт і причинно-наслідковий зв'язок. Попередні ручні об'єднання є лише
+прикладами логіки групування; не перенось із них факти.
 
 ПОПЕРЕДНІ РУЧНІ ОБ'ЄДНАННЯ:
 {learned_block}
 
-Поверни ТІЛЬКИ по одному рядку на кандидата у форматі:
+Поверни ТІЛЬКИ по одному рядку на кандидата:
 ID|ОЦІНКА|same_event/related/other|коротка причина
 
 ОПОРНА НОВИНА:

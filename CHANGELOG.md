@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- Added Ukrainian and English application modes; the selected language now controls Ollama prompts and rewrite output.
+- Added a focused merge-candidate dialog instead of selecting matches across the full inbox.
+- Added a visible inbox scrollbar, keyboard paging, one-row actions, approved-row highlighting, and removed the confusing visible in-work status.
+- Added local learning connectors, language-separated editorial examples, import/export, statistics, and history controls.
+- Split Facebook and Threads application credentials so different Meta accounts and apps can be used safely.
+
+
 ## v1.0.0 — 2026-08-02
 
 First public release based on internal build R8 FIX30.

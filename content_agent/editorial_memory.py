@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from .i18n import normalize_language
+
 _WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яІіЇїЄєҐґ'’-]{3,}")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
 
@@ -16,6 +18,8 @@ _STOPWORDS = {
     "про", "при", "та", "так", "також", "той", "ця", "цей", "це", "через",
     "що", "щоб", "яка", "який", "які", "уже", "вже", "між", "свої", "свою",
     "заявив", "заявила", "повідомив", "повідомила", "повідомляє", "йдеться",
+    "the", "and", "for", "from", "with", "that", "this", "these", "those",
+    "was", "were", "will", "have", "has", "had", "said", "reported", "about",
 }
 
 
@@ -26,6 +30,7 @@ class EditorialExample:
     ai_draft_text: str
     final_text: str
     headline: str = ""
+    language: str = "uk"
     similarity: float = 0.0
 
 
@@ -98,6 +103,7 @@ def rank_editorial_examples(
                 ai_draft_text=str(row.get("ai_draft_text") or ""),
                 final_text=final_text,
                 headline=str(row.get("headline") or ""),
+                language=normalize_language(str(row.get("language") or "uk")),
                 similarity=score,
             )
         )
@@ -129,7 +135,9 @@ def rank_topic_candidates(
     *,
     feedback: Sequence[Mapping[str, object]] = (),
     limit: int = 24,
+    language: str = "uk",
 ) -> list[TopicCandidate]:
+    language = normalize_language(language)
     ranked: list[TopicCandidate] = []
     for row in candidates:
         group_id = int(row.get("group_id") or row.get("id") or 0)
@@ -141,9 +149,17 @@ def rank_topic_candidates(
         score = max(0.0, min(1.0, base + learned))
         if score < 0.045:
             continue
-        reason = "збіг фактів, назв або учасників"
+        reason = (
+            "matching facts, names or participants"
+            if language == "en"
+            else "збіг фактів, назв або учасників"
+        )
         if learned > 0.03:
-            reason = "схоже на ваші попередні ручні об’єднання"
+            reason = (
+                "similar to your previous manual merges"
+                if language == "en"
+                else "схоже на ваші попередні ручні об’єднання"
+            )
         ranked.append(TopicCandidate(group_id=group_id, score=score, reason=reason))
     ranked.sort(key=lambda item: (-item.score, item.group_id))
     return ranked[: max(0, int(limit))]
@@ -181,18 +197,30 @@ def split_threads_chain(text: str, limit: int = 500) -> list[str]:
     return parts
 
 
-def format_examples_for_prompt(examples: Sequence[EditorialExample]) -> str:
+def format_examples_for_prompt(
+    examples: Sequence[EditorialExample],
+    *,
+    language: str = "uk",
+) -> str:
     if not examples:
         return ""
+    language = normalize_language(language)
     blocks: list[str] = []
     for index, item in enumerate(examples, start=1):
         source = " ".join(item.source_text.split())[:900]
         final = item.final_text.strip()[:900]
-        blocks.append(
-            f"ПРИКЛАД {index} (схожість {item.similarity:.2f})\n"
-            f"ВИХІДНІ ФАКТИ: {source}\n"
-            f"ФІНАЛЬНИЙ ТЕКСТ РЕДАКТОРА: {final}"
-        )
+        if language == "en":
+            blocks.append(
+                f"EXAMPLE {index} (similarity {item.similarity:.2f})\n"
+                f"SOURCE FACTS: {source}\n"
+                f"EDITOR'S FINAL TEXT: {final}"
+            )
+        else:
+            blocks.append(
+                f"ПРИКЛАД {index} (схожість {item.similarity:.2f})\n"
+                f"ВИХІДНІ ФАКТИ: {source}\n"
+                f"ФІНАЛЬНИЙ ТЕКСТ РЕДАКТОРА: {final}"
+            )
     return "\n\n".join(blocks)
 
 

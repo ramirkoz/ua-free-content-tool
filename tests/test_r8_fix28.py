@@ -63,7 +63,7 @@ def _future_db(tmp_path: Path, *, text: str, include_source: bool = False) -> tu
 
 
 def test_fix28_schema_is_additive_and_scan_finds_only_future_long_queue(tmp_path: Path) -> None:
-    assert DATABASE_SCHEMA_VERSION == 7
+    assert DATABASE_SCHEMA_VERSION == 8
     db, group_id, batch_id = _future_db(tmp_path, text=("Факт. " * 220).strip())
     scan = scan_queue_for_900_migration(db)
     assert not scan.blockers
@@ -182,7 +182,7 @@ def test_fix28_ollama_compression_uses_fallback_and_hard_limit() -> None:
 def test_fix28_startup_gate_keeps_worker_off_until_migration() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
     dialog = (Path(__file__).parents[1] / "content_agent" / "ui" / "queue_migration_dialog.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — R8 FIX30")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.0")' in source
     assert "self.root.after(250, self._startup_queue_migration_gate)" in source
     assert "self.worker_thread.start()" in source
     assert source.index("def _startup_queue_migration_gate") < source.index("def close")

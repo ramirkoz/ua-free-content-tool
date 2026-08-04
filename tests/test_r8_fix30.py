@@ -30,7 +30,7 @@ def test_fix30_explicit_windows_shift_bindings_exist_for_inbox_and_queue() -> No
 def test_fix30_is_schema_neutral_program_only_hotfix() -> None:
     source = Path(__file__).parents[1] / "content_agent" / "database.py"
     text = source.read_text(encoding="utf-8")
-    assert "DATABASE_SCHEMA_VERSION = 7" in text
+    assert "DATABASE_SCHEMA_VERSION = 8" in text
 
 
 class _FakeTree:

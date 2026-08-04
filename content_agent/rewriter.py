@@ -647,3 +647,313 @@ def rewrite_article_with_fallback(
             f"Запасна модель «{fallback}» також не впоралася: {fallback_error}"
         ) from fallback_error
 
+
+
+# v1.1 bilingual rewrite implementation. These definitions intentionally appear
+# last so legacy callers keep the same public API while gaining a language option.
+from .i18n import normalize_language, output_language_instruction, prompt_labels
+
+
+def _english_language_issue(*values: str) -> str:
+    text = _URL_RE.sub(" ", "\n".join(str(value or "") for value in values).strip())
+    if not text:
+        return "the model returned empty text"
+    latin_count = len(_LATIN_RE.findall(text))
+    cyrillic_count = len(_CYRILLIC_RE.findall(text))
+    if cyrillic_count >= 30 and cyrillic_count > latin_count:
+        return f"Cyrillic prose detected ({cyrillic_count} Cyrillic letters)"
+    return ""
+
+
+def _language_issue(language: str, *values: str) -> str:
+    return _english_language_issue(*values) if normalize_language(language) == "en" else _ukrainian_language_issue(*values)
+
+
+def _rewrite_quality_issue_v11(
+    headline: str,
+    rewrite: str,
+    source_text: str,
+    language: str,
+) -> str:
+    language_issue = _language_issue(language, headline, rewrite)
+    if language_issue:
+        return language_issue
+    source_plain = " ".join(str(source_text or "").split())
+    output_plain = " ".join(f"{headline} {rewrite}".split())
+    speculative = _SPECULATIVE_PATTERNS.search(output_plain)
+    if speculative and speculative.group(0).lower() not in source_plain.lower():
+        return f"unsupported analysis or speculation detected: {speculative.group(0)}"
+    # Lexical overlap validation is reliable for Ukrainian/Russian source pairs.
+    # English output may be a full translation, so language mode uses the stricter
+    # no-speculation and no-empty checks without a false cross-language rejection.
+    if normalize_language(language) == "uk":
+        source_stems = _content_stems(source_plain)
+        output_stems = _content_stems(output_plain)
+        if len(source_stems) >= 4 and len(output_stems) >= 4:
+            overlap = len(source_stems & output_stems)
+            if overlap < 2 and overlap / max(1, min(len(source_stems), len(output_stems))) < 0.10:
+                return "текст майже не спирається на слова й факти вихідних матеріалів"
+    return ""
+
+
+def _language_repair_prompt_v11(
+    title: str,
+    source_text: str,
+    total_sources: int,
+    issue: str,
+    language: str,
+) -> str:
+    labels = prompt_labels(language)
+    if normalize_language(language) == "en":
+        return f"""
+The previous answer is unusable: {issue}. Do not edit or translate it. Start again
+from the source materials below. Write a concise factual news rewrite in ENGLISH
+ONLY. Do not add assumptions, analysis, explanations, or facts that are absent
+from the sources. Maximum {EDITORIAL_TEXT_LIMIT} characters including spaces.
+Preserve names, titles, dates, numbers, places, causes, and consequences.
+
+Return only this structure:
+{labels['headline']}: neutral English headline
+{labels['facts']}: used {total_sources} of {total_sources} sources; brief conflicts or clarifications
+{labels['text']}:
+1–4 short English paragraphs
+
+{labels['source_title']}: {title}
+{labels['materials']}:
+{source_text}
+""".strip()
+    return _language_repair_prompt(title, source_text, total_sources, issue)
+
+
+def _compression_prompt_v11(headline: str, rewrite: str, limit: int, language: str) -> str:
+    target = max(520, limit - 60)
+    if normalize_language(language) == "en":
+        return f"""
+Shorten this finished English news story to at most {target} characters including
+spaces. Do not add facts. Preserve names, positions, dates, numbers, places,
+causes, consequences, and key clarifications. Remove only repetition and filler.
+Return JSON fields headline, fact_card, rewrite.
+
+HEADLINE: {headline}
+TEXT TO SHORTEN:
+{rewrite}
+""".strip()
+    return _compression_prompt(headline, rewrite, limit)
+
+
+def _compact_generated_text_v11(
+    client: OllamaClient,
+    model: str,
+    headline: str,
+    rewrite: str,
+    language: str,
+) -> tuple[str, str, bool]:
+    if len(rewrite) <= EDITORIAL_TEXT_LIMIT:
+        return headline, rewrite, False
+    try:
+        compacted = _generate_payload(
+            client,
+            model,
+            _compression_prompt_v11(headline, rewrite, EDITORIAL_TEXT_LIMIT, language),
+            num_predict=220,
+            temperature=0.02,
+        )
+        compact_headline = str(compacted.get("headline") or "").strip() or headline
+        compact_text = str(compacted.get("rewrite") or "").strip()
+        if compact_text and not _language_issue(language, compact_headline, compact_text):
+            if len(compact_text) <= EDITORIAL_TEXT_LIMIT:
+                return compact_headline, compact_text, True
+            rewrite = compact_text
+            headline = compact_headline
+    except OllamaError:
+        pass
+    return headline, fit_factual_text_to_limit(rewrite, EDITORIAL_TEXT_LIMIT), True
+
+
+def rewrite_article(
+    client: OllamaClient,
+    model: str,
+    article: Article | NewsGroup,
+    *,
+    editorial_examples: list[EditorialExample] | None = None,
+    language: str = "uk",
+) -> RewriteResult:
+    language = normalize_language(language)
+    title, source_url, source_text, include_source_link = _source_payload(article)
+    total_sources = _source_count(article)
+    labels = prompt_labels(language)
+    memory_block = format_examples_for_prompt(editorial_examples or [], language=language)
+    if language == "en":
+        memory_instruction = (
+            "\n\nEDITORIAL MEMORY. Follow the factual density, ordering, and lack of filler "
+            "in these editor-approved examples. Never copy their facts into the new story:\n\n"
+            + memory_block
+            if memory_block
+            else ""
+        )
+        instructions = f"""
+{output_language_instruction(language)}
+Create one consolidated UA FREE news story from ALL {total_sources} sources in the
+block. Compare them, keep unique facts from each, remove duplicates, and mention
+real source conflicts briefly in FACTS. Do not invent a compromise.
+
+Create ONE shared text for Facebook, Threads, LinkedIn, and Telegram. Maximum
+{EDITORIAL_TEXT_LIMIT} characters including spaces. Preserve verified names,
+positions, dates, places, numbers, quotations, causes, and consequences. No URLs,
+hashtags, fundraising calls, analysis, guesses, conclusions, or filler.
+{memory_instruction}
+
+Return JSON with exactly headline, fact_card, rewrite. The rewrite must contain
+1–4 short English paragraphs. fact_card must state that {total_sources} of
+{total_sources} sources were used and note important clarifications or conflicts.
+
+{labels['source_title']}: {title}
+SOURCE URL: {source_url}
+{labels['materials']}:
+{source_text}
+""".strip()
+    else:
+        memory_instruction = (
+            "\n\nРЕДАКЦІЙНА ПАМ'ЯТЬ. Наслідуй щільність фактів, порядок викладу та "
+            "відсутність води у схвалених прикладах. не перенось факти з прикладів і не копіюй їхні факти:\n\n"
+            + memory_block
+            if memory_block
+            else ""
+        )
+        instructions = f"""
+{output_language_instruction(language)} Не залишай російських слів або літер.
+Створи одну збірну новину UA FREE за ВСІМА {total_sources} джерелами блока.
+Зістав усі матеріали, візьми унікальні факти з кожного та прибери дублікати.
+Реальні суперечності коротко зазнач у ФАКТАХ, нічого не вигадуючи.
+
+Не створюй окремі тексти для соцмереж.
+Створи ОДИН спільний текст для Facebook, Threads, LinkedIn і Telegram до
+{EDITORIAL_TEXT_LIMIT} символів разом із пробілами. Збережи перевірені імена,
+посади, дати, місця, числа, цитати, причини й наслідки. Без посилань, хештегів,
+донатних закликів, домислів, оцінок, висновків або води.
+{memory_instruction}
+
+Текст публікації всередині поля rewrite має бути без JSON.
+Поверни JSON лише з полями headline, fact_card, rewrite. rewrite має містити
+1–4 короткі абзаци українською. fact_card має вказати, що використано
+{total_sources} із {total_sources} джерел, і назвати важливі уточнення чи суперечності.
+
+{labels['source_title']}: {title}
+ДЖЕРЕЛО-ПОСИЛАННЯ: {source_url}
+{labels['materials']}:
+{source_text}
+""".strip()
+
+    payload = _generate_payload(client, model, instructions, num_predict=300, temperature=0.08)
+    headline = str(payload.get("headline") or "").strip() or title
+    rewrite = str(payload.get("rewrite") or "").strip()
+    if not rewrite:
+        raise OllamaError("The model returned an empty rewrite." if language == "en" else "Модель повернула порожній рерайт.")
+    issue = _rewrite_quality_issue_v11(headline, rewrite, source_text, language)
+    if issue:
+        repaired = _generate_payload(
+            client,
+            model,
+            _language_repair_prompt_v11(title, source_text, total_sources, issue, language),
+            num_predict=300,
+            temperature=0.02,
+        )
+        headline = str(repaired.get("headline") or "").strip() or headline
+        rewrite = str(repaired.get("rewrite") or "").strip()
+        second_issue = _rewrite_quality_issue_v11(headline, rewrite, source_text, language)
+        if not rewrite or second_issue:
+            detail = second_issue or ("empty text after repair" if language == "en" else "порожній текст після повтору")
+            raise OllamaError(
+                f"Ollama returned an unusable rewrite twice: {detail}." if language == "en"
+                else f"Текст не збережено і не передано в чергу. "f"Ollama двічі повернула непридатний рерайт: {detail}."
+            )
+    headline, rewrite, auto_compacted = _compact_generated_text_v11(
+        client, model, headline, rewrite, language
+    )
+    final_issue = _rewrite_quality_issue_v11(headline, rewrite, source_text, language)
+    if final_issue:
+        raise OllamaError(
+            f"The compacted rewrite failed quality validation: {final_issue}." if language == "en"
+            else f"Після стискання рерайт не пройшов перевірку: {final_issue}."
+        )
+    model_fact_card = str(payload.get("fact_card") or "").strip()
+    fact_card = model_fact_card or _fact_card_from_rewrite(rewrite)
+    source_note = (
+        f"Sources provided to the model: {total_sources} of {total_sources}."
+        if language == "en"
+        else f"Передано моделі джерел: {total_sources} із {total_sources}."
+    )
+    if not fact_card.startswith(source_note):
+        fact_card = f"{source_note}\n{fact_card}".strip()
+    return RewriteResult(
+        headline=headline,
+        fact_card=fact_card,
+        rewrite=rewrite,
+        platform_texts=platform_texts_from_base(
+            rewrite,
+            include_source_link=include_source_link,
+            source_url=source_url,
+        ),
+        source_count_used=total_sources,
+        source_count_total=total_sources,
+        auto_compacted=auto_compacted,
+    )
+
+
+def rewrite_article_with_fallback(
+    client: OllamaClient,
+    primary_model: str,
+    fallback_model: str,
+    article: Article | NewsGroup,
+    *,
+    fallback_client: OllamaClient | None = None,
+    editorial_examples: list[EditorialExample] | None = None,
+    language: str = "uk",
+) -> tuple[RewriteResult, str, bool]:
+    primary = primary_model.strip()
+    fallback = fallback_model.strip()
+    language = normalize_language(language)
+    if not primary:
+        raise OllamaError(
+            "Select an installed Ollama model first." if language == "en"
+            else "Спочатку оберіть установлену модель Ollama."
+        )
+    primary_error_text = ""
+    try:
+        return (
+            rewrite_article(
+                client,
+                primary,
+                article,
+                editorial_examples=editorial_examples,
+                language=language,
+            ),
+            primary,
+            False,
+        )
+    except OllamaError as primary_error:
+        if not fallback or fallback == primary:
+            raise
+        primary_error_text = str(primary_error)
+    try:
+        return (
+            rewrite_article(
+                fallback_client or client,
+                fallback,
+                article,
+                editorial_examples=editorial_examples,
+                language=language,
+            ),
+            fallback,
+            True,
+        )
+    except OllamaError as fallback_error:
+        if language == "en":
+            raise OllamaError(
+                f"Primary model {primary!r} failed: {primary_error_text}\n"
+                f"Fallback model {fallback!r} also failed: {fallback_error}"
+            ) from fallback_error
+        raise OllamaError(
+            f"Основна модель «{primary}» не впоралася: {primary_error_text}\n"
+            f"Запасна модель «{fallback}» також не впоралася: {fallback_error}"
+        ) from fallback_error

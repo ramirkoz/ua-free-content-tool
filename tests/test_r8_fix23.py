@@ -160,7 +160,7 @@ def test_fix23_facebook_and_threads_long_lived_exchange_contract(monkeypatch: py
 
 def test_fix23_ui_contract_is_non_modal_for_automatic_diagnostics_and_exposes_queue_recovery() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — R8 FIX30")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.0")' in source
     assert 'text="Перепланувати пропущені / призупинені"' in source
     assert "def reschedule_interrupted_batches" in source
     assert "def _publication_result_from_worker" in source
@@ -169,7 +169,8 @@ def test_fix23_ui_contract_is_non_modal_for_automatic_diagnostics_and_exposes_qu
     assert 'self.queue_summary_var.set(' in source
     assert 'self.worker.clear_auth_blocks("facebook")' in source
     assert 'self.worker.clear_auth_blocks("threads")' in source
-    assert 'self.settings_vars["meta_app_secret"]' in source
+    assert 'self.settings_vars["facebook_app_secret"]' in source
+    assert 'self.settings_vars["threads_app_secret"]' in source
 
 
 def test_fix23_config_accepts_encrypted_meta_lifecycle_fields() -> None:

@@ -202,14 +202,14 @@ def test_fix29_schema_7_adds_exclusions_without_changing_pending_queue(tmp_path:
         raw.close()
 
     upgraded = Database(path)
-    assert DATABASE_SCHEMA_VERSION == 7
+    assert DATABASE_SCHEMA_VERSION == 8
     batch = upgraded.get_batch(batch_id)
     assert batch.status == "pending"
     assert batch.scheduled_at == db.get_batch(batch_id).scheduled_at
     assert [(target.platform, target.status) for target in batch.targets] == [("telegram", "pending")]
     assert upgraded.content_exclusion_count() == 0
     with sqlite3.connect(path) as raw:
-        assert raw.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == 8
         assert raw.execute("PRAGMA quick_check").fetchone()[0] == "ok"
 
 
