@@ -8,6 +8,7 @@ on:
       - tools/apply_v1_1_0.py
       - tools/prepare_v1_1_0_migration.py
       - tools/fix_v1_1_0_generated_sources.py
+      - tools/fix_v1_1_0_contracts.py
       - .github/workflows/apply-v1-1-0.yml
   pull_request:
     branches:
@@ -16,6 +17,7 @@ on:
       - tools/apply_v1_1_0.py
       - tools/prepare_v1_1_0_migration.py
       - tools/fix_v1_1_0_generated_sources.py
+      - tools/fix_v1_1_0_contracts.py
       - .github/workflows/apply-v1-1-0.yml
       - content_agent/i18n.py
       - content_agent/ui/topic_candidates_dialog.py
@@ -55,6 +57,9 @@ jobs:
 
       - name: Repair generated prompt sources
         run: python tools/fix_v1_1_0_generated_sources.py
+
+      - name: Align compatibility contracts
+        run: python tools/fix_v1_1_0_contracts.py
 
       - name: Compile all Python sources
         run: python -m compileall -q .
