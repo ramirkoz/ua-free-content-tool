@@ -4,7 +4,6 @@
 e26e0353294fbfb9c56fd867f575ccd0884fc8f714898faa14272d2435e88ae5  .github/ISSUE_TEMPLATE/feature_request.yml
 2b40dd540b7c3677a7e3e5e094b09132336057720eb6da1adda9894728bf101d  .github/workflows/build-manuals-v2.yml
 c641f63528c34b4bffe7df3b41ecbbcfc05e89e01d5cb34131a92c04bb8bf9d9  .github/workflows/ci.yml
-00a11beeac9404b9fa79288b19421f216f206fc4510864ad0db6f83f4cbf7454  .github/workflows/publish-v1-1-0.yml
 c5f98fa68b73a98acb26b67782a20bcde4bf8e7ad05db61564a4b6e44a6c6ec9  .github/workflows/release.yml
 04b2bebcdedfbbd53815ebc2b963192a86a8d11b07f5b1b2326bf3f9d80901e5  .github/workflows/trigger-deploy.yml
 61cd20533fed49cac92a955dcf7e8b87938dd636bdcd4c8ceb15364f71c99aca  .gitignore
