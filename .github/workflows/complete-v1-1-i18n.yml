@@ -8,6 +8,13 @@ on:
       - tools/apply_v1_1_i18n_completion.py
       - content_agent/i18n_extra.py
       - .github/workflows/complete-v1-1-i18n.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - tools/apply_v1_1_i18n_completion.py
+      - content_agent/i18n_extra.py
+      - .github/workflows/complete-v1-1-i18n.yml
   workflow_dispatch:
 
 permissions:
