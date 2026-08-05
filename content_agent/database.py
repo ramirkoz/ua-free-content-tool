@@ -856,11 +856,32 @@ class Database:
             FROM news_groups g JOIN articles a ON a.group_id=g.id
         """
         params: list[object] = []
-        if status:
+        if status == "approved":
+            # Approved stories leave the working inbox after 24 hours. They remain
+            # available in Publication History, while still-active queue packages
+            # stay reachable for editing and recovery.
+            query += """
+                WHERE g.status='approved' AND (
+                    julianday(g.updated_at) >= julianday('now','-1 day') OR EXISTS (
+                        SELECT 1 FROM publication_batches b
+                        JOIN articles qa ON qa.id=b.article_id
+                        WHERE qa.group_id=g.id AND b.status IN ('pending','in_progress','paused')
+                    )
+                )
+            """
+        elif status:
             query += " WHERE g.status=?"
             params.append(status)
         else:
-            query += " WHERE g.status IN ('new','draft','approved')"
+            query += """
+                WHERE g.status IN ('new','draft') OR (g.status='approved' AND (
+                    julianday(g.updated_at) >= julianday('now','-1 day') OR EXISTS (
+                        SELECT 1 FROM publication_batches b
+                        JOIN articles qa ON qa.id=b.article_id
+                        WHERE qa.group_id=g.id AND b.status IN ('pending','in_progress','paused')
+                    )
+                ))
+            """
         query += " GROUP BY g.id ORDER BY COALESCE(MAX(a.published_at),g.updated_at) DESC LIMIT ?"
         params.append(limit)
         with self.connect() as db:
@@ -1405,6 +1426,29 @@ class Database:
         with self.connect() as db:
             row = db.execute("SELECT COUNT(*) FROM content_exclusions WHERE active=1").fetchone()
         return int(row[0] or 0)
+
+    def deactivate_content_exclusions(self, exclusion_ids: Iterable[int]) -> int:
+        ids = sorted({int(value) for value in exclusion_ids if int(value) > 0})
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as db:
+            cursor = db.execute(
+                f"UPDATE content_exclusions SET active=0,updated_at=? "
+                f"WHERE active=1 AND id IN ({placeholders})",
+                [_iso(), *ids],
+            )
+        return int(cursor.rowcount or 0)
+
+    def clear_content_exclusions(self) -> int:
+        """Deactivate all future-content exclusions without erasing audit history."""
+
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE content_exclusions SET active=0,updated_at=? WHERE active=1",
+                (_iso(),),
+            )
+        return int(cursor.rowcount or 0)
 
     def record_learning_event(
         self,
@@ -1956,6 +2000,105 @@ class Database:
             except Exception:
                 db.execute("ROLLBACK")
                 raise
+
+    def list_publication_history(self, limit: int = 500) -> list[dict[str, object]]:
+        """Return one history row per batch that sent at least one target."""
+
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT b.id AS batch_id,b.scheduled_at,b.status AS batch_status,
+                       a.group_id,g.headline,g.canonical_title,g.rewrite_text,
+                       t.id AS target_id,t.platform,t.status AS target_status,
+                       t.remote_id,t.last_error,t.progress_json,t.updated_at
+                FROM publication_batches b
+                JOIN articles a ON a.id=b.article_id
+                JOIN news_groups g ON g.id=a.group_id
+                JOIN publication_targets t ON t.batch_id=b.id
+                WHERE EXISTS (
+                    SELECT 1 FROM publication_targets sent
+                    WHERE sent.batch_id=b.id AND sent.status='sent'
+                )
+                ORDER BY b.id DESC,t.id
+                """
+            ).fetchall()
+        grouped: dict[int, dict[str, object]] = {}
+        for row in rows:
+            batch_id = int(row["batch_id"])
+            item = grouped.get(batch_id)
+            if item is None:
+                item = {
+                    "batch_id": batch_id,
+                    "group_id": int(row["group_id"]),
+                    "headline": str(row["headline"] or row["canonical_title"] or ""),
+                    "rewrite_text": str(row["rewrite_text"] or ""),
+                    "scheduled_at": str(row["scheduled_at"] or ""),
+                    "batch_status": str(row["batch_status"] or ""),
+                    "published_at": "",
+                    "targets": [],
+                }
+                grouped[batch_id] = item
+            try:
+                progress = json.loads(str(row["progress_json"] or "{}"))
+            except json.JSONDecodeError:
+                progress = {}
+            if not isinstance(progress, dict):
+                progress = {}
+            target = {
+                "id": int(row["target_id"]),
+                "platform": str(row["platform"]),
+                "status": str(row["target_status"]),
+                "remote_id": str(row["remote_id"] or ""),
+                "last_error": str(row["last_error"] or ""),
+                "updated_at": str(row["updated_at"] or ""),
+                "progress": progress,
+            }
+            targets = item["targets"]
+            assert isinstance(targets, list)
+            targets.append(target)
+            if target["status"] == "sent" and str(target["updated_at"]) > str(item["published_at"]):
+                item["published_at"] = str(target["updated_at"])
+        return list(grouped.values())[: max(1, int(limit))]
+
+    def save_publication_metrics(
+        self,
+        target_id: int,
+        *,
+        metrics: dict[str, int] | None = None,
+        checked_at: str | None = None,
+        error: str = "",
+        note: str = "",
+        permalink_url: str = "",
+    ) -> None:
+        """Merge metrics into progress_json without changing publication time."""
+
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT progress_json FROM publication_targets WHERE id=?",
+                (int(target_id),),
+            ).fetchone()
+            if not row:
+                raise KeyError(target_id)
+            try:
+                progress = json.loads(str(row[0] or "{}"))
+            except json.JSONDecodeError:
+                progress = {}
+            if not isinstance(progress, dict):
+                progress = {}
+            progress["metrics"] = {
+                str(key): max(0, int(value))
+                for key, value in (metrics or {}).items()
+                if isinstance(value, (int, float))
+            }
+            progress["metrics_checked_at"] = str(checked_at or _iso())
+            progress["metrics_error"] = redact_secrets(error)[:1000] if error else ""
+            progress["metrics_note"] = str(note or "")[:1000]
+            if permalink_url:
+                progress["permalink_url"] = str(permalink_url)[:2000]
+            db.execute(
+                "UPDATE publication_targets SET progress_json=? WHERE id=?",
+                (json.dumps(progress, ensure_ascii=False, sort_keys=True), int(target_id)),
+            )
 
     def create_batch(self, article_id: int, scheduled_at: str, targets: dict[str, str]) -> int:
         """Backward-compatible wrapper used by tests and integrations."""

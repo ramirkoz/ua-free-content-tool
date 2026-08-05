@@ -136,3 +136,13 @@ For LinkedIn, the application exposes the actual `/v2/userinfo` error fields whe
 ## Recovering missed publications
 
 After replacing expired tokens or correcting permissions, open the Queue and use **Reschedule missed / paused**. The application moves paused and overdue pending packages into the nearest future slots while preserving targets already marked `sent`.
+## Publication history and engagement metrics
+
+The History tab stores publication records locally even when a platform does not expose engagement data. Use **Refresh selected metrics** after publication.
+
+- **Facebook Pages:** the application can read reactions, comments, shares, and the post permalink with the saved Page Access Token. Post views are not exposed by the basic Page-post fields used here.
+- **Threads:** views, likes, replies, reposts, quotes, and shares require `threads_manage_insights`. Normal publishing still uses `threads_basic` and `threads_content_publish`.
+- **LinkedIn:** likes and comments are requested through Social Actions when the application has approved read access. LinkedIn may reject this for personal posts when only `w_member_social` is granted; the limitation is shown in History and does not affect publishing.
+- **Telegram:** the Bot API does not expose channel-post views, reactions, forwards, or comments. For public `@username` channels, the application still creates a direct `t.me` post link from the saved message ID.
+
+Metric failures are stored per platform and never change the original publication time or retry a publication.
