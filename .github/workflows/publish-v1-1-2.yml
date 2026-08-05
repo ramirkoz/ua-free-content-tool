@@ -1,0 +1,130 @@
+name: Publish UA FREE Content Tool v1.1.2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v1-1-2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate release metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ((Get-Content PUBLIC_VERSION.txt -Raw).Trim() -ne "1.1.2") { throw "Unexpected public version" }
+          if ((Get-Content VERSION.txt -Raw).Trim() -ne "1.1.2") { throw "Unexpected internal version" }
+          if (-not (Test-Path "RELEASE_NOTES_v1.1.2.md")) { throw "Release notes missing" }
+
+      - name: Remove one-time workflow and finalize manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git rm .github/workflows/publish-v1-1-2.yml
+          @'
+          from pathlib import Path
+          import hashlib
+          root = Path.cwd()
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+          (root / "FILE_MANIFEST.sha256").write_text("\n".join(lines) + "\n", encoding="ascii", newline="\n")
+          '@ | python -
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add FILE_MANIFEST.sha256
+          git commit -m "Finalize v1.1.2 release source [skip publish]"
+          git push origin HEAD:main
+
+      - name: Build validated portable package
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Prepare and validate release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "1.1.2"
+          $releaseRoot = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          $portableZip = "UA_FREE_Content_Tool_v${version}_Windows_Portable.zip"
+          $sourceZip = "UA_FREE_Content_Tool_v${version}_Source.zip"
+          $checksums = "SHA256SUMS.txt"
+          if (-not (Test-Path $releaseRoot)) { throw "Portable release folder not found" }
+          Compress-Archive -Path "$releaseRoot\*" -DestinationPath $portableZip -CompressionLevel Optimal
+          git archive --format=zip --output=$sourceZip HEAD
+          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceHash = (Get-FileHash $sourceZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          @("$portableHash  $portableZip", "$sourceHash  $sourceZip") | Set-Content $checksums -Encoding ascii
+          @'
+          from pathlib import Path, PurePosixPath
+          import zipfile
+          for filename in ("UA_FREE_Content_Tool_v1.1.2_Windows_Portable.zip", "UA_FREE_Content_Tool_v1.1.2_Source.zip"):
+              archive = Path(filename)
+              with zipfile.ZipFile(archive) as handle:
+                  bad = handle.testzip()
+                  if bad:
+                      raise SystemExit(f"CRC failure in {filename}: {bad}")
+                  names = [item.filename for item in handle.infolist()]
+                  if not names or len(names) != len(set(names)):
+                      raise SystemExit(f"Empty ZIP or duplicate names: {filename}")
+                  for name in names:
+                      path = PurePosixPath(name.replace("\\", "/"))
+                      if path.is_absolute() or ".." in path.parts or "\\" in name:
+                          raise SystemExit(f"Unsafe ZIP path in {filename}: {name}")
+          print("RELEASE_ZIPS_VALIDATED=true")
+          '@ | python -
+          "portable_zip=$portableZip" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "source_zip=$sourceZip" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "checksums=$checksums" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v1.1.2"
+          $head = (git rev-parse HEAD).Trim()
+          git tag --force $tag $head
+          git push origin "refs/tags/$tag" --force
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag "${{ steps.assets.outputs.portable_zip }}" "${{ steps.assets.outputs.source_zip }}" "${{ steps.assets.outputs.checksums }}" --clobber
+            gh release edit $tag --target main --title "UA FREE Content Tool v1.1.2" --notes-file RELEASE_NOTES_v1.1.2.md --latest
+          } else {
+            gh release create $tag "${{ steps.assets.outputs.portable_zip }}" "${{ steps.assets.outputs.source_zip }}" "${{ steps.assets.outputs.checksums }}" --target main --title "UA FREE Content Tool v1.1.2" --notes-file RELEASE_NOTES_v1.1.2.md --latest
+          }
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.1.2_release_evidence
+          path: |
+            UA_FREE_Content_Tool_v1.1.2_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.1.2_Source.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
