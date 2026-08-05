@@ -10,7 +10,6 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $version = (Get-Content (Join-Path $repo "PUBLIC_VERSION.txt") -Raw).Trim()
 $pythonExe = (Get-Command python).Source
 $pythonRoot = Split-Path $pythonExe -Parent
-$sitePackages = (& python -c "import site; print(site.getsitepackages()[0])").Trim()
 $targetRoot = Join-Path $repo "$OutputRoot\UA_FREE_Content_Tool_v$version"
 $appRoot = Join-Path $targetRoot "UA_FREE_Content_Tool"
 
@@ -45,15 +44,15 @@ if (Test-Path $targetSitePackages) {
     Remove-Item $targetSitePackages -Recurse -Force
 }
 New-Item -ItemType Directory -Path $targetSitePackages | Out-Null
-Copy-Item (Join-Path $sitePackages "*") $targetSitePackages -Recurse -Force
 
-# Remove developer/build packages that are not needed at runtime.
-foreach ($pattern in @(
-    "pip*", "setuptools*", "wheel*", "pytest*", "_pytest", "pluggy*",
-    "iniconfig*", "pygments*", "__pycache__"
-)) {
-    Get-ChildItem $targetSitePackages -Filter $pattern -Force -ErrorAction SilentlyContinue |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+# Install only declared runtime dependencies into the package. Do not copy the
+# runner's global site-packages, test framework, or unrelated build utilities.
+& python -m pip install --disable-pip-version-check --no-compile --target $targetSitePackages -r (Join-Path $repo "requirements.txt")
+if ($LASTEXITCODE -ne 0) {
+    throw "Installing runtime dependencies failed: $LASTEXITCODE"
+}
+if (-not (Test-Path (Join-Path $targetSitePackages "cryptography"))) {
+    throw "Runtime dependency check failed: cryptography package is missing"
 }
 
 Copy-Item (Join-Path $repo "content_agent") (Join-Path $appRoot "content_agent") -Recurse
