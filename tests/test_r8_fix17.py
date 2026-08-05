@@ -79,7 +79,7 @@ def test_rewrite_source_payload_is_bounded_for_small_local_models() -> None:
 
 def test_fix17_ui_has_background_prewarm_and_separate_load_budget() -> None:
     source = Path("content_agent/ui/main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.1")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
     assert "Підготовка моделі" in source
     assert "Модель {selected} готова до швидкого рерайту" in source
     assert "load_timeout=120" in source

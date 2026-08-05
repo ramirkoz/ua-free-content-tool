@@ -107,7 +107,7 @@ def test_ollama_nonstream_request_uses_keep_alive_and_plain_output(monkeypatch) 
 
 def test_fix17_ui_defaults_to_base_text_sync_and_has_hard_timeout() -> None:
     source = Path("content_agent/ui/main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.1")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
     assert "self.same_text_var = tk.BooleanVar(value=True)" in source
     assert "self._on_base_rewrite_changed" in source
     assert "timeout_seconds=170" not in source

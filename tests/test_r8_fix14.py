@@ -112,7 +112,7 @@ def test_telegram_error_description_is_not_lost() -> None:
 
 def test_fix14_ui_contains_per_target_error_and_result_dialog() -> None:
     source = Path("content_agent/ui/main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.1")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
     assert 'item.status == "failed" and item.last_error' in source
     assert "Не опубліковано:" in source
     assert "Успішні публікації не дублюватимуться" in source

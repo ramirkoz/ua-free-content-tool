@@ -4,7 +4,7 @@
 
 UA FREE Content Tool gives a human editor one local workflow for the full news-production cycle: collect materials from configured sources, manually combine reports about the same event, create one concise publication with a local Ollama model, attach media from Google Drive, schedule the package, and publish it sequentially to Facebook Pages, Threads, LinkedIn, and Telegram.
 
-> **Public release:** `v1.1.1`
+> **Public release:** `v1.1.2`
 > **Platform:** Windows 10/11, portable
 > **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
@@ -17,23 +17,17 @@ The application does not decide on its own that different materials describe the
 
 The main editorial output is **one canonical publication of up to 900 characters** for all selected platforms. The language selected in Settings controls both the interface and Ollama output. Threads may technically split a longer approved payload into a main post and replies when platform limits require it, but the editorial content remains one canonical publication.
 
-## What is new in v1.1.1
+## What is new in v1.1.2
 
-- Ukrainian and English interface modes.
-- The selected language controls Ollama rewrite, repair, compression, fact-card, and final output language.
-- Publication History with rewritten headlines, Kyiv date/time, destination networks, statuses, links, and available engagement metrics.
-- Manageable permanent exclusions: inspect, deactivate selected rules, or clear all active rules.
-- Approved stories older than 24 hours leave the working Inbox while remaining in Publication History.
-- Safe recovery from truncated model JSON so raw structured output never becomes the publication text.
-- A dedicated topic-candidate window replaces candidate marking across the full Inbox.
-- Local learning records approved edits, generated rewrites, manual merges, rejected candidate pairs, permanent exclusions, and restored exclusions.
-- Learning statistics, configurable prompt-example limits, export, import, and history clearing.
-- Separate Ukrainian and English editorial memories and topic-feedback signatures.
-- Visible Inbox scrollbar, keyboard paging, position preservation, and approved-row highlighting.
-- Separate Facebook and Threads App IDs and App Secrets.
-- Automatic database migration from schema 7 to schema 8 while preserving sources, content, settings, learning data, and the publication queue.
+- One-click **Refresh all metrics** in Publication History with background progress and isolated platform failures.
+- Previously collected metrics are preserved when a later API refresh fails.
+- **Evaluate potential** combines current Threads activity with the measured performance of similar previous publications.
+- Historical prediction uses only real collected metrics, normalizes platforms separately, and reports score, confidence, comparable-publication count, and available per-network scores.
+- A history score of 50/100 means a typical result relative to this installation's own measured publications.
+- The application does not claim a historical forecast until at least five publications have usable metrics.
+- All v1.1.1 rewrite recovery, exclusion management, clean Inbox, and Publication History behavior remains included.
 
-See [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) and [CHANGELOG.md](CHANGELOG.md).
+See [RELEASE_NOTES_v1.1.2.md](RELEASE_NOTES_v1.1.2.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Core workflow
 
@@ -155,7 +149,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Download `UA_FREE_Content_Tool_v1.1.1_Windows_Portable.zip`.
+2. Download `UA_FREE_Content_Tool_v1.1.2_Windows_Portable.zip`.
 3. Verify its SHA-256 against `SHA256SUMS.txt`.
 4. Extract the complete archive. Do not run the EXE from inside the ZIP.
 5. Install Ollama and the selected model.
@@ -165,15 +159,15 @@ python -m content_agent.main
 9. Verify every required connection.
 10. Back up the complete application folder before the first live publication and before every update.
 
-## Updating from v1.0.0
+## Updating from v1.0.0 or any v1.1.x build
 
 1. Close the application completely.
 2. Confirm in Task Manager that `UA_FREE_Content_Tool.exe` is no longer running.
 3. Copy the complete existing application folder to a backup location.
-4. Extract v1.1.1 into a separate folder.
+4. Extract v1.1.2 into a separate folder.
 5. Copy the complete existing `Data` folder into the new portable application folder.
-6. Start v1.1.1 and confirm that sources, settings, learning data, and the queue are present.
-7. Keep the v1.0.0 backup until the first successful live publication from v1.1.1.
+6. Start v1.1.2 and confirm that sources, settings, learning data, and the queue are present.
+7. Keep the v1.0.0 backup until the first successful live publication from v1.1.2.
 
 Do not replace only the EXE. The portable build also contains the version-specific `_internal` directory.
 
@@ -310,11 +304,11 @@ The script reads `PUBLIC_VERSION.txt`, creates an isolated build environment, in
 Release\UA_FREE_Content_Tool_v<version>\UA_FREE_Content_Tool
 ```
 
-## Validation of v1.1.1
+## Validation of v1.1.2
 
 Completed release-preparation checks:
 
-- `238 passed` in pytest on Windows with Python 3.12;
+- `251 passed` in the complete local pytest suite before release hardening;
 - successful `compileall`;
 - entry-point import checks;
 - successful `import content_agent.main`;
@@ -332,7 +326,8 @@ The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, an
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform credentials and Google Drive.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
 - [SECURITY_NOTES.md](SECURITY_NOTES.md) — security boundaries.
-- [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) — current release notes.
+- [RELEASE_NOTES_v1.1.2.md](RELEASE_NOTES_v1.1.2.md) — current release notes.
+- [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) — previous patch notes.
 - [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md) — previous release notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution rules.
@@ -346,7 +341,7 @@ The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, an
 - [English: complete installation and configuration manual (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf)
 - [Українською: повний посібник зі встановлення та налаштування (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf)
 
-The manuals cover installation, checksum verification, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, scheduling, queue recovery, backups, migration, security, live-publication checklists, and troubleshooting. Some screenshots and labels may reflect v1.0.0 until the manuals are regenerated for v1.1.1.
+The manuals cover installation, checksum verification, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, scheduling, queue recovery, backups, migration, security, live-publication checklists, and troubleshooting. Some screenshots and labels may reflect v1.0.0 until the manuals are regenerated for v1.1.2.
 <!-- SETUP_MANUALS_END -->
 
 ## Bug and vulnerability reports
