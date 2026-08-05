@@ -1,0 +1,24 @@
+name: Export v1.1.1 source
+
+on:
+  push:
+    branches: [feature/v1.1.1-rewrite-history]
+    paths:
+      - .github/workflows/export-v1-1-1-source.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create source archive
+        run: zip -r ua-free-content-tool-v1.1.1-source.zip . -x '.git/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ua-free-content-tool-v1.1.1-source
+          path: ua-free-content-tool-v1.1.1-source.zip
+          retention-days: 3
