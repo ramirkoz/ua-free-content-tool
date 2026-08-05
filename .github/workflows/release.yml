@@ -189,9 +189,12 @@ jobs:
               assert len(names) == len(set(names)), "duplicate ZIP paths"
               assert not any("\\" in name for name in names), "backslash ZIP path"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
-              assert "UA_FREE_Content_Tool.exe" in names, "launcher missing"
+              exes = [name for name in names if name.casefold().endswith(".exe")]
+              assert exes == ["UA_FREE_Content_Tool.exe"], f"unexpected executables: {exes}"
               assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
-              assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env")) for name in names), "runtime data shipped"
+              assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm")) for name in names), "runtime data shipped"
+              assert z.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "${{ inputs.version }}"
+              assert z.read("VERSION.txt").decode("utf-8").strip() == "${{ inputs.version }}"
           print("RELEASE_ZIP_VALIDATION_OK")
           '@ | Set-Content validate_release_zip.py -Encoding utf8
           python validate_release_zip.py $portableZip
