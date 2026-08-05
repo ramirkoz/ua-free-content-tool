@@ -17,6 +17,7 @@ v1.1.3 preserves the application features introduced in v1.1.2 but replaces the 
 - Only declared runtime dependencies and application sources are included.
 - Build diagnostics are deleted before packaging.
 - Standard-library test suites, development utilities, virtual-environment launchers, and unrelated helper executables are removed.
+- The final Windows archive contains exactly one executable: `UA_FREE_Content_Tool.exe`.
 
 ## Mandatory release security gates
 
@@ -29,10 +30,25 @@ Every Windows release now requires:
 - current Microsoft Defender definitions;
 - a Defender custom scan of the extracted application;
 - a Defender scan of the final ZIP archive;
-- CRC, duplicate path, path traversal, runtime-data, and diagnostic-file checks;
+- CRC, duplicate path, path traversal, executable-count, runtime-data, and diagnostic-file checks;
 - published SHA-256 checksums.
 
-The v1.1.3 security release candidate passed 251 automated tests and a Microsoft Defender scan with current definitions on the Windows build runner. The scan reported no threats for the extracted runtime.
+The final v1.1.3 release passed:
+
+- 255 automated tests;
+- Windows CI on Python 3.11, 3.12, and 3.13;
+- isolated application import and Tk checks;
+- a ten-second GUI startup smoke test;
+- Authenticode validation to the Python Software Foundation;
+- a Microsoft Defender scan of the extracted runtime with current definitions: no threats;
+- a Microsoft Defender scan of the final Windows ZIP: no threats;
+- independent ZIP verification: 2260 unique entries, clean CRC, no unsafe paths, no runtime data, no diagnostics, and one executable only.
+
+Published Windows Portable SHA-256:
+
+```text
+30d74d8764d3db42e0b2b45ebf95ce7eb8979a531d03edda42145d76b159c57b
+```
 
 ## Included application features
 
