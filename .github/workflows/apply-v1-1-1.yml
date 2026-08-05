@@ -5,7 +5,12 @@ on:
     branches: [feature/v1.1.1-rewrite-history]
     paths:
       - .github/workflows/apply-v1-1-1.yml
-      - tools/.v1_1_1_patch/**
+      - tools/.v1_1_1_payload/**
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-v1-1-1.yml
+      - tools/.v1_1_1_payload/**
   workflow_dispatch:
 
 permissions:
@@ -32,10 +37,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $parts = Get-ChildItem "tools\.v1_1_1_patch\part*" | Sort-Object Name
-          if (-not $parts) { throw "Patch parts are missing" }
-          $encoded = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
-          [IO.File]::WriteAllBytes("v1.1.1.patch", [Convert]::FromBase64String($encoded))
+          $chunks = Get-ChildItem "tools\.v1_1_1_payload\chunk*" | Sort-Object Name
+          if ($chunks.Count -ne 4) { throw "Expected 4 compressed payload chunks, found $($chunks.Count)" }
+          $encoded = ($chunks | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
+          [IO.File]::WriteAllBytes("v1.1.1.patch.xz", [Convert]::FromBase64String($encoded))
+          $compressedHash = (Get-FileHash "v1.1.1.patch.xz" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($compressedHash -ne "0bd8774521505d52f179d964ccd9a2bc7fca91ac09af41adcb7fd254f90744db") {
+            throw "Compressed payload SHA-256 mismatch: $compressedHash"
+          }
+          python -c "from pathlib import Path; import lzma; Path('v1.1.1.patch').write_bytes(lzma.decompress(Path('v1.1.1.patch.xz').read_bytes()))"
           $hash = (Get-FileHash "v1.1.1.patch" -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne "aa06aff5391e1fe6e1eb39e1c2595b017fc6826f641425cf3e09364b3f9525c5") {
             throw "Patch SHA-256 mismatch: $hash"
@@ -130,8 +140,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Remove-Item -Recurse -Force "tools\.v1_1_1_patch"
-          Remove-Item -Force "v1.1.1.patch"
+          Remove-Item -Recurse -Force "tools\.v1_1_1_payload"
+          if (Test-Path "tools\.v1_1_1_patch") { Remove-Item -Recurse -Force "tools\.v1_1_1_patch" }
+          Remove-Item -Force "v1.1.1.patch", "v1.1.1.patch.xz"
           git rm --ignore-unmatch ".github/workflows/apply-v1-1-1.yml"
           @'
           from pathlib import Path
