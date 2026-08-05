@@ -22,14 +22,21 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed: $LASTEXITCODE" }
       - name: Validate source
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Python compilation failed: $LASTEXITCODE" }
           python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Automated tests failed: $LASTEXITCODE" }
           python tools/check_entrypoint_imports.py
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed: $LASTEXITCODE" }
           python -c "import content_agent.main"
+          if ($LASTEXITCODE -ne 0) { throw "Application import failed: $LASTEXITCODE" }
       - name: Build signed Python runtime
         shell: pwsh
         run: ./tools/build_signed_python_runtime.ps1
@@ -71,7 +78,6 @@ jobs:
           if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
             throw "Portable startup did not create its local database"
           }
-          # Diagnostic interpreter and its path file are never shipped.
           Remove-Item $console -Force
           Remove-Item (Join-Path $root "_runtime_console._pth") -Force
       - name: Microsoft Defender custom scan
