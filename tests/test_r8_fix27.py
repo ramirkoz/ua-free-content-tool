@@ -227,7 +227,7 @@ def test_fix28_manual_merge_feedback_boosts_topic_search() -> None:
 
 def test_fix28_ui_contract_has_one_text_and_topic_search() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.1")' in source
+    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
     assert 'text="Текст публікації: один для всіх мереж"' in source
     assert 'text="Пошук схожих за темою матеріалів"' in source
     assert "def find_all_by_topic(self) -> None:" in source

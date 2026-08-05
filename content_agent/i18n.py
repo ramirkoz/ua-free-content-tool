@@ -60,6 +60,7 @@ _EN: dict[str, str] = {
     "Зберегти": "Save",
     "Оновити блок": "Refresh block",
     "Оцінити вибуховість": "Evaluate virality",
+    "Оцінити потенціал": "Evaluate potential",
     "Рерайт через Ollama": "Rewrite with Ollama",
     "Тексти всіх джерел": "All source texts",
     "Відкрити новину": "Open article",

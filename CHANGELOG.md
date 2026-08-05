@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.1.2 — 2026-08-05
+
+### Added
+
+- One-click background refresh of metrics for every sent publication target in Publication History.
+- Progress reporting and platform-level circuit breaking for repeated DNS, timeout, token, and permission failures.
+- Historical performance forecasting based on the installation's own measured publication results.
+- Relative overall and per-platform potential scores with confidence and comparable-publication counts.
+
+### Changed
+
+- **Evaluate virality** is now **Evaluate potential** and combines Threads activity with historical performance evidence.
+- Historical scoring normalizes each platform separately and ignores unavailable metrics instead of treating them as zero.
+
+### Fixed
+
+- Failed or skipped metric refreshes preserve previously collected statistics.
+- Bulk refresh avoids repeating the same long platform failure for every historical post.
+
 ## v1.1.1 — 2026-08-05
 
 ### Added

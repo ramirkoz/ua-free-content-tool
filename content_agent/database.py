@@ -2085,11 +2085,12 @@ class Database:
                 progress = {}
             if not isinstance(progress, dict):
                 progress = {}
-            progress["metrics"] = {
-                str(key): max(0, int(value))
-                for key, value in (metrics or {}).items()
-                if isinstance(value, (int, float))
-            }
+            if metrics is not None:
+                progress["metrics"] = {
+                    str(key): max(0, int(value))
+                    for key, value in metrics.items()
+                    if isinstance(value, (int, float))
+                }
             progress["metrics_checked_at"] = str(checked_at or _iso())
             progress["metrics_error"] = redact_secrets(error)[:1000] if error else ""
             progress["metrics_note"] = str(note or "")[:1000]

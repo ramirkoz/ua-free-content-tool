@@ -69,7 +69,12 @@ from ..publication_text import (
     validate_media_message,
 )
 from ..publishers import PublisherFactory
-from ..publication_metrics import collect_publication_metrics
+from ..performance_prediction import predict_historical_performance
+from ..publication_metrics import (
+    BulkMetricsSummary,
+    collect_all_publication_metrics,
+    collect_publication_metrics,
+)
 from ..rewriter import platform_texts_from_base, rewrite_article_with_fallback
 from ..scheduling import KYIV, next_publish_slot, parse_iso
 from ..topic_search import build_topic_prompt, merge_local_and_ollama, parse_topic_matches
@@ -262,7 +267,7 @@ class MainWindow:
             daemon=True,
         )
 
-        root.title("UA FREE Content Tool — v1.1.1")
+        root.title("UA FREE Content Tool — v1.1.2")
         self._apply_ui_font_size(config.ui_font_size)
         root.geometry("1440x920")
         root.minsize(900, 650)
@@ -720,7 +725,7 @@ class MainWindow:
             else self.config.ui_language
         )
         self.config.ui_language = language
-        self.root.title("UA FREE Content Tool — v1.1.1")
+        self.root.title("UA FREE Content Tool — v1.1.2")
         localize_widget_tree(self.root, language)
         for variable in (getattr(self, 'status_var', None), getattr(self, 'operation_var', None), getattr(self, 'operation_detail_var', None)):
             if variable is not None:
@@ -1403,7 +1408,7 @@ class MainWindow:
         self.save_block_button.pack(side="left", padx=3)
         self.refresh_block_button = ttk.Button(actions, text="Оновити блок", command=self.refresh_current_group)
         self.refresh_block_button.pack(side="left", padx=3)
-        self.analyze_button = ttk.Button(actions, text="Оцінити вибуховість", command=self.analyze_current)
+        self.analyze_button = ttk.Button(actions, text="Оцінити потенціал", command=self.analyze_current)
         self.analyze_button.pack(side="left", padx=3)
         self.rewrite_button = ttk.Button(actions, text="Рерайт через Ollama", command=self.rewrite_current)
         self.rewrite_button.pack(side="left", padx=3)
@@ -1412,9 +1417,9 @@ class MainWindow:
         analysis = ttk.Frame(self.editor_tab)
         analysis.pack(fill="x", pady=(6, 3))
         analysis.columnconfigure(0, weight=1)
-        self.analysis_var = tk.StringVar(value="Вибуховість не розрахована")
+        self.analysis_var = tk.StringVar(value="Потенціал не розраховано")
         self.analysis_detail_var = tk.StringVar(
-            value="Threads-пошук покаже окремо: які запити виконано, скільки збігів і чи була помилка API."
+            value="Оцінка поєднує поточний інтерес у Threads і результативність схожих матеріалів у власній історії."
         )
         self.analysis_label = ttk.Label(analysis, textvariable=self.analysis_var, foreground="#333", wraplength=1300)
         self.analysis_label.grid(row=0, column=0, sticky="w")
@@ -1927,6 +1932,12 @@ class MainWindow:
             details["threads_queries"] = sample.per_query
             details["threads_error"] = sample.error
             details["threads_query_candidates"] = queries
+            prediction = predict_historical_performance(
+                group,
+                self.db.list_publication_history(limit=2000),
+                now=now,
+            )
+            details["history_prediction"] = prediction.to_dict()
             return score, confidence, details, recommendations, sample
 
         def success(result: object) -> None:
@@ -1953,41 +1964,114 @@ class MainWindow:
         self.run_async(
             action,
             success,
-            label=f"Оцінка вибуховості: Threads {query_label}",
-            done_label="Оцінку вибуховості завершено",
+            label=f"Оцінка потенціалу: Threads та власна історія · {query_label}",
+            done_label="Оцінку потенціалу завершено",
         )
 
     def _display_analysis(self, group: NewsGroup) -> None:
         details = group.explosiveness_details
+        english = self.config.ui_language == "en"
         if not group.explosiveness_score and not details:
-            self.analysis_var.set("Вибуховість не розрахована")
-            self.analysis_detail_var.set("Натисніть «Оцінити вибуховість».")
+            self.analysis_var.set("Potential has not been evaluated" if english else "Потенціал не розраховано")
+            self.analysis_detail_var.set("Click Evaluate potential." if english else "Натисніть «Оцінити потенціал».")
             return
         threads = details.get("threads_posts")
-        rec = ", ".join(group.recommended_platforms) or "без автоматичної рекомендації"
-        partial = " · оцінка часткова" if threads is None else ""
-        self.analysis_var.set(
-            f"Вибуховість: {group.explosiveness_score}/100 · надійність: "
-            f"{group.explosiveness_confidence}% · джерел: {group.source_count}{partial} · рекомендовано: {rec}"
+        rec = ", ".join(group.recommended_platforms) or (
+            "no automatic recommendation" if english else "без автоматичної рекомендації"
         )
+        partial = " · partial Threads estimate" if english and threads is None else (
+            " · оцінка Threads часткова" if threads is None else ""
+        )
+        prediction = details.get("history_prediction")
+        prediction_data = prediction if isinstance(prediction, dict) else {}
+        if bool(prediction_data.get("available")):
+            history_summary = (
+                f" · history forecast: {int(prediction_data.get('score') or 0)}/100"
+                f" · confidence: {int(prediction_data.get('confidence') or 0)}%"
+                if english
+                else f" · прогноз за історією: {int(prediction_data.get('score') or 0)}/100"
+                     f" · довіра: {int(prediction_data.get('confidence') or 0)}%"
+            )
+        else:
+            history_summary = (
+                " · history forecast: insufficient metrics"
+                if english else " · прогноз за історією: недостатньо статистики"
+            )
+        if english:
+            self.analysis_var.set(
+                f"Threads virality: {group.explosiveness_score}/100 · reliability: "
+                f"{group.explosiveness_confidence}% · sources: {group.source_count}{partial}"
+                f"{history_summary} · recommended: {rec}"
+            )
+        else:
+            self.analysis_var.set(
+                f"Вибуховість Threads: {group.explosiveness_score}/100 · надійність: "
+                f"{group.explosiveness_confidence}% · джерел: {group.source_count}{partial}"
+                f"{history_summary} · рекомендовано: {rec}"
+            )
 
+        detail_lines: list[str] = []
         per_query = details.get("threads_queries")
         error = str(details.get("threads_error") or "").strip()
         candidates = details.get("threads_query_candidates")
         if isinstance(per_query, dict) and per_query:
             parts = [f"«{query}» — {count}" for query, count in per_query.items()]
-            self.analysis_detail_var.set(
-                f"Threads за сьогодні: {threads or 0} унікальних дописів. Запити: " + "; ".join(parts)
+            detail_lines.append(
+                (f"Threads today: {threads or 0} unique posts. Queries: " if english else
+                 f"Threads за сьогодні: {threads or 0} унікальних дописів. Запити: ") + "; ".join(parts)
             )
         elif threads == 0:
             shown = ", ".join(f"«{item}»" for item in candidates) if isinstance(candidates, list) else ""
-            self.analysis_detail_var.set(
-                "Threads-пошук працює, але сьогодні не знайшов збігів" + (f" за запитами {shown}." if shown else ".")
-            )
+            if english:
+                detail_lines.append(
+                    "Threads search works but found no matches today" + (f" for {shown}." if shown else ".")
+                )
+            else:
+                detail_lines.append(
+                    "Threads-пошук працює, але сьогодні не знайшов збігів" + (f" за запитами {shown}." if shown else ".")
+                )
         elif threads is None:
-            self.analysis_detail_var.set(f"Threads недоступний: {error or 'невідома помилка'}. Локальну оцінку все одно розраховано.")
+            detail_lines.append(
+                (f"Threads unavailable: {error or 'unknown error'}. The local estimate was still calculated."
+                 if english else
+                 f"Threads недоступний: {error or 'невідома помилка'}. Локальну оцінку все одно розраховано.")
+            )
         else:
-            self.analysis_detail_var.set(f"Threads за сьогодні: {threads} унікальних дописів.")
+            detail_lines.append(
+                f"Threads today: {threads} unique posts." if english
+                else f"Threads за сьогодні: {threads} унікальних дописів."
+            )
+
+        if bool(prediction_data.get("available")):
+            platforms = prediction_data.get("platform_scores")
+            platform_text = ""
+            if isinstance(platforms, dict) and platforms:
+                platform_text = (" · by network: " if english else " · за мережами: ") + ", ".join(
+                    f"{name} {int(value)}/100" for name, value in platforms.items()
+                )
+            if english:
+                detail_lines.append(
+                    f"Own history: relative forecast calculated; publications with metrics "
+                    f"{int(prediction_data.get('sample_size') or 0)}, topically comparable "
+                    f"{int(prediction_data.get('comparable_count') or 0)}{platform_text}. "
+                    "50/100 means a typical result relative to your previous publications."
+                )
+            else:
+                detail_lines.append(
+                    f"Власна історія: {prediction_data.get('note') or 'оцінку розраховано'}; "
+                    f"публікацій зі статистикою {int(prediction_data.get('sample_size') or 0)}, "
+                    f"тематично схожих {int(prediction_data.get('comparable_count') or 0)}"
+                    f"{platform_text}. 50/100 означає типовий результат відносно ваших попередніх публікацій."
+                )
+        else:
+            note = str(prediction_data.get("note") or "")
+            detail_lines.append(
+                (f"Historical forecast unavailable. Publications with metrics: "
+                 f"{int(prediction_data.get('sample_size') or 0)}; at least five are required."
+                 if english else
+                 note or "Для прогнозу за історією спочатку оновіть статистику щонайменше п’яти публікацій.")
+            )
+        self.analysis_detail_var.set("\n".join(detail_lines))
 
     def apply_existing_targets(self, statuses: dict[str, str]) -> None:
         for variable in self.target_vars.values():
@@ -2680,11 +2764,21 @@ class MainWindow:
         actions = ttk.Frame(self.history_tab)
         actions.pack(fill="x", pady=(0, 6))
         ttk.Button(actions, text="Оновити", command=self.refresh_history).pack(side="left")
-        ttk.Button(
+        self.history_refresh_selected_button = ttk.Button(
             actions, text="Оновити статистику вибраної",
             command=self.refresh_selected_history_metrics,
-        ).pack(side="left", padx=6)
+        )
+        self.history_refresh_selected_button.pack(side="left", padx=6)
+        self.history_refresh_all_button = ttk.Button(
+            actions, text="Оновити всю статистику",
+            command=self.refresh_all_history_metrics,
+        )
+        self.history_refresh_all_button.pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Відкрити допис", command=self.open_history_post).pack(side="left")
+        self.operation_buttons.extend([
+            self.history_refresh_selected_button,
+            self.history_refresh_all_button,
+        ])
         self.history_summary_var = tk.StringVar(value="Опубліковані матеріали: завантаження…")
         ttk.Label(actions, textvariable=self.history_summary_var, foreground="#555").pack(side="right")
 
@@ -2844,7 +2938,7 @@ class MainWindow:
                     target.get("progress") if isinstance(target.get("progress"), dict) else {},
                 )
                 self.db.save_publication_metrics(
-                    int(target["id"]), metrics=result.metrics, error=result.error,
+                    int(target["id"]), metrics=result.metrics if result.metrics else None, error=result.error,
                     note=result.note, permalink_url=result.permalink_url,
                 )
                 updated += 1
@@ -2853,6 +2947,60 @@ class MainWindow:
         self.run_async(
             work, lambda _value: self.refresh_history(),
             label="Оновлюю статистику публікації", done_label="Статистику публікації оновлено",
+        )
+
+    def refresh_all_history_metrics(self) -> None:
+        rows = self.db.list_publication_history(limit=5000)
+        sent_count = sum(
+            1
+            for row in rows
+            for target in (row.get("targets") if isinstance(row.get("targets"), list) else [])
+            if isinstance(target, dict) and str(target.get("status")) == "sent"
+        )
+        if sent_count <= 0:
+            self.msg.showinfo(
+                "Історія публікацій",
+                "Опублікованих дописів для оновлення статистики не знайдено.",
+                parent=self.root,
+            )
+            return
+
+        def progress(done: int, total: int, summary: BulkMetricsSummary) -> None:
+            text = (
+                f"Оновлено {done}/{total} мережевих дописів · "
+                f"зі статистикою {summary.metrics_received} · "
+                f"помилок {summary.errors} · пропущено {summary.skipped}"
+            )
+            try:
+                self.root.after(0, lambda value=text: self.operation_detail_var.set(self.t(value)))
+            except tk.TclError:
+                pass
+
+        def work() -> BulkMetricsSummary:
+            return collect_all_publication_metrics(
+                self.db,
+                self.config,
+                rows,
+                progress_callback=progress,
+                delay_seconds=0.15,
+            )
+
+        def success(value: object) -> None:
+            summary = value if isinstance(value, BulkMetricsSummary) else BulkMetricsSummary()
+            self.refresh_history()
+            message = (
+                f"Оновлено мережевих дописів: {summary.targets_processed} із {summary.targets_total}. "
+                f"Отримано статистику: {summary.metrics_received}; помилок: {summary.errors}; "
+                f"пропущено після повторних помилок платформи: {summary.skipped}."
+            )
+            self.set_status(message)
+            self.operation_detail_var.set(self.t(message))
+
+        self.run_async(
+            work,
+            success,
+            label=f"Оновлюю всю статистику: {sent_count} мережевих дописів",
+            done_label="Оновлення всієї статистики завершено",
         )
 
     def open_history_post(self) -> None:
