@@ -48,7 +48,8 @@ foreach ($relative in @(
     "Lib\turtledemo",
     "Lib\ensurepip",
     "Lib\venv",
-    "Lib\lib2to3"
+    "Lib\lib2to3",
+    "tcl\nmake"
 )) {
     $candidate = Join-Path $appRoot $relative
     if (Test-Path $candidate) {
