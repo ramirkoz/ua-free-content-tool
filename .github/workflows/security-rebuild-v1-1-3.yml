@@ -39,19 +39,41 @@ jobs:
           $ErrorActionPreference = "Stop"
           $root = "Release\UA_FREE_Content_Tool_v1.1.3\UA_FREE_Content_Tool"
           $exe = Join-Path $root "UA_FREE_Content_Tool.exe"
+          $console = Join-Path $root "_runtime_console.exe"
           $sig = Get-AuthenticodeSignature $exe
           if ($sig.Status -ne "Valid") { throw "Invalid launcher signature: $($sig.Status)" }
           if ($sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
             throw "Unexpected signer: $($sig.SignerCertificate.Subject)"
           }
-          if (-not (Test-Path (Join-Path $root "python312._pth"))) { throw "Isolated runtime file missing" }
+          foreach ($pth in @("python312._pth", "UA_FREE_Content_Tool._pth", "_runtime_console._pth")) {
+            if (-not (Test-Path (Join-Path $root $pth))) { throw "Isolated runtime file missing: $pth" }
+          }
+          Push-Location $root
+          try {
+            & $console -I -c "import sys; print(sys.executable); import content_agent.main; print('APP_IMPORT_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Isolated application import failed: $LASTEXITCODE" }
+            & $console -I -c "import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('TK_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Isolated Tk runtime failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
           Start-Sleep -Seconds 10
-          if ($process.HasExited) { throw "Portable application exited during startup smoke test: $($process.ExitCode)" }
+          if ($process.HasExited) {
+            Write-Host "--- Portable Data files ---"
+            Get-ChildItem (Join-Path $root "Data") -Recurse -Force -ErrorAction SilentlyContinue | Format-List FullName,Length
+            Write-Host "--- Portable logs ---"
+            Get-ChildItem (Join-Path $root "Data\logs") -File -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "### $($_.FullName)"; Get-Content $_.FullName -Raw }
+            throw "Portable application exited during startup smoke test: $($process.ExitCode)"
+          }
           Stop-Process -Id $process.Id -Force
           if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
             throw "Portable startup did not create its local database"
           }
+          # Diagnostic interpreter and its path file are never shipped.
+          Remove-Item $console -Force
+          Remove-Item (Join-Path $root "_runtime_console._pth") -Force
       - name: Microsoft Defender custom scan
         shell: pwsh
         run: |
