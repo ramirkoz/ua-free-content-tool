@@ -1,0 +1,33 @@
+name: Update README for v1.1.3
+
+on:
+  push:
+    branches: [feature/v1.1.3-security-runtime]
+    paths:
+      - tools/update_readme_v1_1_3.py
+      - .github/workflows/update-readme-v1-1-3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v1.1.3-security-runtime
+          fetch-depth: 0
+      - name: Update README
+        run: python tools/update_readme_v1_1_3.py
+      - name: Commit README and remove one-time files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm tools/update_readme_v1_1_3.py .github/workflows/update-readme-v1-1-3.yml
+          git add README.md
+          git commit -m 'Update README for signed-runtime v1.1.3 [skip ci]'
+          git push origin HEAD:feature/v1.1.3-security-runtime
