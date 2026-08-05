@@ -21,8 +21,10 @@ New-Item -ItemType Directory -Path $appRoot | Out-Null
 
 # Use the official pythonw.exe as the visible launcher. The file remains
 # Authenticode-signed by the Python Software Foundation because only its name,
-# not its bytes, changes.
+# not its bytes, changes. A signed console interpreter is copied for build-time
+# diagnostics and removed before packaging.
 Copy-Item (Join-Path $pythonRoot "pythonw.exe") (Join-Path $appRoot "UA_FREE_Content_Tool.exe")
+Copy-Item (Join-Path $pythonRoot "python.exe") (Join-Path $appRoot "_runtime_console.exe")
 foreach ($name in @("python312.dll", "python3.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
     $source = Join-Path $pythonRoot $name
     if (Test-Path $source) {
