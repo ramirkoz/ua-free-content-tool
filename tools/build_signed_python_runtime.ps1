@@ -18,10 +18,10 @@ if (Test-Path $targetRoot) {
 }
 New-Item -ItemType Directory -Path $appRoot | Out-Null
 
-# Use the official pythonw.exe as the visible launcher. The file remains
-# Authenticode-signed by the Python Software Foundation because only its name,
-# not its bytes, changes. A signed console interpreter is copied for build-time
-# diagnostics and removed before packaging.
+# Use the official pythonw.exe as the visible launcher. Its bytes are unchanged,
+# so its Authenticode signature from the Python Software Foundation remains
+# valid. A signed console interpreter is included only for build validation and
+# is deleted before packaging.
 Copy-Item (Join-Path $pythonRoot "pythonw.exe") (Join-Path $appRoot "UA_FREE_Content_Tool.exe")
 Copy-Item (Join-Path $pythonRoot "python.exe") (Join-Path $appRoot "_runtime_console.exe")
 foreach ($name in @("python312.dll", "python3.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
@@ -39,6 +39,23 @@ foreach ($directory in @("DLLs", "Lib", "tcl")) {
     Copy-Item $source (Join-Path $appRoot $directory) -Recurse
 }
 
+# Remove standard-library development and test material that the application can
+# never execute. This reduces package size and avoids shipping unrelated helper
+# executables or thousands of test fixtures.
+foreach ($relative in @(
+    "Lib\test",
+    "Lib\idlelib",
+    "Lib\turtledemo",
+    "Lib\ensurepip",
+    "Lib\venv",
+    "Lib\lib2to3"
+)) {
+    $candidate = Join-Path $appRoot $relative
+    if (Test-Path $candidate) {
+        Remove-Item $candidate -Recurse -Force
+    }
+}
+
 $targetSitePackages = Join-Path $appRoot "Lib\site-packages"
 if (Test-Path $targetSitePackages) {
     Remove-Item $targetSitePackages -Recurse -Force
@@ -53,6 +70,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 if (-not (Test-Path (Join-Path $targetSitePackages "cryptography"))) {
     throw "Runtime dependency check failed: cryptography package is missing"
+}
+$dependencyScripts = Join-Path $targetSitePackages "bin"
+if (Test-Path $dependencyScripts) {
+    Remove-Item $dependencyScripts -Recurse -Force
 }
 
 Copy-Item (Join-Path $repo "content_agent") (Join-Path $appRoot "content_agent") -Recurse
