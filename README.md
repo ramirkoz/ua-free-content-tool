@@ -4,7 +4,7 @@
 
 UA FREE Content Tool gives a human editor one local workflow for the full news-production cycle: collect materials from configured sources, manually combine reports about the same event, create one concise publication with a local Ollama model, attach media from Google Drive, schedule the package, and publish it sequentially to Facebook Pages, Threads, LinkedIn, and Telegram.
 
-> **Public release:** `v1.1.2`
+> **Public release:** `v1.1.3`
 > **Platform:** Windows 10/11, portable
 > **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
@@ -17,8 +17,12 @@ The application does not decide on its own that different materials describe the
 
 The main editorial output is **one canonical publication of up to 900 characters** for all selected platforms. The language selected in Settings controls both the interface and Ollama output. Threads may technically split a longer approved payload into a main post and replies when platform limits require it, but the editorial content remains one canonical publication.
 
-## What is new in v1.1.2
+## What is new in v1.1.3
 
+- The Windows package was rebuilt after the v1.1.2 executable was withdrawn following a critical Microsoft Defender detection.
+- The generated unsigned PyInstaller launcher was replaced with the unchanged official `pythonw.exe` runtime signed by the Python Software Foundation.
+- Release publication now requires Authenticode verification, isolated-runtime startup checks, and Microsoft Defender scans of both the extracted application and final ZIP.
+- Do not restore, allow, or add the v1.1.2 executable to Defender exclusions.
 - One-click **Refresh all metrics** in Publication History with background progress and isolated platform failures.
 - Previously collected metrics are preserved when a later API refresh fails.
 - **Evaluate potential** combines current Threads activity with the measured performance of similar previous publications.
@@ -27,7 +31,7 @@ The main editorial output is **one canonical publication of up to 900 characters
 - The application does not claim a historical forecast until at least five publications have usable metrics.
 - All v1.1.1 rewrite recovery, exclusion management, clean Inbox, and Publication History behavior remains included.
 
-See [RELEASE_NOTES_v1.1.2.md](RELEASE_NOTES_v1.1.2.md) and [CHANGELOG.md](CHANGELOG.md).
+See [RELEASE_NOTES_v1.1.3.md](RELEASE_NOTES_v1.1.3.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Core workflow
 
@@ -149,7 +153,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Download `UA_FREE_Content_Tool_v1.1.2_Windows_Portable.zip`.
+2. Download `UA_FREE_Content_Tool_v1.1.3_Windows_Portable.zip`.
 3. Verify its SHA-256 against `SHA256SUMS.txt`.
 4. Extract the complete archive. Do not run the EXE from inside the ZIP.
 5. Install Ollama and the selected model.
@@ -161,15 +165,17 @@ python -m content_agent.main
 
 ## Updating from v1.0.0 or any v1.1.x build
 
+The v1.1.2 Windows executable is withdrawn. Keep it quarantined or remove it through Windows Security, delete its ZIP and extracted runtime, and migrate only a trusted `Data` folder from v1.1.1 or another known-good backup.
+
 1. Close the application completely.
 2. Confirm in Task Manager that `UA_FREE_Content_Tool.exe` is no longer running.
 3. Copy the complete existing application folder to a backup location.
-4. Extract v1.1.2 into a separate folder.
+4. Extract v1.1.3 into a separate folder.
 5. Copy the complete existing `Data` folder into the new portable application folder.
-6. Start v1.1.2 and confirm that sources, settings, learning data, and the queue are present.
-7. Keep the v1.0.0 backup until the first successful live publication from v1.1.2.
+6. Start v1.1.3 and confirm that sources, settings, learning data, and the queue are present.
+7. Keep the v1.0.0 backup until the first successful live publication from v1.1.3.
 
-Do not replace only the EXE. The portable build also contains the version-specific `_internal` directory.
+Do not replace only the EXE. v1.1.3 uses a signed isolated Python runtime and depends on the accompanying `DLLs`, `Lib`, `tcl`, and `content_agent` directories.
 
 ## Portable data, backups, and updates
 
