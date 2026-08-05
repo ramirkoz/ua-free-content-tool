@@ -3,8 +3,8 @@ name: Export v1.1.1 source
 on:
   push:
     branches: [feature/v1.1.1-rewrite-history]
-    paths:
-      - .github/workflows/export-v1-1-1-source.yml
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
