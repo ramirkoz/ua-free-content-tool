@@ -1,0 +1,163 @@
+name: Apply and validate v1.1.2
+
+on:
+  push:
+    branches:
+      - feature/v1.1.2-metrics-prediction
+    paths:
+      - .github/workflows/apply-v1-1-2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/v1.1.2-metrics-prediction
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Reconstruct and apply validated patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $chunks = Get-ChildItem "tools\.v1_1_2_payload\chunk*" | Sort-Object Name
+          if ($chunks.Count -ne 2) { throw "Expected 2 compressed payload chunks, found $($chunks.Count)" }
+          $encoded = ($chunks | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
+          [IO.File]::WriteAllBytes("v1.1.2.patch.xz", [Convert]::FromBase64String($encoded))
+          $compressedHash = (Get-FileHash "v1.1.2.patch.xz" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($compressedHash -ne "3c47573ca6bfc7f5cb398bf98e5fa1742efd33ea424258824c6ac954efeb50e0") {
+            throw "Compressed payload SHA-256 mismatch: $compressedHash"
+          }
+          python -c "from pathlib import Path; import lzma; Path('v1.1.2.patch').write_bytes(lzma.decompress(Path('v1.1.2.patch.xz').read_bytes()))"
+          $patchHash = (Get-FileHash "v1.1.2.patch" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($patchHash -ne "02db3d929943983dbfd9af642c1cead8ed892f745925a0045192669cdc9c451f") {
+            throw "Patch SHA-256 mismatch: $patchHash"
+          }
+          git apply --check v1.1.2.patch
+          git apply v1.1.2.patch
+
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+
+      - name: Compile
+        run: python -m compileall -q .
+
+      - name: Run complete tests
+        run: python -m pytest -q
+
+      - name: Audit visible localization
+        run: python tools/audit_v1_1_i18n.py
+
+      - name: Verify entrypoints
+        run: python tools/check_entrypoint_imports.py
+
+      - name: Import application
+        run: python -c "import content_agent.main"
+
+      - name: Build portable Windows application
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate portable layout and startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          if ($version -ne "1.1.2") { throw "Unexpected version: $version" }
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          $exe = Join-Path $root "UA_FREE_Content_Tool.exe"
+          foreach ($required in @($exe, (Join-Path $root "_internal"), (Join-Path $root "portable.flag"), (Join-Path $root "clean_start.flag"), (Join-Path $root "Data"))) {
+            if (-not (Test-Path $required)) { throw "Required portable item missing: $required" }
+          }
+          $dataFiles = Get-ChildItem (Join-Path $root "Data") -Recurse -Force -File
+          if ($dataFiles) { throw "Portable Data directory is not empty" }
+          $forbidden = Get-ChildItem $root -Recurse -Force -File | Where-Object {
+            $_.Name -match 'config\.portable|portable\.key|\.sqlite3?$|\.db$|\.log$' -or $_.Name -match 'token|secret'
+          }
+          if ($forbidden) {
+            $forbidden | ForEach-Object { Write-Host $_.FullName }
+            throw "Working data or secret-like files found in portable package"
+          }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 6
+          if ($process.HasExited) { throw "Portable executable exited during startup smoke test: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+
+      - name: Create and validate release candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "1.1.2"
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v${version}_Windows_Portable_RC.zip"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v${version}_RC_SHA256.txt" -Encoding ascii
+          @'
+          from pathlib import Path, PurePosixPath
+          import zipfile
+          archive = Path("UA_FREE_Content_Tool_v1.1.2_Windows_Portable_RC.zip")
+          with zipfile.ZipFile(archive) as handle:
+              bad = handle.testzip()
+              if bad:
+                  raise SystemExit(f"CRC failure: {bad}")
+              names = [info.filename for info in handle.infolist()]
+              if not names or len(names) != len(set(names)):
+                  raise SystemExit("empty ZIP or duplicate names")
+              for name in names:
+                  path = PurePosixPath(name.replace("\\", "/"))
+                  if path.is_absolute() or ".." in path.parts or "\\" in name:
+                      raise SystemExit(f"unsafe ZIP path: {name}")
+          print(f"VALIDATED={archive}")
+          '@ | python -
+
+      - name: Upload Windows release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.1.2_Windows_Portable_RC
+          path: |
+            UA_FREE_Content_Tool_v1.1.2_Windows_Portable_RC.zip
+            UA_FREE_Content_Tool_v1.1.2_RC_SHA256.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit validated v1.1.2 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Remove-Item -Recurse -Force "tools\.v1_1_2_payload"
+          Remove-Item -Force "v1.1.2.patch", "v1.1.2.patch.xz"
+          Remove-Item -Force "UA_FREE_Content_Tool_v1.1.2_Windows_Portable_RC.zip", "UA_FREE_Content_Tool_v1.1.2_RC_SHA256.txt"
+          git rm --ignore-unmatch ".github/workflows/apply-v1-1-2.yml"
+          @'
+          from pathlib import Path
+          import hashlib
+          root = Path.cwd()
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+          (root / "FILE_MANIFEST.sha256").write_text("\n".join(lines) + "\n", encoding="ascii", newline="\n")
+          '@ | python -
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add bulk metrics refresh and historical performance prediction v1.1.2 [skip ci]"
+          git push origin HEAD:feature/v1.1.2-metrics-prediction
