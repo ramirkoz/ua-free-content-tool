@@ -64,6 +64,7 @@ Copy-Item (Join-Path $repo "content_agent") (Join-Path $appRoot "content_agent")
 # disabled on every supported Windows host.
 $isolatedPath = @"
 .
+DLLs
 Lib
 Lib\site-packages
 import site
