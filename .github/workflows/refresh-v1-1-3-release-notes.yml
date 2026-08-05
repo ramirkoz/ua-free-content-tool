@@ -1,0 +1,31 @@
+name: Refresh v1.1.3 release validation notes
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/refresh-v1-1-3-release-notes.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Update published release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit v1.1.3 --notes-file RELEASE_NOTES_v1.1.3.md --title 'UA FREE Content Tool v1.1.3' --latest
+      - name: Remove one-time release-notes workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/refresh-v1-1-3-release-notes.yml
+          git commit -m 'Remove one-time v1.1.3 release-notes workflow [skip ci]'
+          git push origin HEAD:main
