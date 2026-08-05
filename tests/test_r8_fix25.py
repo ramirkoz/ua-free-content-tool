@@ -56,9 +56,11 @@ def test_fix25_settings_layout_keeps_form_width_and_actions_inside_rows() -> Non
 
 
 def test_fix25_portable_build_marks_fresh_copies_as_clean_start() -> None:
-    build = Path("Build_Portable_Windows.bat").read_text(encoding="utf-8")
+    batch = Path("Build_Portable_Windows.bat").read_text(encoding="utf-8")
+    builder = Path("tools/build_signed_python_runtime.ps1").read_text(encoding="utf-8")
 
-    assert 'type nul > "%APP_FOLDER%\\clean_start.flag"' in build
-    assert 'set /p PUBLIC_VERSION=<PUBLIC_VERSION.txt' in build
-    assert 'set "TARGET=Release\\UA_FREE_Content_Tool_v%PUBLIC_VERSION%"' in build
-    assert 'if not exist "%APP_FOLDER%\\Data" mkdir "%APP_FOLDER%\\Data"' in build
+    assert 'set /p PUBLIC_VERSION=<PUBLIC_VERSION.txt' in batch
+    assert 'set "TARGET=Release\\UA_FREE_Content_Tool_v%PUBLIC_VERSION%"' in batch
+    assert 'New-Item -ItemType File -Path (Join-Path $appRoot "clean_start.flag")' in builder
+    assert 'New-Item -ItemType File -Path (Join-Path $appRoot "portable.flag")' in builder
+    assert 'New-Item -ItemType Directory -Path (Join-Path $appRoot "Data")' in builder

@@ -13,9 +13,32 @@ UA FREE Content Tool stores the database, sources, queue, encrypted credentials,
 
 Ollama and local model files are not included in the portable folder. Install Ollama and the selected model separately on the destination computer. A platform may also require reauthorization if it has revoked or expired its token.
 
-## Updating from v1.0.0 to v1.1.0
+## Updating to v1.1.3
 
-Version 1.1.0 upgrades the SQLite schema from version 7 to version 8. The migration preserves:
+Version 1.1.3 uses a new signed Python runtime package. It does not use the earlier PyInstaller `_internal` layout.
+
+Recommended procedure:
+
+1. Keep the blocked v1.1.2 executable in quarantine or remove it through Windows Security. Never restore or allow it.
+2. Delete the downloaded v1.1.2 ZIP and the extracted v1.1.2 program folder.
+3. Close the last trusted working version completely.
+4. Copy its complete application folder to a backup location.
+5. Extract v1.1.3 into a separate new folder.
+6. Copy **only the complete trusted `Data` folder** from v1.1.1 or another known-good backup into the v1.1.3 folder.
+7. Do not copy the v1.1.2 EXE, `_internal` directory, DLLs, Python files, or other runtime components.
+8. Scan the extracted v1.1.3 folder with Microsoft Defender.
+9. Start v1.1.3 and confirm that sources, settings, learning data, queue, and publication history are present.
+10. Keep the known-good backup until the first successful live publication.
+
+The database schema remains version 8. No database conversion is required from v1.1.0, v1.1.1, or v1.1.2 data, but only a trusted `Data` folder should be migrated.
+
+Do not copy only `UA_FREE_Content_Tool.exe`. The EXE depends on the `DLLs`, `Lib`, `tcl`, `content_agent`, and signed Python runtime files shipped in the same release.
+
+The release archive does not contain production tokens, configuration, SQLite files, logs, or queue data. The application creates `Data` on first launch if the folder is absent.
+
+## Earlier v1.0.0 to v1.1.x database migration
+
+Version 1.1.0 upgraded the SQLite schema from version 7 to version 8. The migration preserves:
 
 - configured sources and incoming blocks;
 - merged source relationships and approved text;
@@ -24,20 +47,6 @@ Version 1.1.0 upgrades the SQLite schema from version 7 to version 8. The migrat
 - editorial examples and topic feedback;
 - permanent content exclusions;
 - encrypted platform settings and credentials.
-
-Recommended procedure:
-
-1. Close v1.0.0 completely.
-2. Copy the complete v1.0.0 application folder to a backup location.
-3. Extract v1.1.0 into a separate folder.
-4. Copy the complete v1.0.0 `Data` folder into the v1.1.0 portable application folder.
-5. Start v1.1.0 and allow the schema migration to finish.
-6. Confirm that sources, settings, learning data, and publication queue are present.
-7. Keep the v1.0.0 backup until the first successful live publication from v1.1.0.
-
-Do not copy only `UA_FREE_Content_Tool.exe`. The `_internal` directory belongs to the same build and must be replaced together with the EXE.
-
-The v1.1.0 release archive contains an empty `Data` directory. It does not contain production tokens, configuration, SQLite files, logs, or queue data.
 
 ## Migration from legacy local data
 
@@ -57,7 +66,7 @@ Before every update:
 
 1. Close the application and confirm the process has stopped.
 2. Copy the complete application folder to a separate backup location.
-3. Apply only the documented program update or move the complete `Data` folder into a separately extracted new version.
+3. Apply only the documented program update or move the complete trusted `Data` folder into a separately extracted new version.
 4. Keep the previous working copy until the first successful live publication with the new version.
 
 The in-application backup and learning export functions are useful additional safeguards, but they do not replace a complete offline copy of the portable folder before a version update.

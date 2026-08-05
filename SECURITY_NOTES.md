@@ -4,6 +4,26 @@
 
 Security fixes are currently provided for the latest public release only.
 
+## Windows release integrity
+
+Starting with v1.1.3, the Windows portable build no longer uses a generated PyInstaller launcher. The visible `UA_FREE_Content_Tool.exe` is an unchanged official `pythonw.exe` binary whose Authenticode signature must validate to the Python Software Foundation.
+
+Every Windows release must pass all of these gates before publication:
+
+- the complete automated test suite;
+- isolated runtime import and Tk startup checks;
+- a real GUI startup smoke test;
+- verification of the launcher Authenticode signature and signer;
+- updated Microsoft Defender definitions;
+- a Microsoft Defender custom scan of the extracted runtime;
+- a second Defender scan of the final ZIP archive;
+- ZIP CRC, duplicate-path, path-traversal, runtime-data, and diagnostic-file checks;
+- SHA-256 checksums published with the release.
+
+A clean scan is evidence for the exact scanned build and Defender signature version, not an absolute guarantee against every possible threat. Users should keep Defender enabled and scan the downloaded archive locally before first use.
+
+The v1.1.2 Windows binary was withdrawn after a critical Defender detection and must not be restored, allowed, or added to exclusions.
+
 ## Never publish these files
 
 Do not attach or commit a real working `Data` folder. In portable mode it may contain:
