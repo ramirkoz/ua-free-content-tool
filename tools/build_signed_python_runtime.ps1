@@ -58,14 +58,19 @@ foreach ($pattern in @(
 
 Copy-Item (Join-Path $repo "content_agent") (Join-Path $appRoot "content_agent") -Recurse
 
-# Isolated path configuration. This disables registry, PYTHONPATH, user-site and
-# current-working-directory injection while still importing sitecustomize.
-@"
+# Isolated path configuration. CPython checks an executable-specific _pth file
+# for renamed launchers, while some builds prefer the DLL-specific file. Write
+# all applicable names so registry, PYTHONPATH, user-site and CWD injection stay
+# disabled on every supported Windows host.
+$isolatedPath = @"
 .
 Lib
 Lib\site-packages
 import site
-"@ | Set-Content -Path (Join-Path $appRoot "python312._pth") -Encoding ascii
+"@
+foreach ($pthName in @("python312._pth", "UA_FREE_Content_Tool._pth", "_runtime_console._pth")) {
+    $isolatedPath | Set-Content -Path (Join-Path $appRoot $pthName) -Encoding ascii
+}
 
 @'
 from __future__ import annotations
