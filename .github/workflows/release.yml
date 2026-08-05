@@ -1,4 +1,4 @@
-name: Build and publish Windows release
+name: Build, scan, and publish Windows release
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       version:
         description: Release version without the v prefix
         required: true
-        default: "1.1.0"
+        default: "1.1.3"
       prerelease:
         description: Publish as a prerelease
         required: true
@@ -25,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -48,6 +48,17 @@ jobs:
           if (-not (Test-Path $notes)) {
             throw "Release notes not found: $notes"
           }
+
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+
+      - name: Validate source
+        shell: pwsh
+        run: |
+          python -m compileall -q .
+          python -m pytest -q
+          python tools/check_entrypoint_imports.py
+          python -c "import content_agent.main"
 
       - name: Refresh repository manifest
         shell: pwsh
@@ -85,11 +96,64 @@ jobs:
             Write-Host "Manifest is already current."
           }
 
-      - name: Build validated portable package
+      - name: Build signed portable runtime
         shell: cmd
         run: Build_Portable_Windows.bat
 
-      - name: Prepare release assets
+      - name: Validate signed launcher and portable startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.version }}"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
+
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne "Valid") {
+            throw "Launcher signature is not valid: $($signature.Status)"
+          }
+          if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+            throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)"
+          }
+
+          Push-Location $root
+          try {
+            & $console -I -c "import content_agent.main; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('SIGNED_RUNTIME_IMPORT_AND_TK_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Isolated signed runtime validation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 10
+          if ($process.HasExited) {
+            throw "Portable application exited during startup smoke test: $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
+            throw "Portable startup did not create its local database"
+          }
+
+          Remove-Item $console -Force
+          Remove-Item (Join-Path $root "_runtime_console._pth") -Force
+          Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Update Defender and scan extracted runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.version }}"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool").Path
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $scanner) { throw "Microsoft Defender command-line scanner is unavailable" }
+          & $scanner.FullName -SignatureUpdate
+          if ($LASTEXITCODE -ne 0) { throw "Defender signature update failed: $LASTEXITCODE" }
+          & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the extracted runtime: $LASTEXITCODE" }
+
+      - name: Prepare and validate release assets
         id: assets
         shell: pwsh
         run: |
@@ -100,16 +164,33 @@ jobs:
           $sourceZip = "UA_FREE_Content_Tool_v${version}_Source.zip"
           $checksums = "SHA256SUMS.txt"
 
-          if (-not (Test-Path $releaseRoot)) {
-            throw "Portable release folder not found: $releaseRoot"
-          }
-
           Compress-Archive -Path "$releaseRoot\*" -DestinationPath $portableZip -CompressionLevel Optimal
           git archive --format=zip --output=$sourceZip HEAD
 
+          @'
+          import pathlib, zipfile, sys
+          archive = pathlib.Path(sys.argv[1])
+          with zipfile.ZipFile(archive) as z:
+              names = z.namelist()
+              assert z.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any("\\" in name for name in names), "backslash ZIP path"
+              assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
+              assert "UA_FREE_Content_Tool.exe" in names, "launcher missing"
+              assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
+              assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env")) for name in names), "runtime data shipped"
+          print("RELEASE_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_release_zip.py -Encoding utf8
+          python validate_release_zip.py $portableZip
+          Remove-Item validate_release_zip.py
+
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $portableZip).Path -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the release ZIP: $LASTEXITCODE" }
+
           $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLowerInvariant()
           $sourceHash = (Get-FileHash $sourceZip -Algorithm SHA256).Hash.ToLowerInvariant()
-
           @(
             "$portableHash  $portableZip",
             "$sourceHash  $sourceZip"
@@ -141,30 +222,9 @@ jobs:
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $portableZip $sourceZip $checksums --clobber
-            $arguments = @(
-              "release", "edit", $tag,
-              "--target", "main",
-              "--title", "UA FREE Content Tool v$version",
-              "--notes-file", $notes,
-              "--latest"
-            )
-            if ("${{ inputs.prerelease }}" -eq "true") {
-              $arguments += "--prerelease"
-            }
-            & gh @arguments
+            $arguments = @("release", "edit", $tag, "--target", "main", "--title", "UA FREE Content Tool v$version", "--notes-file", $notes, "--latest")
           } else {
-            $arguments = @(
-              "release", "create", $tag,
-              $portableZip,
-              $sourceZip,
-              $checksums,
-              "--target", "main",
-              "--title", "UA FREE Content Tool v$version",
-              "--notes-file", $notes,
-              "--latest"
-            )
-            if ("${{ inputs.prerelease }}" -eq "true") {
-              $arguments += "--prerelease"
-            }
-            & gh @arguments
+            $arguments = @("release", "create", $tag, $portableZip, $sourceZip, $checksums, "--target", "main", "--title", "UA FREE Content Tool v$version", "--notes-file", $notes, "--latest")
           }
+          if ("${{ inputs.prerelease }}" -eq "true") { $arguments += "--prerelease" }
+          & gh @arguments
