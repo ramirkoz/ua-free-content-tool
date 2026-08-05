@@ -37,9 +37,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = "Release\UA_FREE_Content_Tool_v1.1.3\UA_FREE_Content_Tool"
-          $exe = Join-Path $root "UA_FREE_Content_Tool.exe"
-          $console = Join-Path $root "_runtime_console.exe"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.1.3\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
           $sig = Get-AuthenticodeSignature $exe
           if ($sig.Status -ne "Valid") { throw "Invalid launcher signature: $($sig.Status)" }
           if ($sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
