@@ -732,7 +732,11 @@ def _compression_prompt_v11(headline: str, rewrite: str, limit: int, language: s
 Shorten this finished English news story to at most {target} characters including
 spaces. Do not add facts. Preserve names, positions, dates, numbers, places,
 causes, consequences, and key clarifications. Remove only repetition and filler.
-Return JSON fields headline, fact_card, rewrite.
+Return only this marker format, without JSON or markdown:
+HEADLINE: shortened headline
+FACTS: preserve the source count and key clarification
+TEXT:
+shortened text
 
 HEADLINE: {headline}
 TEXT TO SHORTEN:
@@ -803,9 +807,11 @@ positions, dates, places, numbers, quotations, causes, and consequences. No URLs
 hashtags, fundraising calls, analysis, guesses, conclusions, or filler.
 {memory_instruction}
 
-Return JSON with exactly headline, fact_card, rewrite. The rewrite must contain
-1–4 short English paragraphs. fact_card must state that {total_sources} of
-{total_sources} sources were used and note important clarifications or conflicts.
+Return only this marker format, without JSON or markdown:
+HEADLINE: neutral English headline
+FACTS: used {total_sources} of {total_sources} sources; important clarifications or conflicts
+TEXT:
+1–4 short English paragraphs
 
 {labels['source_title']}: {title}
 SOURCE URL: {source_url}
@@ -833,10 +839,11 @@ SOURCE URL: {source_url}
 донатних закликів, домислів, оцінок, висновків або води.
 {memory_instruction}
 
-Текст публікації всередині поля rewrite має бути без JSON.
-Поверни JSON лише з полями headline, fact_card, rewrite. rewrite має містити
-1–4 короткі абзаци українською. fact_card має вказати, що використано
-{total_sources} із {total_sources} джерел, і назвати важливі уточнення чи суперечності.
+Поверни лише цей формат, без JSON і markdown:
+ЗАГОЛОВОК: нейтральний український заголовок
+ФАКТИ: використано {total_sources} із {total_sources} джерел; важливі уточнення чи суперечності
+ТЕКСТ:
+1–4 короткі абзаци українською
 
 {labels['source_title']}: {title}
 ДЖЕРЕЛО-ПОСИЛАННЯ: {source_url}
@@ -844,7 +851,8 @@ SOURCE URL: {source_url}
 {source_text}
 """.strip()
 
-    payload = _generate_payload(client, model, instructions, num_predict=300, temperature=0.08)
+    payload = _generate_payload(client, model, instructions, num_predict=420, temperature=0.08)
+    result_payload = payload
     headline = str(payload.get("headline") or "").strip() or title
     rewrite = str(payload.get("rewrite") or "").strip()
     if not rewrite:
@@ -855,9 +863,10 @@ SOURCE URL: {source_url}
             client,
             model,
             _language_repair_prompt_v11(title, source_text, total_sources, issue, language),
-            num_predict=300,
+            num_predict=420,
             temperature=0.02,
         )
+        result_payload = repaired
         headline = str(repaired.get("headline") or "").strip() or headline
         rewrite = str(repaired.get("rewrite") or "").strip()
         second_issue = _rewrite_quality_issue_v11(headline, rewrite, source_text, language)
@@ -876,8 +885,8 @@ SOURCE URL: {source_url}
             f"The compacted rewrite failed quality validation: {final_issue}." if language == "en"
             else f"Після стискання рерайт не пройшов перевірку: {final_issue}."
         )
-    model_fact_card = str(payload.get("fact_card") or "").strip()
-    fact_card = model_fact_card or _fact_card_from_rewrite(rewrite)
+    model_fact_card = str(result_payload.get("fact_card") or "").strip()
+    fact_card = _fact_card_from_rewrite(model_fact_card or rewrite, limit=600)
     source_note = (
         f"Sources provided to the model: {total_sources} of {total_sources}."
         if language == "en"

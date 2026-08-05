@@ -41,6 +41,42 @@ def _strip_code_fence(value: str) -> str:
     return text
 
 
+def _extract_jsonish_string(text: str, key: str) -> str:
+    """Recover one string field from complete or truncated model JSON."""
+
+    match = re.search(rf'(?is)["\']{re.escape(key)}["\']\s*:\s*"', text)
+    if not match:
+        return ""
+    start = match.end()
+    raw: list[str] = []
+    escaped = False
+    closed = False
+    for char in text[start:]:
+        if escaped:
+            raw.append("\\" + char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            closed = True
+            break
+        raw.append(char)
+    value = "".join(raw)
+    # json.loads gives us proper \n, quotes and Unicode escapes. Actual newlines
+    # are escaped first because small models occasionally emit invalid pretty JSON.
+    escaped_value = value.replace("\r", "\\r").replace("\n", "\\n")
+    try:
+        return str(json.loads('"' + escaped_value + '"')).strip()
+    except json.JSONDecodeError:
+        value = re.sub(r"\\n", "\n", value)
+        value = re.sub(r"\\r", "\r", value)
+        value = re.sub(r"\\t", "\t", value)
+        value = value.replace('\\"', '"').replace("\\\\", "\\")
+        return value.strip() if closed or value else ""
+
+
 def _fact_card_from_text(text: str, limit: int = 600) -> str:
     value = " ".join(str(text or "").split())
     if len(value) <= limit:
@@ -72,6 +108,22 @@ def _decode_rewrite_payload(response_text: str) -> dict[str, object]:
         decoded = None
     if isinstance(decoded, dict):
         return decoded
+
+    # qwen/gemma can stop a few tokens before closing a JSON object. Recover the
+    # useful fields instead of dumping the raw object into the publication editor.
+    jsonish = text.lstrip().startswith("{") or bool(
+        re.search(r'(?is)["\'](?:headline|fact_card|rewrite)["\']\s*:', text)
+    )
+    if jsonish:
+        headline = _extract_jsonish_string(text, "headline")
+        fact_card = _extract_jsonish_string(text, "fact_card")
+        rewrite = _extract_jsonish_string(text, "rewrite")
+        if rewrite:
+            return {"headline": headline, "fact_card": fact_card or _fact_card_from_text(rewrite), "rewrite": rewrite}
+        raise OllamaError(
+            "Ollama повернула незавершену структуровану відповідь без тексту рерайту. "
+            "Спробуйте повторити рерайт; сирий JSON не збережено."
+        )
 
     headline = ""
     rewrite = ""

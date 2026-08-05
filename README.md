@@ -4,9 +4,9 @@
 
 UA FREE Content Tool gives a human editor one local workflow for the full news-production cycle: collect materials from configured sources, manually combine reports about the same event, create one concise publication with a local Ollama model, attach media from Google Drive, schedule the package, and publish it sequentially to Facebook Pages, Threads, LinkedIn, and Telegram.
 
-> **Public release:** `v1.1.0`  
-> **Platform:** Windows 10/11, portable  
-> **Interface and output languages:** Ukrainian and English  
+> **Public release:** `v1.1.1`
+> **Platform:** Windows 10/11, portable
+> **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
 
 ## Why this application exists
@@ -17,10 +17,14 @@ The application does not decide on its own that different materials describe the
 
 The main editorial output is **one canonical publication of up to 900 characters** for all selected platforms. The language selected in Settings controls both the interface and Ollama output. Threads may technically split a longer approved payload into a main post and replies when platform limits require it, but the editorial content remains one canonical publication.
 
-## What is new in v1.1.0
+## What is new in v1.1.1
 
 - Ukrainian and English interface modes.
 - The selected language controls Ollama rewrite, repair, compression, fact-card, and final output language.
+- Publication History with rewritten headlines, Kyiv date/time, destination networks, statuses, links, and available engagement metrics.
+- Manageable permanent exclusions: inspect, deactivate selected rules, or clear all active rules.
+- Approved stories older than 24 hours leave the working Inbox while remaining in Publication History.
+- Safe recovery from truncated model JSON so raw structured output never becomes the publication text.
 - A dedicated topic-candidate window replaces candidate marking across the full Inbox.
 - Local learning records approved edits, generated rewrites, manual merges, rejected candidate pairs, permanent exclusions, and restored exclusions.
 - Learning statistics, configurable prompt-example limits, export, import, and history clearing.
@@ -29,7 +33,7 @@ The main editorial output is **one canonical publication of up to 900 characters
 - Separate Facebook and Threads App IDs and App Secrets.
 - Automatic database migration from schema 7 to schema 8 while preserving sources, content, settings, learning data, and the publication queue.
 
-See [RELEASE_NOTES_v1.1.0.md](RELEASE_NOTES_v1.1.0.md) and [CHANGELOG.md](CHANGELOG.md).
+See [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Core workflow
 
@@ -78,6 +82,8 @@ See [RELEASE_NOTES_v1.1.0.md](RELEASE_NOTES_v1.1.0.md) and [CHANGELOG.md](CHANGE
 
 ### Queue and reliability
 
+- Keep a separate publication history outside the working Inbox.
+- Show rewritten headlines, actual publication time, networks, statuses, stored links, and available engagement metrics.
 - Schedule publications for later delivery.
 - Store a separate status for every target platform.
 - Preserve attempts, errors, and remote IDs.
@@ -149,7 +155,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Download `UA_FREE_Content_Tool_v1.1.0_Windows_Portable.zip`.
+2. Download `UA_FREE_Content_Tool_v1.1.1_Windows_Portable.zip`.
 3. Verify its SHA-256 against `SHA256SUMS.txt`.
 4. Extract the complete archive. Do not run the EXE from inside the ZIP.
 5. Install Ollama and the selected model.
@@ -164,10 +170,10 @@ python -m content_agent.main
 1. Close the application completely.
 2. Confirm in Task Manager that `UA_FREE_Content_Tool.exe` is no longer running.
 3. Copy the complete existing application folder to a backup location.
-4. Extract v1.1.0 into a separate folder.
+4. Extract v1.1.1 into a separate folder.
 5. Copy the complete existing `Data` folder into the new portable application folder.
-6. Start v1.1.0 and confirm that sources, settings, learning data, and the queue are present.
-7. Keep the v1.0.0 backup until the first successful live publication from v1.1.0.
+6. Start v1.1.1 and confirm that sources, settings, learning data, and the queue are present.
+7. Keep the v1.0.0 backup until the first successful live publication from v1.1.1.
 
 Do not replace only the EXE. The portable build also contains the version-specific `_internal` directory.
 
@@ -304,7 +310,7 @@ The script reads `PUBLIC_VERSION.txt`, creates an isolated build environment, in
 Release\UA_FREE_Content_Tool_v<version>\UA_FREE_Content_Tool
 ```
 
-## Validation of v1.1.0
+## Validation of v1.1.1
 
 Completed release-preparation checks:
 
@@ -326,7 +332,7 @@ The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, an
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform credentials and Google Drive.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
 - [SECURITY_NOTES.md](SECURITY_NOTES.md) — security boundaries.
-- [RELEASE_NOTES_v1.1.0.md](RELEASE_NOTES_v1.1.0.md) — current release notes.
+- [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) — current release notes.
 - [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md) — previous release notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution rules.
@@ -340,7 +346,7 @@ The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, an
 - [English: complete installation and configuration manual (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_EN.pdf)
 - [Українською: повний посібник зі встановлення та налаштування (PDF)](docs/manuals/UA_FREE_Content_Tool_Complete_Setup_Manual_UA.pdf)
 
-The manuals cover installation, checksum verification, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, scheduling, queue recovery, backups, migration, security, live-publication checklists, and troubleshooting. Some screenshots and labels may reflect v1.0.0 until the manuals are regenerated for v1.1.0.
+The manuals cover installation, checksum verification, Ollama, every supported platform, Google Drive media, source collection, editorial workflow, scheduling, queue recovery, backups, migration, security, live-publication checklists, and troubleshooting. Some screenshots and labels may reflect v1.0.0 until the manuals are regenerated for v1.1.1.
 <!-- SETUP_MANUALS_END -->
 
 ## Bug and vulnerability reports

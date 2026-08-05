@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.1 — 2026-08-05
+
+### Added
+
+- A Publication History tab before Settings with the rewritten headline, Kyiv publication date and time, networks, per-target status, stored post links, and available engagement metrics.
+- Manual refresh of Facebook reactions/comments/shares and Threads views/likes/replies/reposts/quotes/shares.
+- A dedicated exclusions manager that can deactivate selected rules or clear all active exclusions without erasing their audit history.
+
+### Changed
+
+- The active Inbox keeps current drafts and recently approved or still-queued stories; approved stories older than 24 hours move out of the working list and remain available in Publication History.
+- Ollama prompts use the faster headline/facts/text marker protocol instead of asking small local models to emit JSON.
+
+### Fixed
+
+- Complete or truncated Ollama JSON is decoded safely. Raw JSON can no longer be saved as the publication headline, fact card, or rewrite text.
+- A repaired rewrite now uses the repaired fact card instead of the rejected first response.
+- Publication metric refresh preserves the original publication timestamp.
+- Telegram history stores a public-channel permalink when possible and clearly reports that the Bot API does not expose post engagement statistics.
+- LinkedIn metric failures are isolated and shown as permission limitations instead of blocking history.
+
 ## v1.1.0 — 2026-08-04
 
 ### Added

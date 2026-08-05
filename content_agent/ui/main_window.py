@@ -69,12 +69,14 @@ from ..publication_text import (
     validate_media_message,
 )
 from ..publishers import PublisherFactory
+from ..publication_metrics import collect_publication_metrics
 from ..rewriter import platform_texts_from_base, rewrite_article_with_fallback
 from ..scheduling import KYIV, next_publish_slot, parse_iso
 from ..topic_search import build_topic_prompt, merge_local_and_ollama, parse_topic_matches
 from ..trends import ThreadsTrendSample, check_threads_keyword_access, threads_keyword_sample
 from ..worker import PublicationWorker, WorkerResult
 from .editing import install_edit_support
+from .exclusions_dialog import ContentExclusionsDialog
 from .queue_migration_dialog import QueueMigrationDialog
 from .topic_candidates_dialog import TopicCandidatesDialog
 
@@ -260,7 +262,7 @@ class MainWindow:
             daemon=True,
         )
 
-        root.title("UA FREE Content Tool — v1.1.0")
+        root.title("UA FREE Content Tool — v1.1.1")
         self._apply_ui_font_size(config.ui_font_size)
         root.geometry("1440x920")
         root.minsize(900, 650)
@@ -295,6 +297,7 @@ class MainWindow:
         self._build_inbox_tab()
         self._build_editor_tab()
         self._build_queue_tab()
+        self._build_history_tab()
         self._build_settings_tab()
         self._apply_language(refresh=False)
 
@@ -303,6 +306,7 @@ class MainWindow:
         self.refresh_sources()
         self.refresh_groups()
         self.refresh_queue()
+        self.refresh_history()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         # FIX28 fails closed: the publication worker is not started until the
         # one-time 900-character migration has either completed or proved unnecessary.
@@ -445,6 +449,7 @@ class MainWindow:
         """Refresh queue and show a persistent non-modal background result."""
         def apply() -> None:
             self.refresh_queue()
+            self.refresh_history()
             if self.background_publication_active and not self.operation_running:
                 self.background_publication_active = False
                 self.operation_progress.stop()
@@ -715,7 +720,7 @@ class MainWindow:
             else self.config.ui_language
         )
         self.config.ui_language = language
-        self.root.title("UA FREE Content Tool — v1.1.0")
+        self.root.title("UA FREE Content Tool — v1.1.1")
         localize_widget_tree(self.root, language)
         for variable in (getattr(self, 'status_var', None), getattr(self, 'operation_var', None), getattr(self, 'operation_detail_var', None)):
             if variable is not None:
@@ -739,6 +744,7 @@ class MainWindow:
         if refresh and hasattr(self, "groups_tree"):
             self.refresh_groups()
             self.refresh_queue()
+            self.refresh_history()
 
     def preview_language(self, *_args: object) -> None:
         self._apply_language()
@@ -2606,6 +2612,7 @@ class MainWindow:
 
     def _show_worker_result(self, value: object) -> None:
         self.refresh_queue()
+        self.refresh_history()
         if not isinstance(value, WorkerResult):
             return
         if value.busy:
@@ -2666,6 +2673,207 @@ class MainWindow:
         )
 
     # Settings
+    def _build_history_tab(self) -> None:
+        self.history_tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.history_tab, text="Історія публікацій")
+
+        actions = ttk.Frame(self.history_tab)
+        actions.pack(fill="x", pady=(0, 6))
+        ttk.Button(actions, text="Оновити", command=self.refresh_history).pack(side="left")
+        ttk.Button(
+            actions, text="Оновити статистику вибраної",
+            command=self.refresh_selected_history_metrics,
+        ).pack(side="left", padx=6)
+        ttk.Button(actions, text="Відкрити допис", command=self.open_history_post).pack(side="left")
+        self.history_summary_var = tk.StringVar(value="Опубліковані матеріали: завантаження…")
+        ttk.Label(actions, textvariable=self.history_summary_var, foreground="#555").pack(side="right")
+
+        pane = ttk.Panedwindow(self.history_tab, orient="vertical")
+        pane.pack(fill="both", expand=True)
+        top = ttk.Frame(pane)
+        bottom = ttk.Frame(pane)
+        pane.add(top, weight=3)
+        pane.add(bottom, weight=2)
+
+        columns = ("batch", "headline", "published", "networks", "status", "views", "likes", "shares", "comments", "checked")
+        self.history_tree = ttk.Treeview(top, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "batch": "Пакет", "headline": "Рерайчений заголовок", "published": "Дата і час",
+            "networks": "Мережі", "status": "Статус", "views": "Перегляди",
+            "likes": "Реакції", "shares": "Репости", "comments": "Коментарі",
+            "checked": "Статистику оновлено",
+        }
+        widths = {
+            "batch": 65, "headline": 430, "published": 155, "networks": 260,
+            "status": 110, "views": 90, "likes": 80, "shares": 80,
+            "comments": 90, "checked": 165,
+        }
+        for column in columns:
+            self.history_tree.heading(column, text=headings[column])
+            self.history_tree.column(column, width=widths[column], anchor="w")
+        scroll = ttk.Scrollbar(top, orient="vertical", command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scroll.set)
+        self.history_tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.history_tree.bind("<<TreeviewSelect>>", lambda _event: self.show_history_details())
+        self.history_tree.bind("<Double-1>", lambda _event: self.open_history_post())
+
+        ttk.Label(bottom, text="Текст і дані по мережах").pack(anchor="w", pady=(6, 2))
+        self.history_details = ScrolledText(bottom, wrap="word", height=12)
+        self.history_details.pack(fill="both", expand=True)
+        self.history_details.configure(state="disabled")
+        self.history_rows: dict[int, dict[str, object]] = {}
+
+    @staticmethod
+    def _history_metrics(targets: list[dict[str, object]]) -> tuple[dict[str, int], str, bool]:
+        totals = {"views": 0, "likes": 0, "shares": 0, "comments": 0}
+        checked = ""
+        has_metrics = False
+        for target in targets:
+            progress = target.get("progress")
+            if not isinstance(progress, dict):
+                continue
+            metrics = progress.get("metrics")
+            if isinstance(metrics, dict) and metrics:
+                has_metrics = True
+                totals["views"] += int(metrics.get("views") or 0)
+                totals["likes"] += int(metrics.get("likes") or metrics.get("reactions") or 0)
+                totals["shares"] += int(metrics.get("shares") or metrics.get("reposts") or metrics.get("quotes") or 0)
+                totals["comments"] += int(metrics.get("comments") or metrics.get("replies") or 0)
+            checked = max(checked, str(progress.get("metrics_checked_at") or ""))
+        return totals, checked, has_metrics
+
+    def refresh_history(self) -> None:
+        if not hasattr(self, "history_tree"):
+            return
+        selected = self.history_tree.selection()
+        self.history_tree.delete(*self.history_tree.get_children())
+        rows = self.db.list_publication_history(limit=1000)
+        self.history_rows = {int(row["batch_id"]): row for row in rows}
+        labels = target_labels(self.config)
+        for row in rows:
+            batch_id = int(row["batch_id"])
+            targets = row.get("targets")
+            target_rows = targets if isinstance(targets, list) else []
+            sent = [target for target in target_rows if str(target.get("status")) == "sent"]
+            networks = ", ".join(labels.get(str(target.get("platform")), str(target.get("platform"))) for target in sent)
+            metrics, checked, has_metrics = self._history_metrics(target_rows)
+            published_raw = str(row.get("published_at") or row.get("scheduled_at") or "")
+            published, _parsed = _format_kyiv_schedule(published_raw)
+            checked_text, _checked_parsed = _format_kyiv_schedule(checked) if checked else ("—", None)
+            statuses = {str(target.get("status")) for target in target_rows}
+            status_text = "опубліковано" if statuses == {"sent"} else "частково опубліковано"
+            self.history_tree.insert(
+                "", "end", iid=str(batch_id),
+                values=(
+                    batch_id, str(row.get("headline") or ""), published, networks or "—",
+                    tr(status_text, self.config.ui_language),
+                    metrics["views"] if has_metrics else "—",
+                    metrics["likes"] if has_metrics else "—",
+                    metrics["shares"] if has_metrics else "—",
+                    metrics["comments"] if has_metrics else "—", checked_text,
+                ),
+            )
+        self.history_summary_var.set(
+            (f"Published items: {len(rows)}" if self.config.ui_language == "en" else f"Опубліковані матеріали: {len(rows)}")
+        )
+        if selected and self.history_tree.exists(selected[0]):
+            self.history_tree.selection_set(selected[0])
+        elif rows:
+            first = str(rows[0]["batch_id"])
+            self.history_tree.selection_set(first)
+            self.history_tree.focus(first)
+        self.show_history_details()
+
+    def _selected_history_row(self) -> dict[str, object] | None:
+        selected = self.history_tree.selection() if hasattr(self, "history_tree") else ()
+        return self.history_rows.get(int(selected[0])) if selected else None
+
+    def show_history_details(self) -> None:
+        if not hasattr(self, "history_details"):
+            return
+        row = self._selected_history_row()
+        lines: list[str] = []
+        if row:
+            lines.extend([str(row.get("headline") or ""), "", str(row.get("rewrite_text") or ""), "", "МЕРЕЖІ:"])
+            labels = target_labels(self.config)
+            targets = row.get("targets")
+            for target in targets if isinstance(targets, list) else []:
+                progress = target.get("progress") if isinstance(target.get("progress"), dict) else {}
+                metrics = progress.get("metrics") if isinstance(progress.get("metrics"), dict) else {}
+                parts = [
+                    labels.get(str(target.get("platform")), str(target.get("platform"))),
+                    TARGET_STATUS_LABELS.get(str(target.get("status")), str(target.get("status"))),
+                ]
+                if metrics:
+                    parts.append(
+                        "перегляди {views}; реакції {likes}; репости {shares}; коментарі {comments}".format(
+                            views=int(metrics.get("views") or 0),
+                            likes=int(metrics.get("likes") or metrics.get("reactions") or 0),
+                            shares=int(metrics.get("shares") or metrics.get("reposts") or metrics.get("quotes") or 0),
+                            comments=int(metrics.get("comments") or metrics.get("replies") or 0),
+                        )
+                    )
+                error = str(progress.get("metrics_error") or "")
+                note = str(progress.get("metrics_note") or "")
+                if error:
+                    parts.append("помилка статистики: " + error)
+                if note:
+                    parts.append(note)
+                lines.append(" • " + " | ".join(parts))
+        self.history_details.configure(state="normal")
+        self.history_details.delete("1.0", "end")
+        self.history_details.insert("1.0", "\n".join(lines))
+        self.history_details.configure(state="disabled")
+
+    def refresh_selected_history_metrics(self) -> None:
+        row = self._selected_history_row()
+        if not row:
+            self.msg.showinfo("Історія публікацій", "Оберіть опублікований матеріал.", parent=self.root)
+            return
+        targets = row.get("targets")
+        target_rows = targets if isinstance(targets, list) else []
+        sent_targets = [target for target in target_rows if str(target.get("status")) == "sent"]
+
+        def work() -> int:
+            updated = 0
+            for target in sent_targets:
+                result = collect_publication_metrics(
+                    self.config, str(target.get("platform") or ""),
+                    str(target.get("remote_id") or ""),
+                    target.get("progress") if isinstance(target.get("progress"), dict) else {},
+                )
+                self.db.save_publication_metrics(
+                    int(target["id"]), metrics=result.metrics, error=result.error,
+                    note=result.note, permalink_url=result.permalink_url,
+                )
+                updated += 1
+            return updated
+
+        self.run_async(
+            work, lambda _value: self.refresh_history(),
+            label="Оновлюю статистику публікації", done_label="Статистику публікації оновлено",
+        )
+
+    def open_history_post(self) -> None:
+        row = self._selected_history_row()
+        if not row:
+            return
+        targets = row.get("targets")
+        urls: list[str] = []
+        for target in targets if isinstance(targets, list) else []:
+            progress = target.get("progress")
+            if isinstance(progress, dict) and progress.get("permalink_url"):
+                urls.append(str(progress["permalink_url"]))
+        if not urls:
+            self.msg.showinfo(
+                "Історія публікацій",
+                "Посилання ще не отримано. Оновіть статистику вибраної публікації.",
+                parent=self.root,
+            )
+            return
+        webbrowser.open(urls[0])
+
     def _build_settings_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(tab, text="Налаштування")
@@ -3060,6 +3268,9 @@ class MainWindow:
         ttk.Button(learning_actions, text="Експортувати навчальні дані", command=self.export_learning_data_ui).pack(side="left")
         ttk.Button(learning_actions, text="Імпортувати навчальні дані", command=self.import_learning_data_ui).pack(side="left", padx=6)
         ttk.Button(learning_actions, text="Очистити навчальну історію", command=self.clear_learning_history_ui).pack(side="left")
+        ttk.Button(
+            learning_actions, text="Керувати виключеннями", command=self.open_content_exclusions_ui
+        ).pack(side="left", padx=6)
         self.refresh_learning_stats()
 
         schedule = ttk.LabelFrame(form, text="5. Розклад", padding=10)
@@ -3981,6 +4192,12 @@ class MainWindow:
         self.refresh_learning_stats()
         self.msg.showinfo(self.t("Локальне навчання"), str(counts), parent=self.root)
 
+    def open_content_exclusions_ui(self) -> None:
+        ContentExclusionsDialog(
+            self.root, self.db, language=self.config.ui_language,
+            on_change=self.refresh_learning_stats,
+        )
+
     def clear_learning_history_ui(self) -> None:
         question = (
             "Delete editorial examples, merge feedback, and learning events? Permanent inbox exclusions will remain."
@@ -4018,6 +4235,7 @@ class MainWindow:
             self.refresh_sources()
             self.refresh_groups()
             self.refresh_queue()
+            self.refresh_history()
             self._update_target_availability()
             self.ui_language_var.set(language_label(self.config.ui_language))
             self._apply_language()
