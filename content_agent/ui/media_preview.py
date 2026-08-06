@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
-from typing import Any
+from tkinter import ttk
 
 from PIL import Image, ImageTk, UnidentifiedImageError
 
@@ -37,7 +37,7 @@ class MediaPreviewMixin(MediaWorkflowMixin):
             return
         frame = self.media_candidates_tree.master
         self.media_candidates_tree.grid_configure(columnspan=5)
-        self.media_preview_label = __import__("tkinter.ttk", fromlist=["Label"]).Label(
+        self.media_preview_label = ttk.Label(
             frame,
             text="Оберіть фото для перегляду",
             anchor="center",
@@ -71,6 +71,9 @@ class MediaPreviewMixin(MediaWorkflowMixin):
         self.media_preview_label.configure(image=photo, text="", compound="top")
 
     def preview_selected_media_candidate(self) -> None:
+        if getattr(self, "operation_running", False):
+            self.root.after(220, self.preview_selected_media_candidate)
+            return
         candidate = self._selected_media_candidate()
         if candidate is None or not hasattr(self, "media_preview_label"):
             return
