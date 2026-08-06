@@ -10,12 +10,12 @@ from ..media_candidate_store import MediaCandidateStore, MediaCandidateStoreErro
 from ..media_candidates import ValidatedMedia
 from ..media_discovery import discover_group_media, resolve_manual_media_url
 from ..worker_v1_2 import ManagedMediaPublicationWorker
-from .media_preview import MediaPreviewMixin
+from .strict_media_preview import StrictMediaPreviewMixin
 from .media_workflow import format_media_size, media_filename_from_url
 from .v1_2_window import MainWindow as EditorialMemoryMainWindow
 
 
-class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
+class MainWindow(StrictMediaPreviewMixin, EditorialMemoryMainWindow):
     """Combined v1.2 window: Editorial Memory plus automatic visual media workflow."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
