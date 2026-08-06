@@ -1,5 +1,7 @@
 UA FREE Content Tool v1.2.0-dev Windows RC build request
 
+Attempt: 2
 Feature baseline: d8e45b65031ea7ca0736a51915a2091b7529a9ea
+RC workflow fix: validate unchanged source before stamping the dev version.
 Purpose: build a signed, Defender-scanned portable RC for manual Windows testing.
 This marker does not create a tag, GitHub Release, or merge into main.
