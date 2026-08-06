@@ -10,7 +10,7 @@ from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import portable_mode
 from .portable import PortableMigrationError, ensure_portable_data_migrated
-from .ui.main_window import MainWindow
+from .ui.main_window_enhancements import MainWindow
 
 
 def main() -> int:
