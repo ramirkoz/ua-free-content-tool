@@ -122,22 +122,32 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
 
         self.root.after(250, start)
 
+    def _delete_unattached_upload(self, file_id: str) -> None:
+        try:
+            self._managed_drive_client().delete_file(file_id)
+        except GoogleDriveError:
+            pass
+
     def _attach_uploaded_media(self, upload: ManagedMediaUpload) -> None:
         target_group_id = self._media_target_group_id
         if target_group_id is None:
             target_group_id = getattr(self, "current_group_id", None)
         if target_group_id is None:
-            try:
-                self._managed_drive_client().delete_file(upload.info.file_id)
-            except GoogleDriveError:
-                pass
+            self._delete_unattached_upload(upload.info.file_id)
             raise GoogleDriveError("Новину було закрито до завершення завантаження; файл видалено з Drive.")
 
         previous = self.db.get_group(target_group_id)
         previous_file_id = str(previous.media_file_id or "")
-        previous_was_managed = False
-        if previous_file_id and previous_file_id != upload.info.file_id:
-            previous_was_managed = self.managed_media_registry.is_managed(previous_file_id)
+        try:
+            previous_was_managed = bool(
+                previous_file_id
+                and previous_file_id != upload.info.file_id
+                and self.managed_media_registry.is_managed(previous_file_id)
+            )
+        except ManagedMediaRegistryError:
+            self._media_target_group_id = None
+            self._delete_unattached_upload(upload.info.file_id)
+            raise
 
         drive_url = f"https://drive.google.com/file/d/{upload.info.file_id}/view"
         try:
@@ -161,10 +171,7 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
                 self.managed_media_registry.remove(upload.info.file_id)
             except ManagedMediaRegistryError:
                 pass
-            try:
-                self._managed_drive_client().delete_file(upload.info.file_id)
-            except GoogleDriveError:
-                pass
+            self._delete_unattached_upload(upload.info.file_id)
             raise
         finally:
             self._media_target_group_id = None
