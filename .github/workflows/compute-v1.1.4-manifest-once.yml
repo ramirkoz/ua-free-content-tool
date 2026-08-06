@@ -1,0 +1,59 @@
+name: Compute clean v1.1.4 manifest once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/compute-v1.1.4-manifest-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out clean release base
+        uses: actions/checkout@v4
+        with:
+          ref: e48f7f904245c2b7eb058ffb7a6b2186b1f7e02a
+          fetch-depth: 0
+
+      - name: Generate manifest from tracked files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import subprocess
+
+          root = Path.cwd()
+          raw_paths = subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+          lines = []
+          for raw in raw_paths:
+              if not raw:
+                  continue
+              relative = raw.decode("utf-8")
+              if relative == "FILE_MANIFEST.sha256":
+                  continue
+              path = root / relative
+              if not path.is_file():
+                  raise SystemExit(f"Tracked file missing: {relative}")
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+
+          (root / "FILE_MANIFEST.sha256").write_text(
+              "\n".join(lines) + "\n",
+              encoding="ascii",
+              newline="\n",
+          )
+          print(f"TRACKED_FILES_IN_MANIFEST={len(lines)}")
+          PY
+
+      - name: Upload clean manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: v1.1.4-clean-manifest
+          path: FILE_MANIFEST.sha256
+          if-no-files-found: error
+          retention-days: 1
