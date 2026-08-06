@@ -4,7 +4,7 @@
 
 UA FREE Content Tool gives a human editor one local workflow for the full news-production cycle: collect materials from configured sources, manually combine reports about the same event, create one concise publication with a local Ollama model, attach media from Google Drive, schedule the package, and publish it sequentially to Facebook Pages, Threads, LinkedIn, and Telegram.
 
-> **Public release:** `v1.1.3`
+> **Public release:** `v1.1.4`
 > **Platform:** Windows 10/11, portable
 > **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
@@ -17,21 +17,18 @@ The application does not decide on its own that different materials describe the
 
 The main editorial output is **one canonical publication of up to 900 characters** for all selected platforms. The language selected in Settings controls both the interface and Ollama output. Threads may technically split a longer approved payload into a main post and replies when platform limits require it, but the editorial content remains one canonical publication.
 
-## What is new in v1.1.3
+## What is new in v1.1.4
 
-- The Windows package was rebuilt after the v1.1.2 executable was withdrawn following a critical Microsoft Defender detection.
-- The generated unsigned PyInstaller launcher was replaced with the unchanged official `pythonw.exe` runtime signed by the Python Software Foundation.
-- Release publication now requires Authenticode verification, isolated-runtime startup checks, and Microsoft Defender scans of both the extracted application and final ZIP.
-- Do not restore, allow, or add the v1.1.2 executable to Defender exclusions.
-- One-click **Refresh all metrics** in Publication History with background progress and isolated platform failures.
-- Previously collected metrics are preserved when a later API refresh fails.
-- **Evaluate potential** combines current Threads activity with the measured performance of similar previous publications.
-- Historical prediction uses only real collected metrics, normalizes platforms separately, and reports score, confidence, comparable-publication count, and available per-network scores.
-- A history score of 50/100 means a typical result relative to this installation's own measured publications.
-- The application does not claim a historical forecast until at least five publications have usable metrics.
-- All v1.1.1 rewrite recovery, exclusion management, clean Inbox, and Publication History behavior remains included.
+- The application title now reads the version from `PUBLIC_VERSION.txt` instead of showing the obsolete hard-coded v1.1.2 value.
+- Sources, Inbox, Publication Queue, and Publication History can be sorted by clicking column headings.
+- Repeated clicks reverse the direction and show `▲` or `▼` on the active heading.
+- Numbers, potential scores, dates, text, and empty values are sorted according to their actual type.
+- Inbox now separates **Current potential** from **Historical forecast**.
+- Historical forecast shows its score and confidence, or an explicit insufficient-data state when fewer than five suitable publications have metrics.
+- The Inbox uses the latest saved evaluation instead of recalculating the complete history during every five-minute refresh.
+- The signed Python Software Foundation runtime, Defender release scans, rewrite recovery, exclusion management, and Publication History from v1.1.3 remain included.
 
-See [RELEASE_NOTES_v1.1.3.md](RELEASE_NOTES_v1.1.3.md) and [CHANGELOG.md](CHANGELOG.md).
+See [RELEASE_NOTES_v1.1.4.md](RELEASE_NOTES_v1.1.4.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Core workflow
 
@@ -153,7 +150,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Download `UA_FREE_Content_Tool_v1.1.3_Windows_Portable.zip`.
+2. Download `UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip`.
 3. Verify its SHA-256 against `SHA256SUMS.txt`.
 4. Extract the complete archive. Do not run the EXE from inside the ZIP.
 5. Install Ollama and the selected model.
@@ -170,12 +167,12 @@ The v1.1.2 Windows executable is withdrawn. Keep it quarantined or remove it thr
 1. Close the application completely.
 2. Confirm in Task Manager that `UA_FREE_Content_Tool.exe` is no longer running.
 3. Copy the complete existing application folder to a backup location.
-4. Extract v1.1.3 into a separate folder.
+4. Extract v1.1.4 into a separate folder.
 5. Copy the complete existing `Data` folder into the new portable application folder.
-6. Start v1.1.3 and confirm that sources, settings, learning data, and the queue are present.
-7. Keep the v1.0.0 backup until the first successful live publication from v1.1.3.
+6. Start v1.1.4 and confirm that sources, settings, learning data, and the queue are present.
+7. Keep the v1.0.0 backup until the first successful live publication from v1.1.4.
 
-Do not replace only the EXE. v1.1.3 uses a signed isolated Python runtime and depends on the accompanying `DLLs`, `Lib`, `tcl`, and `content_agent` directories.
+Do not replace only the EXE. v1.1.4 uses a signed isolated Python runtime and depends on the accompanying `DLLs`, `Lib`, `tcl`, and `content_agent` directories.
 
 ## Portable data, backups, and updates
 
@@ -310,11 +307,11 @@ The script reads `PUBLIC_VERSION.txt`, creates an isolated build environment, in
 Release\UA_FREE_Content_Tool_v<version>\UA_FREE_Content_Tool
 ```
 
-## Validation of v1.1.2
+## Validation of v1.1.4
 
 Completed release-preparation checks:
 
-- `251 passed` in the complete local pytest suite before release hardening;
+- `258 passed` in the complete Windows pytest suite;
 - successful `compileall`;
 - entry-point import checks;
 - successful `import content_agent.main`;
@@ -324,7 +321,7 @@ Completed release-preparation checks:
 - learning export/import coverage for permanent exclusions;
 - compatibility coverage for previous queue, timeout, token, selection, and rewrite regressions.
 
-The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, and 3.13 and builds the portable PyInstaller package. Automated validation does not replace live testing with real platform accounts. Live behavior depends on current tokens, roles, permissions, API policies, account state, and network conditions.
+The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, and 3.13 and builds and Defender-scans the signed portable runtime. Automated validation does not replace live testing with real platform accounts. Live behavior depends on current tokens, roles, permissions, API policies, account state, and network conditions.
 
 ## Documentation
 
@@ -332,7 +329,8 @@ The public release gate also runs the Windows CI matrix on Python 3.11, 3.12, an
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform credentials and Google Drive.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
 - [SECURITY_NOTES.md](SECURITY_NOTES.md) — security boundaries.
-- [RELEASE_NOTES_v1.1.2.md](RELEASE_NOTES_v1.1.2.md) — current release notes.
+- [RELEASE_NOTES_v1.1.4.md](RELEASE_NOTES_v1.1.4.md) — current release notes.
+- [RELEASE_NOTES_v1.1.3.md](RELEASE_NOTES_v1.1.3.md) — previous security release notes.
 - [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) — previous patch notes.
 - [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md) — previous release notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
