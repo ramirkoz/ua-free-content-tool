@@ -28,19 +28,6 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Stamp isolated RC version in workspace
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          "1.2.0-dev" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
-          "1.2.0-dev" | Set-Content VERSION.txt -Encoding ascii
-          if ((Get-Content PUBLIC_VERSION.txt -Raw).Trim() -ne "1.2.0-dev") {
-            throw "PUBLIC_VERSION.txt was not stamped"
-          }
-          if ((Get-Content VERSION.txt -Raw).Trim() -ne "1.2.0-dev") {
-            throw "VERSION.txt was not stamped"
-          }
-
       - name: Install test dependencies
         shell: pwsh
         run: |
@@ -50,7 +37,7 @@ jobs:
           python -c "import PIL, cryptography; print('RUNTIME_DEPENDENCIES_OK', PIL.__version__)"
           if ($LASTEXITCODE -ne 0) { throw "Runtime dependency import failed: $LASTEXITCODE" }
 
-      - name: Validate source
+      - name: Validate unchanged repository source
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -62,6 +49,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed: $LASTEXITCODE" }
           python -c "import content_agent.main; from content_agent.ui.v1_2_combined_window import MainWindow; print('V1_2_APPLICATION_IMPORT_OK')"
           if ($LASTEXITCODE -ne 0) { throw "Application import failed: $LASTEXITCODE" }
+
+      - name: Stamp isolated RC version after source validation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          "1.2.0-dev" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
+          "1.2.0-dev" | Set-Content VERSION.txt -Encoding ascii
+          if ((Get-Content PUBLIC_VERSION.txt -Raw).Trim() -ne "1.2.0-dev") {
+            throw "PUBLIC_VERSION.txt was not stamped"
+          }
+          if ((Get-Content VERSION.txt -Raw).Trim() -ne "1.2.0-dev") {
+            throw "VERSION.txt was not stamped"
+          }
 
       - name: Build signed portable runtime
         shell: cmd
