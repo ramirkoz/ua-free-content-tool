@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.1.4 — 2026-08-06
+
+### Added
+
+- Typed sorting by column headings in Sources, Inbox, Publication Queue, and Publication History.
+- Ascending and descending indicators on the active sorted heading.
+- A separate historical-performance forecast column in Inbox.
+
+### Changed
+
+- The application window title now reads the public version from `PUBLIC_VERSION.txt` instead of containing a hard-coded version string.
+- The Inbox `Virality` column is now `Current potential`, while the forecast based on previous publication metrics is displayed separately.
+- Historical forecasts show score and confidence, or an explicit insufficient-data status.
+- Inbox refresh displays the last saved evaluation instead of recalculating the complete publication history for every visible row.
+
+### Fixed
+
+- The v1.1.3 application no longer displays the obsolete v1.1.2 title.
+- Numeric scores such as `39/100` sort numerically rather than lexicographically.
+- Date parsing used by sorting now fails safely for non-date values.
+- Empty table values remain at the end of sorted lists.
+
+### Validation
+
+- 258 automated tests passed on Windows with Python 3.11, 3.12, and 3.13.
+- `compileall`, entrypoint validation, and `import content_agent.main` passed.
+- Database schema remains version 8 and existing `Data` requires no migration.
+
+## v1.1.3 — 2026-08-05
+
+### Security
+
+- Replaced the withdrawn v1.1.2 PyInstaller launcher with an isolated runtime based on the unchanged official `pythonw.exe` signed by the Python Software Foundation.
+- Added Authenticode signer validation, Microsoft Defender scans of the extracted runtime and final ZIP, fail-closed release commands, and final archive validation.
+- Limited the release package to one executable and rejected diagnostic runtimes, databases, logs, secrets, unsafe paths, or unexpected executables.
+
+### Validation
+
+- 255 automated tests passed.
+- Windows CI passed on Python 3.11, 3.12, and 3.13.
+- Signed-runtime import, Tk startup, portable application startup, ZIP CRC and path validation, and Defender scans passed.
+
 ## v1.1.2 — 2026-08-05
 
 ### Added
