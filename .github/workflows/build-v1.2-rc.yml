@@ -1,0 +1,185 @@
+name: Build Windows RC v1.2.0-dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.2.0-editorial-memory-media
+    paths:
+      - RC_BUILD_REQUEST_v1.2.0-dev.txt
+
+permissions:
+  contents: read
+
+jobs:
+  windows-rc:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out exact feature commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Stamp isolated RC version in workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          "1.2.0-dev" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
+          "1.2.0-dev" | Set-Content VERSION.txt -Encoding ascii
+          if ((Get-Content PUBLIC_VERSION.txt -Raw).Trim() -ne "1.2.0-dev") {
+            throw "PUBLIC_VERSION.txt was not stamped"
+          }
+          if ((Get-Content VERSION.txt -Raw).Trim() -ne "1.2.0-dev") {
+            throw "VERSION.txt was not stamped"
+          }
+
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed: $LASTEXITCODE" }
+          python -c "import PIL, cryptography; print('RUNTIME_DEPENDENCIES_OK', PIL.__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "Runtime dependency import failed: $LASTEXITCODE" }
+
+      - name: Validate source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Python compilation failed: $LASTEXITCODE" }
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Automated tests failed: $LASTEXITCODE" }
+          python tools/check_entrypoint_imports.py
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed: $LASTEXITCODE" }
+          python -c "import content_agent.main; from content_agent.ui.v1_2_combined_window import MainWindow; print('V1_2_APPLICATION_IMPORT_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "Application import failed: $LASTEXITCODE" }
+
+      - name: Build signed portable runtime
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate signed runtime and GUI startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
+
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne "Valid") {
+            throw "Launcher signature is not valid: $($signature.Status)"
+          }
+          if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+            throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)"
+          }
+
+          Push-Location $root
+          try {
+            & $console -I -c "import PIL; import content_agent.main; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('SIGNED_RUNTIME_IMPORT_TK_PIL_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Isolated runtime validation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 12
+          if ($process.HasExited) {
+            throw "Portable application exited during startup smoke test: $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
+            throw "Portable startup did not create its local database"
+          }
+
+          Remove-Item $console -Force
+          Remove-Item (Join-Path $root "_runtime_console._pth") -Force
+          Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Update Defender and scan extracted runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool").Path
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $scanner) { throw "Microsoft Defender command-line scanner is unavailable" }
+          & $scanner.FullName -SignatureUpdate
+          if ($LASTEXITCODE -ne 0) { throw "Defender signature update failed: $LASTEXITCODE" }
+          & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan extracted runtime: $LASTEXITCODE" }
+
+      - name: Package and validate RC archive
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseRoot = "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC.zip"
+          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC_SHA256.txt"
+
+          Compress-Archive -Path "$releaseRoot\*" -DestinationPath $zip -CompressionLevel Optimal
+
+          @'
+          import pathlib
+          import sys
+          import zipfile
+
+          archive = pathlib.Path(sys.argv[1])
+          with zipfile.ZipFile(archive) as package:
+              names = package.namelist()
+              assert package.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any("\\" in name for name in names), "backslash ZIP path"
+              assert not any(
+                  name.startswith(("/", "\\")) or "../" in name.replace("\\", "/")
+                  for name in names
+              ), "unsafe ZIP path"
+              executables = [name for name in names if name.casefold().endswith(".exe")]
+              assert executables == ["UA_FREE_Content_Tool.exe"], f"unexpected executables: {executables}"
+              assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
+              assert not any(
+                  name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm"))
+                  for name in names
+              ), "runtime data shipped"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
+              assert package.read("VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
+              assert any(name.startswith("Lib/site-packages/PIL/") for name in names), "Pillow runtime missing"
+              assert "content_agent/ui/v1_2_combined_window.py" in names, "v1.2 UI missing"
+              assert "content_agent/media_candidates.py" in names, "media discovery backend missing"
+              assert "content_agent/worker_v1_2.py" in names, "managed-media worker missing"
+          print("V1_2_RC_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_v1_2_rc.py -Encoding utf8
+          python validate_v1_2_rc.py $zip
+          if ($LASTEXITCODE -ne 0) { throw "RC ZIP validation failed: $LASTEXITCODE" }
+          Remove-Item validate_v1_2_rc.py
+
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $zip).Path -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan RC ZIP: $LASTEXITCODE" }
+
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content -Path $hashFile -Encoding ascii
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "hash_file=$hashFile" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload Windows RC artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.hash_file }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
