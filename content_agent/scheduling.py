@@ -22,7 +22,10 @@ KYIV = _load_kyiv_zone()
 def parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value)
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def next_publish_slot(
