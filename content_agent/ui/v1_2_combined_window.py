@@ -8,7 +8,7 @@ from ..media_candidate_store import MediaCandidateStore, MediaCandidateStoreErro
 from ..media_candidates import ValidatedMedia
 from ..media_discovery import discover_group_media, resolve_manual_media_url
 from .media_preview import MediaPreviewMixin
-from .media_workflow import media_filename_from_url
+from .media_workflow import format_media_size, media_filename_from_url
 from .v1_2_window import MainWindow as EditorialMemoryMainWindow
 
 
@@ -17,6 +17,7 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.media_candidate_store = MediaCandidateStore()
+        self._media_target_group_id: int | None = None
         super().__init__(*args, **kwargs)
         self.root.title("UA FREE Content Tool — v1.2.0-dev")
 
@@ -70,6 +71,57 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
             done_label="Пошук медіа завершено",
         )
 
+    def _attach_uploaded_media(self, upload: ManagedMediaUpload) -> None:
+        target_group_id = self._media_target_group_id
+        if target_group_id is None:
+            target_group_id = getattr(self, "current_group_id", None)
+        if target_group_id is None:
+            try:
+                self._managed_drive_client().delete_file(upload.info.file_id)
+            except GoogleDriveError:
+                pass
+            raise GoogleDriveError("Новину було закрито до завершення завантаження; файл видалено з Drive.")
+
+        drive_url = f"https://drive.google.com/file/d/{upload.info.file_id}/view"
+        try:
+            self.db.set_group_media(
+                target_group_id,
+                drive_url=drive_url,
+                file_id=upload.info.file_id,
+                name=upload.info.name,
+                kind=upload.info.kind,
+                mime=upload.info.mime_type,
+                size=upload.info.size,
+            )
+        except Exception:
+            try:
+                self._managed_drive_client().delete_file(upload.info.file_id)
+            except GoogleDriveError:
+                pass
+            raise
+        finally:
+            self._media_target_group_id = None
+
+        if getattr(self, "current_group_id", None) == target_group_id:
+            self.media_url_var.set(drive_url)
+            self.media_status_var.set(
+                f"Медіа готове ✓ {upload.info.name} · {upload.info.kind.upper()} · "
+                f"{format_media_size(upload.info.size)} · Google Drive: перевірено ✓"
+            )
+            return
+        self.set_status(
+            f"Медіафайл автоматично додано й перевірено для блока #{target_group_id}. "
+            "Відкрийте цей блок, щоб побачити прикріплення."
+        )
+
+    def _upload_media(self, media: ValidatedMedia, filename: str, *, label: str) -> None:
+        self._media_target_group_id = getattr(self, "current_group_id", None)
+        super()._upload_media(media, filename, label=label)
+
+    def use_selected_media_candidate(self) -> None:
+        self._media_target_group_id = getattr(self, "current_group_id", None)
+        super().use_selected_media_candidate()
+
     def add_media_by_url(self) -> None:
         value = simpledialog.askstring(
             "Додати медіа за посиланням",
@@ -80,6 +132,10 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
             return
         requested_url = value.strip()
         group_id = getattr(self, "current_group_id", None)
+        if group_id is None:
+            self.msg.showinfo("Медіа", "Спочатку відкрийте новину в редакторі.", parent=self.root)
+            return
+        self._media_target_group_id = group_id
 
         def action() -> object:
             media, candidates = resolve_manual_media_url(requested_url)
@@ -88,8 +144,7 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
                 upload = self._managed_drive_client().upload_validated_media(media, filename)
                 return "uploaded", upload
             found = list(candidates)
-            if group_id is not None:
-                self.media_candidate_store.save_group(group_id, found)
+            self.media_candidate_store.save_group(group_id, found)
             return "candidates", found
 
         def success(result: object) -> None:
@@ -98,11 +153,15 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
                 if not isinstance(payload, ManagedMediaUpload):
                     raise GoogleDriveError("Google Drive не повернув результат завантаження.")
                 self._attach_uploaded_media(payload)
-                self.media_candidates_status_var.set(
-                    "Файл за посиланням автоматично завантажено й перевірено."
-                )
+                if self.current_group_id == group_id:
+                    self.media_candidates_status_var.set(
+                        "Файл за посиланням автоматично завантажено й перевірено."
+                    )
                 return
+            self._media_target_group_id = None
             found = list(payload) if isinstance(payload, list) else []
+            if self.current_group_id != group_id:
+                return
             self._set_media_candidates(found)
             self.media_candidates_status_var.set(
                 f"На сторінці знайдено медіафайлів: {len(found)}. Оберіть потрібний."
