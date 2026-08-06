@@ -1,0 +1,96 @@
+name: Update v1.1.4 README once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/update-v1.1.4-readme-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update README and clean manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import re
+          import subprocess
+
+          root = Path.cwd()
+          readme_path = root / "README.md"
+          text = readme_path.read_text(encoding="utf-8")
+          text = text.replace("> **Public release:** `v1.1.3`", "> **Public release:** `v1.1.4`")
+
+          new_section = '''## What is new in v1.1.4
+
+- The application title now reads the version from `PUBLIC_VERSION.txt` instead of showing the obsolete hard-coded v1.1.2 value.
+- Sources, Inbox, Publication Queue, and Publication History can be sorted by clicking column headings.
+- Repeated clicks reverse the direction and show `▲` or `▼` on the active heading.
+- Numbers, potential scores, dates, text, and empty values are sorted according to their actual type.
+- Inbox now separates **Current potential** from **Historical forecast**.
+- Historical forecast shows its score and confidence, or an explicit insufficient-data state when fewer than five suitable publications have metrics.
+- The Inbox uses the latest saved evaluation instead of recalculating the complete history during every five-minute refresh.
+- The signed Python Software Foundation runtime, Defender release scans, rewrite recovery, exclusion management, and Publication History from v1.1.3 remain included.
+
+See [RELEASE_NOTES_v1.1.4.md](RELEASE_NOTES_v1.1.4.md) and [CHANGELOG.md](CHANGELOG.md).'''
+          pattern = re.compile(
+              r"## What is new in v1\.1\.3\n.*?\nSee \[RELEASE_NOTES_v1\.1\.3\.md\]\(RELEASE_NOTES_v1\.1\.3\.md\) and \[CHANGELOG\.md\]\(CHANGELOG\.md\)\.",
+              re.S,
+          )
+          text, count = pattern.subn(new_section, text, count=1)
+          if count != 1:
+              raise SystemExit("Could not replace the v1.1.3 README summary")
+
+          replacements = {
+              "UA_FREE_Content_Tool_v1.1.3_Windows_Portable.zip": "UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip",
+              "Extract v1.1.3 into a separate folder.": "Extract v1.1.4 into a separate folder.",
+              "Start v1.1.3 and confirm": "Start v1.1.4 and confirm",
+              "from v1.1.3.": "from v1.1.4.",
+              "v1.1.3 uses a signed isolated Python runtime": "v1.1.4 uses a signed isolated Python runtime",
+              "## Validation of v1.1.2": "## Validation of v1.1.4",
+              "- `251 passed` in the complete local pytest suite before release hardening;": "- `258 passed` in the complete Windows pytest suite;",
+              "builds the portable PyInstaller package": "builds and Defender-scans the signed portable runtime",
+              "- [RELEASE_NOTES_v1.1.2.md](RELEASE_NOTES_v1.1.2.md) — current release notes.": "- [RELEASE_NOTES_v1.1.4.md](RELEASE_NOTES_v1.1.4.md) — current release notes.\n- [RELEASE_NOTES_v1.1.3.md](RELEASE_NOTES_v1.1.3.md) — previous security release notes.",
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"README marker missing: {old}")
+              text = text.replace(old, new)
+          readme_path.write_text(text, encoding="utf-8", newline="\n")
+
+          helper = ".github/workflows/update-v1.1.4-readme-once.yml"
+          raw_paths = subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+          lines = []
+          for raw in raw_paths:
+              if not raw:
+                  continue
+              relative = raw.decode("utf-8")
+              if relative in {"FILE_MANIFEST.sha256", helper}:
+                  continue
+              path = root / relative
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+          (root / "FILE_MANIFEST.sha256").write_text(
+              "\n".join(lines) + "\n",
+              encoding="ascii",
+              newline="\n",
+          )
+          print(f"README_UPDATED=true; MANIFEST_FILES={len(lines)}")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md FILE_MANIFEST.sha256
+          git commit -m "Update README for v1.1.4"
+          git push origin HEAD:main
