@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import threading
 from tkinter import simpledialog
 
 from ..google_drive import GoogleDriveError
 from ..managed_media_drive import ManagedMediaUpload
+from ..managed_media_registry import ManagedMediaRegistry, ManagedMediaRegistryError
 from ..media_candidate_store import MediaCandidateStore, MediaCandidateStoreError
 from ..media_candidates import ValidatedMedia
 from ..media_discovery import discover_group_media, resolve_manual_media_url
+from ..worker_v1_2 import ManagedMediaPublicationWorker
 from .media_preview import MediaPreviewMixin
 from .media_workflow import format_media_size, media_filename_from_url
 from .v1_2_window import MainWindow as EditorialMemoryMainWindow
@@ -17,8 +20,28 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.media_candidate_store = MediaCandidateStore()
+        self.managed_media_registry = ManagedMediaRegistry()
         self._media_target_group_id: int | None = None
         super().__init__(*args, **kwargs)
+
+        # The base window creates its worker before the delayed startup gate. Swap
+        # it here, while the original thread has not started, so v1.2 cleanup can
+        # distinguish application-managed files from old user-owned Drive links.
+        self.worker = ManagedMediaPublicationWorker(
+            self.db,
+            self.publisher_factory,
+            inter_target_delay_seconds=5.0,
+            max_automatic_attempts=3,
+            progress_callback=self._publication_progress_from_worker,
+            result_callback=self._publication_result_from_worker,
+            managed_media_registry=self.managed_media_registry,
+        )
+        self.worker_thread = threading.Thread(
+            target=self.worker.run_loop,
+            args=(self.stop_event,),
+            name="publication-worker",
+            daemon=True,
+        )
         self.root.title("UA FREE Content Tool — v1.2.0-dev")
 
     def load_group(self, group_id: int) -> None:
@@ -71,6 +94,34 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
             done_label="Пошук медіа завершено",
         )
 
+    def _schedule_old_managed_file_delete(self, file_id: str, group_id: int) -> None:
+        def start() -> None:
+            if self.operation_running:
+                self.root.after(250, start)
+                return
+
+            def action() -> object:
+                if not self.managed_media_registry.is_managed(file_id):
+                    return False
+                self._managed_drive_client().delete_file(file_id)
+                self.managed_media_registry.remove(file_id)
+                return True
+
+            def success(result: object) -> None:
+                if bool(result):
+                    self.set_status(
+                        f"Попередній керований медіафайл блока #{group_id} видалено з Google Drive."
+                    )
+
+            self.run_async(
+                action,
+                success,
+                label="Видаляю попередній керований медіафайл",
+                done_label="Попередній медіафайл опрацьовано",
+            )
+
+        self.root.after(250, start)
+
     def _attach_uploaded_media(self, upload: ManagedMediaUpload) -> None:
         target_group_id = self._media_target_group_id
         if target_group_id is None:
@@ -82,8 +133,20 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
                 pass
             raise GoogleDriveError("Новину було закрито до завершення завантаження; файл видалено з Drive.")
 
+        previous = self.db.get_group(target_group_id)
+        previous_file_id = str(previous.media_file_id or "")
+        previous_was_managed = False
+        if previous_file_id and previous_file_id != upload.info.file_id:
+            previous_was_managed = self.managed_media_registry.is_managed(previous_file_id)
+
         drive_url = f"https://drive.google.com/file/d/{upload.info.file_id}/view"
         try:
+            self.managed_media_registry.register(
+                upload.info.file_id,
+                folder_id=upload.folder_id,
+                group_id=target_group_id,
+                name=upload.info.name,
+            )
             self.db.set_group_media(
                 target_group_id,
                 drive_url=drive_url,
@@ -94,6 +157,10 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
                 size=upload.info.size,
             )
         except Exception:
+            try:
+                self.managed_media_registry.remove(upload.info.file_id)
+            except ManagedMediaRegistryError:
+                pass
             try:
                 self._managed_drive_client().delete_file(upload.info.file_id)
             except GoogleDriveError:
@@ -108,17 +175,31 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
                 f"Медіа готове ✓ {upload.info.name} · {upload.info.kind.upper()} · "
                 f"{format_media_size(upload.info.size)} · Google Drive: перевірено ✓"
             )
-            return
-        self.set_status(
-            f"Медіафайл автоматично додано й перевірено для блока #{target_group_id}. "
-            "Відкрийте цей блок, щоб побачити прикріплення."
-        )
+        else:
+            self.set_status(
+                f"Медіафайл автоматично додано й перевірено для блока #{target_group_id}. "
+                "Відкрийте цей блок, щоб побачити прикріплення."
+            )
+
+        if previous_was_managed and previous_file_id != upload.info.file_id:
+            should_delete = self.msg.askyesno(
+                "Попередній медіафайл",
+                f"До блока #{target_group_id} був прикріплений інший файл, який програма раніше "
+                "завантажила в Google Drive.\n\nВидалити попередній файл із Google Drive?",
+                parent=self.root,
+            )
+            if should_delete:
+                self._schedule_old_managed_file_delete(previous_file_id, target_group_id)
 
     def _upload_media(self, media: ValidatedMedia, filename: str, *, label: str) -> None:
         self._media_target_group_id = getattr(self, "current_group_id", None)
         super()._upload_media(media, filename, label=label)
 
     def use_selected_media_candidate(self) -> None:
+        if self._selected_media_candidate() is None:
+            self._media_target_group_id = None
+            super().use_selected_media_candidate()
+            return
         self._media_target_group_id = getattr(self, "current_group_id", None)
         super().use_selected_media_candidate()
 
