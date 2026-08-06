@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
+from .embedded_media import extract_embedded_media
 from .media_candidates import (
     MediaCandidate,
     MediaCandidateError,
@@ -51,7 +52,12 @@ def discover_page_media(url: str, source_label: str = "") -> list[MediaCandidate
     except NetworkError as exc:
         raise MediaCandidateError(str(exc)) from exc
     html = response.body.decode("utf-8", errors="replace")
-    return extract_html_media(html, response.final_url, source_label)
+    return deduplicate_media_candidates(
+        [
+            *extract_html_media(html, response.final_url, source_label),
+            *extract_embedded_media(html, response.final_url, source_label),
+        ]
+    )
 
 
 def discover_group_media(articles: object) -> list[MediaCandidate]:
