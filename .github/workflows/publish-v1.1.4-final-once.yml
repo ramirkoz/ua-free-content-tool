@@ -1,0 +1,233 @@
+name: Publish verified UA FREE Content Tool v1.1.4 once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v1.1.4-final-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out fixed clean release commit
+        uses: actions/checkout@v4
+        with:
+          ref: d31429e8e2faa663add45f124205b7719cb45027
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate release metadata and clean manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ((Get-Content PUBLIC_VERSION.txt -Raw).Trim() -ne "1.1.4") { throw "Invalid PUBLIC_VERSION.txt" }
+          if ((Get-Content VERSION.txt -Raw).Trim() -ne "1.1.4") { throw "Invalid VERSION.txt" }
+          if (-not (Test-Path RELEASE_NOTES_v1.1.4.md)) { throw "Release notes missing" }
+          @'
+          from pathlib import Path
+          import hashlib
+          import subprocess
+
+          root = Path.cwd()
+          expected = {}
+          for line in (root / "FILE_MANIFEST.sha256").read_text(encoding="ascii").splitlines():
+              digest, relative = line.split("  ", 1)
+              if relative in expected:
+                  raise SystemExit(f"Duplicate manifest path: {relative}")
+              expected[relative] = digest
+
+          tracked = {
+              raw.decode("utf-8")
+              for raw in subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+              if raw
+          }
+          tracked.discard("FILE_MANIFEST.sha256")
+          if set(expected) != tracked:
+              missing = sorted(tracked - set(expected))
+              extra = sorted(set(expected) - tracked)
+              raise SystemExit(f"Manifest file-set mismatch; missing={missing}, extra={extra}")
+
+          for relative, digest in expected.items():
+              actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+              if actual != digest:
+                  raise SystemExit(f"Manifest hash mismatch: {relative}")
+          print(f"CLEAN_MANIFEST_OK={len(expected)}")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Clean manifest validation failed: $LASTEXITCODE" }
+
+      - name: Install and validate source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed: $LASTEXITCODE" }
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $LASTEXITCODE" }
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed: $LASTEXITCODE" }
+          python tools/check_entrypoint_imports.py
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed: $LASTEXITCODE" }
+          python -c "import content_agent.main"
+          if ($LASTEXITCODE -ne 0) { throw "Application import failed: $LASTEXITCODE" }
+
+      - name: Build signed portable runtime
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate signed launcher and portable startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.1.4\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne "Valid") { throw "Launcher signature is invalid: $($signature.Status)" }
+          if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+            throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)"
+          }
+          Push-Location $root
+          try {
+            & $console -I -c "import content_agent.main; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('SIGNED_RUNTIME_IMPORT_AND_TK_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Isolated runtime validation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 10
+          if ($process.HasExited) { throw "Portable application exited during startup: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
+            throw "Portable startup did not create its local database"
+          }
+          Remove-Item $console -Force
+          Remove-Item (Join-Path $root "_runtime_console._pth") -Force
+          Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Update Defender and scan extracted runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.1.4\UA_FREE_Content_Tool").Path
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $scanner) { throw "Microsoft Defender scanner unavailable" }
+          & $scanner.FullName -SignatureUpdate
+          if ($LASTEXITCODE -ne 0) { throw "Defender signature update failed: $LASTEXITCODE" }
+          & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender runtime scan failed: $LASTEXITCODE" }
+
+      - name: Prepare, validate, and preserve release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseRoot = "Release\UA_FREE_Content_Tool_v1.1.4\UA_FREE_Content_Tool"
+          $portableZip = "UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip"
+          $sourceZip = "UA_FREE_Content_Tool_v1.1.4_Source.zip"
+          Compress-Archive -Path "$releaseRoot\*" -DestinationPath $portableZip -CompressionLevel Optimal
+          git archive --format=zip --output=$sourceZip HEAD
+          if ($LASTEXITCODE -ne 0) { throw "Source archive failed: $LASTEXITCODE" }
+          @'
+          import pathlib
+          import zipfile
+
+          archive = pathlib.Path("UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip")
+          with zipfile.ZipFile(archive) as z:
+              names = z.namelist()
+              assert z.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any("\\" in name for name in names), "backslash ZIP path"
+              assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
+              exes = [name for name in names if name.casefold().endswith(".exe")]
+              assert exes == ["UA_FREE_Content_Tool.exe"], f"unexpected executables: {exes}"
+              assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
+              assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm")) for name in names), "runtime data shipped"
+              assert z.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.1.4"
+              assert z.read("VERSION.txt").decode("utf-8").strip() == "1.1.4"
+          print("RELEASE_ZIP_VALIDATION_OK")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Release ZIP validation failed: $LASTEXITCODE" }
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $portableZip).Path -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender ZIP scan failed: $LASTEXITCODE" }
+          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceHash = (Get-FileHash $sourceZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "$portableHash  $portableZip",
+            "$sourceHash  $sourceZip"
+          ) | Set-Content -Path SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload verified assets as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.1.4_verified_assets
+          path: |
+            UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.1.4_Source.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create fixed tag and publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          repository = os.environ["REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          expected_sha = "d31429e8e2faa663add45f124205b7719cb45027"
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "Content-Type": "application/json",
+              "User-Agent": "ua-free-content-tool-v1.1.4-publisher",
+          }
+          ref_url = f"https://api.github.com/repos/{repository}/git/ref/tags/v1.1.4"
+          try:
+              request = urllib.request.Request(ref_url, headers=headers)
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = json.load(response)
+              actual_sha = payload["object"]["sha"]
+              if actual_sha != expected_sha:
+                  raise SystemExit(f"Existing v1.1.4 tag points to {actual_sha}, expected {expected_sha}")
+              print("TAG_ALREADY_CORRECT=true")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+              create_url = f"https://api.github.com/repos/{repository}/git/refs"
+              body = json.dumps({"ref": "refs/tags/v1.1.4", "sha": expected_sha}).encode("utf-8")
+              request = urllib.request.Request(create_url, data=body, method="POST", headers=headers)
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  if response.status != 201:
+                      raise SystemExit(f"Unexpected tag creation status: {response.status}")
+              print("TAG_CREATED=true")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Fixed tag creation failed: $LASTEXITCODE" }
+          gh release view v1.1.4 *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload v1.1.4 UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip UA_FREE_Content_Tool_v1.1.4_Source.zip SHA256SUMS.txt --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Release asset upload failed: $LASTEXITCODE" }
+            gh release edit v1.1.4 --target d31429e8e2faa663add45f124205b7719cb45027 --title "UA FREE Content Tool v1.1.4" --notes-file RELEASE_NOTES_v1.1.4.md --latest
+          } else {
+            gh release create v1.1.4 UA_FREE_Content_Tool_v1.1.4_Windows_Portable.zip UA_FREE_Content_Tool_v1.1.4_Source.zip SHA256SUMS.txt --verify-tag --target d31429e8e2faa663add45f124205b7719cb45027 --title "UA FREE Content Tool v1.1.4" --notes-file RELEASE_NOTES_v1.1.4.md --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release publication failed: $LASTEXITCODE" }
