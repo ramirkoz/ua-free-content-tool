@@ -18,6 +18,7 @@ class MainWindow(MediaPreviewMixin, EditorialMemoryMainWindow):
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.media_candidate_store = MediaCandidateStore()
         super().__init__(*args, **kwargs)
+        self.root.title("UA FREE Content Tool — v1.2.0-dev")
 
     def load_group(self, group_id: int) -> None:
         super().load_group(group_id)
