@@ -1,7 +1,11 @@
 UA FREE Content Tool v1.2.0-dev Windows RC build request
 
-Attempt: 2
-Feature baseline: d8e45b65031ea7ca0736a51915a2091b7529a9ea
-RC workflow fix: validate unchanged source before stamping the dev version.
-Purpose: build a signed, Defender-scanned portable RC for manual Windows testing.
+Attempt: 3 / RC2
+Feature baseline: b9656416e9bbeb549245c14a7efb4bdb5789a830
+Purpose: build signed, Defender-scanned RC2 after production-log fixes.
+RC2 blockers addressed:
+- LinkedIn empty-success response and durable no-duplicate write barrier.
+- Threads literal UNKNOWN becomes descriptive and non-retryable.
+- Video candidates outrank posters/thumbnails; stale HTTP 404 media refreshes source once.
+- Media discovery/download diagnostics are written to the application log.
 This marker does not create a tag, GitHub Release, or merge into main.
