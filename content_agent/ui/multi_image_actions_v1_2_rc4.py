@@ -64,3 +64,24 @@ class MultiImageActionsMixin:
             label=label,
             done_label="Фотогалерею оновлено",
         )
+
+    def _apply_detached_images(self, group_id: int, file_ids: list[str]) -> None:
+        detached = set(file_ids)
+        rows = [item for item in self._attachment_rows(group_id) if item.file_id not in detached]
+        self.multi_image_store.set_group(group_id, rows)
+        group = self.db.get_group(group_id)
+        if group.media_file_id in detached:
+            if rows:
+                first = rows[0]
+                self.db.set_group_media(
+                    group_id,
+                    drive_url=first.drive_url,
+                    file_id=first.file_id,
+                    name=first.name,
+                    kind="image",
+                    mime=first.mime_type,
+                    size=first.size,
+                )
+            else:
+                self.db.clear_group_media(group_id)
+        self._refresh_attached_images()
