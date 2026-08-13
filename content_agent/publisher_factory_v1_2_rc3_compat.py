@@ -3,6 +3,7 @@ from __future__ import annotations
 from .comment_compat_v1_2_rc3 import (
     CompatibleFacebookPublisher,
     CompatibleLinkedInPublisher,
+    CompatibleTelegramPublisher,
     CompatibleThreadsPublisher,
 )
 from .instagram_target_v1_2_rc4 import InstagramTarget
@@ -12,6 +13,8 @@ from .safe_publishers_v1_2 import SafePublisherFactory
 
 class Rc3CompatiblePublisherFactory(SafePublisherFactory):
     def create(self, platform: str) -> Publisher:
+        if platform == "telegram":
+            return CompatibleTelegramPublisher(self.config.telegram_bot_token, self.config.telegram_chat_id)
         if platform.startswith("facebook:"):
             page_id = platform.split(":", 1)[1]
             page = self.config.facebook_page(page_id)
