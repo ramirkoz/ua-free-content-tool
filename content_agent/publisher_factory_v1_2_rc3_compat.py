@@ -5,6 +5,7 @@ from .comment_compat_v1_2_rc3 import (
     CompatibleLinkedInPublisher,
     CompatibleThreadsPublisher,
 )
+from .instagram_target_v1_2_rc4 import InstagramTarget
 from .publishers import PublishError, Publisher
 from .safe_publishers_v1_2 import SafePublisherFactory
 
@@ -25,5 +26,11 @@ class Rc3CompatiblePublisherFactory(SafePublisherFactory):
         if platform == "linkedin":
             return CompatibleLinkedInPublisher(self.config.linkedin_author_urn, self.config.linkedin_token, self.config.linkedin_version)
         if platform == "instagram":
-            raise PublishError("Instagram додано до RC3, але підключення ще не налаштовано.", retryable=False, auth_error=True)
+            if self.config.instagram_enabled:
+                return InstagramTarget(
+                    self.config.instagram_user_id,
+                    self.config.instagram_token,
+                    self.config.meta_graph_version,
+                )
+            raise PublishError("Instagram вимкнено в налаштуваннях.", retryable=False, auth_error=True)
         return super().create(platform)
