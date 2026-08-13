@@ -12,15 +12,15 @@ def compose_publication_text_rc3(
     include_source_link: bool,
     source_url: str,
 ) -> str:
-    """Compose the root post under RC3 fundraiser policy.
+    """Compose root text under the RC4-compatible fundraiser policy.
 
-    Telegram keeps the fundraiser footer in the message. Facebook, Threads,
-    LinkedIn and the future Instagram target keep the root post topical; their
-    fundraiser is a separate comment/reply handled by the publisher layer.
+    Telegram and Instagram keep the fundraiser in the published message/caption.
+    Facebook, Threads and LinkedIn keep the root post topical and add the
+    fundraiser as a separate comment/reply in the publisher layer.
     """
 
     pieces = [str(core_text or "").strip()]
-    if platform == "telegram":
+    if platform in {"telegram", "instagram"}:
         pieces.append(FUND_FOOTER)
     if include_source_link and str(source_url or "").strip():
         pieces.append(f"Джерело: {str(source_url).strip()}")
