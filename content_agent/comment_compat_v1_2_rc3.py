@@ -30,11 +30,17 @@ class CompatibleTelegramPublisher(TelegramBotPublisher):
                 )
             progress = {**progress, "telegram_gallery_started": index}
             context.save_progress(progress)
+            outer_progress = dict(progress)
+
+            def save_sub(sub: dict[str, object]) -> None:
+                context.save_progress({**outer_progress, "telegram_gallery_sub": sub})
+
+            sub_context = PublishContext(before_write=context.before_write, save_progress=save_sub)
             result = TelegramBotPublisher.publish(
                 self,
                 text if index == 0 else "",
                 {},
-                context,
+                sub_context,
                 media.items[index],
             )
             if result.remote_id:
@@ -44,6 +50,7 @@ class CompatibleTelegramPublisher(TelegramBotPublisher):
                 "telegram_gallery_started": None,
                 "telegram_gallery_sent": index + 1,
                 "telegram_gallery_remote_ids": remote_ids,
+                "telegram_gallery_sub": {},
             }
             context.save_progress(progress)
         return PublishResult(remote_id=remote_ids[0] if remote_ids else None, progress=progress)
