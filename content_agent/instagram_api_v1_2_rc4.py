@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -66,3 +67,50 @@ def inspect_instagram_profile(user_id: str, token: str, graph_version: str) -> I
         username=str(payload.get("username") or returned_id),
         account_type=str(payload.get("account_type") or "professional"),
     )
+
+
+def create_instagram_container(
+    user_id: str,
+    token: str,
+    graph_version: str,
+    *,
+    public_url: str,
+    kind: str,
+    caption: str = "",
+    carousel_item: bool = False,
+) -> str:
+    fields: dict[str, object] = {"access_token": token}
+    if kind == "image":
+        fields["image_url"] = public_url
+    elif kind == "video":
+        fields.update({"media_type": "REELS", "video_url": public_url, "share_to_feed": "true"})
+    else:
+        raise InstagramError("Instagram підтримує в цій програмі лише фото або відео.")
+    if caption:
+        fields["caption"] = caption
+    if carousel_item:
+        fields["is_carousel_item"] = "true"
+    payload = _graph_request(
+        f"https://graph.facebook.com/{graph_version}/{user_id}/media",
+        method="POST",
+        fields=fields,
+    )
+    container_id = str(payload.get("id") or "").strip()
+    if not container_id:
+        raise InstagramError("Instagram не повернув ID медіаконтейнера.")
+    return container_id
+
+
+def wait_instagram_container(container_id: str, token: str, graph_version: str) -> None:
+    for _ in range(40):
+        payload = _graph_request(
+            f"https://graph.facebook.com/{graph_version}/{container_id}?"
+            + urlencode({"fields": "status_code,status", "access_token": token})
+        )
+        status = str(payload.get("status_code") or payload.get("status") or "").upper()
+        if status in {"FINISHED", "PUBLISHED"}:
+            return
+        if status in {"ERROR", "EXPIRED"}:
+            raise InstagramError(f"Instagram не обробив медіа: {status}.")
+        time.sleep(2)
+    raise InstagramError("Instagram не завершив обробку медіа вчасно.")
