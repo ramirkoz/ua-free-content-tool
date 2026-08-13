@@ -114,3 +114,40 @@ def wait_instagram_container(container_id: str, token: str, graph_version: str) 
             raise InstagramError(f"Instagram не обробив медіа: {status}.")
         time.sleep(2)
     raise InstagramError("Instagram не завершив обробку медіа вчасно.")
+
+
+def create_instagram_carousel(
+    user_id: str,
+    token: str,
+    graph_version: str,
+    child_ids: list[str],
+    caption: str,
+) -> str:
+    if not (2 <= len(child_ids) <= 10):
+        raise InstagramError("Instagram-карусель повинна містити від 2 до 10 фото.")
+    payload = _graph_request(
+        f"https://graph.facebook.com/{graph_version}/{user_id}/media",
+        method="POST",
+        fields={
+            "media_type": "CAROUSEL",
+            "children": ",".join(child_ids),
+            "caption": caption,
+            "access_token": token,
+        },
+    )
+    container_id = str(payload.get("id") or "").strip()
+    if not container_id:
+        raise InstagramError("Instagram не повернув ID контейнера каруселі.")
+    return container_id
+
+
+def publish_instagram_container(user_id: str, token: str, graph_version: str, container_id: str) -> str:
+    payload = _graph_request(
+        f"https://graph.facebook.com/{graph_version}/{user_id}/media_publish",
+        method="POST",
+        fields={"creation_id": container_id, "access_token": token},
+    )
+    media_id = str(payload.get("id") or "").strip()
+    if not media_id:
+        raise InstagramError("Instagram не повернув ID опублікованого матеріалу.")
+    return media_id
