@@ -19,6 +19,8 @@ class CommentedThreadsPublisher(SafeThreadsPublisher):
         root_id = str(remote_ids[0] if remote_ids else main.remote_id or "").strip()
         if not root_id:
             raise unknown_phase_error("Threads", "визначення кореневого поста")
+        if DONATION_COMMENT in text:
+            return PublishResult(remote_id=root_id, progress=progress)
         if bool(progress.get(_KEYS.comment_completed)):
             return PublishResult(remote_id=root_id, progress=progress)
 
