@@ -4,8 +4,9 @@ from pathlib import Path
 
 from ..google_drive import GoogleDriveError
 from ..image_registration_v1_2_rc4 import register_secondary_image
-from ..managed_media_drive import ManagedMediaUpload, validate_local_media
-from ..media_candidates import MediaCandidateError, download_media_candidate
+from ..local_gallery_v1_2_rc4 import prepare_local_gallery
+from ..managed_media_drive import ManagedMediaUpload
+from ..media_candidates import download_media_candidate
 from .media_workflow import media_filename_from_url
 
 
