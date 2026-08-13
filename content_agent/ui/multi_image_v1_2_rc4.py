@@ -3,7 +3,9 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from ..multi_image_store_v1_2_rc4 import StoredImageAttachment
+from ..google_drive import GoogleDriveError
+from ..managed_media_drive import ManagedMediaUpload
+from ..multi_image_store_v1_2_rc4 import MAX_IMAGE_ATTACHMENTS, MultiImageStoreError, StoredImageAttachment
 from .media_workflow import format_media_size
 
 
