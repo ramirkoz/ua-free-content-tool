@@ -8,8 +8,10 @@ from .multi_image_store_v1_2_rc4 import MAX_IMAGE_ATTACHMENTS, MultiImageStore, 
 def register_secondary_image(db, registry, store: MultiImageStore, upload: ManagedMediaUpload, group_id: int) -> None:
     if upload.info.kind != "image":
         raise GoogleDriveError("До фотогалереї можна додавати тільки зображення.")
-    rows = store.list_group(group_id)
     group = db.get_group(group_id)
+    rows = store.list_group(group_id)
+    if rows and rows[0].file_id != group.media_file_id:
+        rows = []
     if not rows and group.media_file_id and group.media_kind == "image":
         rows = [StoredImageAttachment(
             group.media_file_id,
