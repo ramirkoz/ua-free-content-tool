@@ -23,6 +23,22 @@ class StoredImageAttachment:
     size: int
     drive_url: str
 
+    @classmethod
+    def from_mapping(cls, value: object) -> "StoredImageAttachment":
+        if not isinstance(value, dict):
+            raise MultiImageStoreError("Збережений список фото має некоректний формат.")
+        file_id = str(value.get("file_id") or "").strip()
+        mime_type = str(value.get("mime_type") or "").strip().casefold()
+        if not file_id or not mime_type.startswith("image/"):
+            raise MultiImageStoreError("У списку кількох медіа дозволені лише фото.")
+        return cls(
+            file_id=file_id,
+            name=str(value.get("name") or "image"),
+            mime_type=mime_type,
+            size=max(0, int(value.get("size") or 0)),
+            drive_url=str(value.get("drive_url") or ""),
+        )
+
 
 class MultiImageStore:
     def __init__(self, path: Path | None = None):
@@ -57,3 +73,54 @@ class MultiImageStore:
             except OSError:
                 pass
             raise MultiImageStoreError("Не вдалося зберегти список фото.") from exc
+
+    def list_group(self, group_id: int) -> list[StoredImageAttachment]:
+        payload = self._read()
+        groups = payload["groups"]
+        assert isinstance(groups, dict)
+        raw = groups.get(str(int(group_id)), [])
+        if not isinstance(raw, list):
+            raise MultiImageStoreError("Список фото цього блока пошкоджений.")
+        return [StoredImageAttachment.from_mapping(item) for item in raw][:MAX_IMAGE_ATTACHMENTS]
+
+    def set_group(self, group_id: int, items: list[StoredImageAttachment]) -> None:
+        if len(items) > MAX_IMAGE_ATTACHMENTS:
+            raise MultiImageStoreError(f"До однієї публікації можна додати не більше {MAX_IMAGE_ATTACHMENTS} фото.")
+        unique: list[StoredImageAttachment] = []
+        seen: set[str] = set()
+        for item in items:
+            if not item.mime_type.casefold().startswith("image/"):
+                raise MultiImageStoreError("Кілька медіафайлів дозволені тільки для зображень.")
+            if not item.file_id or item.file_id in seen:
+                continue
+            seen.add(item.file_id)
+            unique.append(item)
+        payload = self._read()
+        groups = payload["groups"]
+        assert isinstance(groups, dict)
+        key = str(int(group_id))
+        if unique:
+            groups[key] = [asdict(item) for item in unique]
+        else:
+            groups.pop(key, None)
+        self._write(payload)
+
+    def append(self, group_id: int, item: StoredImageAttachment) -> list[StoredImageAttachment]:
+        current = self.list_group(group_id)
+        if any(row.file_id == item.file_id for row in current):
+            return current
+        if len(current) >= MAX_IMAGE_ATTACHMENTS:
+            raise MultiImageStoreError(f"До однієї публікації можна додати не більше {MAX_IMAGE_ATTACHMENTS} фото.")
+        current.append(item)
+        self.set_group(group_id, current)
+        return current
+
+    def remove(self, group_id: int, file_id: str) -> list[StoredImageAttachment]:
+        current = [item for item in self.list_group(group_id) if item.file_id != str(file_id)]
+        self.set_group(group_id, current)
+        return current
+
+    def clear_group(self, group_id: int) -> list[StoredImageAttachment]:
+        current = self.list_group(group_id)
+        self.set_group(group_id, [])
+        return current
