@@ -5,7 +5,7 @@ from urllib.parse import quote
 from .comment_phase_v1_2_rc3 import CommentPhaseKeys, begin_phase, finish_phase, unknown_phase_error
 from .models import MediaPayload
 from .publication_policy_v1_2_rc3 import DONATION_COMMENT
-from .publishers import FacebookPagePublisher, PublishContext, PublishError, PublishResult, _post_form
+from .publishers import FacebookPagePublisher, PublishContext, PublishResult, _post_form
 
 _KEYS = CommentPhaseKeys("facebook_donation")
 
@@ -33,6 +33,11 @@ class CommentedFacebookPublisher(FacebookPagePublisher):
                 remote_id=post_id,
             )
 
+        # RC2 packages already queued before this policy change contain the
+        # fundraiser in their root payload. Preserve them as-is and do not add a
+        # second fundraiser below the post.
+        if DONATION_COMMENT in text:
+            return PublishResult(remote_id=post_id, progress=progress)
         if bool(progress.get(_KEYS.comment_completed)):
             return PublishResult(remote_id=post_id, progress=progress)
         progress = begin_phase(
