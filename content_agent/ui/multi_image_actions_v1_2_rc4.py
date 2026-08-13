@@ -1,16 +1,35 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from ..google_drive import GoogleDriveError
 from ..image_registration_v1_2_rc4 import register_secondary_image
-from ..local_gallery_v1_2_rc4 import prepare_local_gallery
 from ..managed_media_drive import ManagedMediaUpload
-from ..media_candidates import download_media_candidate
-from .media_workflow import media_filename_from_url
+from ..multi_image_store_v1_2_rc4 import StoredImageAttachment
 
 
 class MultiImageActionsMixin:
+    def _attachment_rows(self, group_id: int | None = None) -> list[StoredImageAttachment]:
+        target = int(group_id or getattr(self, "current_group_id", 0) or 0)
+        if not target:
+            return []
+        rows = self.multi_image_store.list_group(target)
+        if rows:
+            return rows
+        group = self.db.get_group(target)
+        if group.media_file_id and group.media_kind == "image":
+            return [StoredImageAttachment(
+                file_id=group.media_file_id,
+                name=group.media_name or "image",
+                mime_type=group.media_mime or "image/jpeg",
+                size=int(group.media_size or 0),
+                drive_url=group.media_drive_url,
+            )]
+        return []
+
+    def _refresh_attached_images(self) -> None:
+        rows = self._attachment_rows()
+        if len(rows) > 1 and hasattr(self, "media_status_var"):
+            self.media_status_var.set(f"Прикріплено фото: {len(rows)} із 10. Google Drive: перевірено ✓")
+
     def register_extra_image(self, upload: ManagedMediaUpload, group_id: int) -> None:
         register_secondary_image(
             self.db,
@@ -42,8 +61,7 @@ class MultiImageActionsMixin:
             uploaded: list[ManagedMediaUpload] = []
             try:
                 for media, filename in prepared:
-                    upload = client.upload_validated_media(media, filename)
-                    uploaded.append(upload)
+                    uploaded.append(client.upload_validated_media(media, filename))
                 return uploaded
             except Exception:
                 for upload in uploaded:
@@ -56,32 +74,7 @@ class MultiImageActionsMixin:
         def success(result: object) -> None:
             uploads = list(result) if isinstance(result, list) else []
             self._commit_uploaded_images(uploads, group_id)
-            self.media_candidates_status_var.set(f"Додано фото: {len(uploads)}. Google Drive: перевірено ✓")
+            total = len(self._attachment_rows(group_id))
+            self.media_candidates_status_var.set(f"Прикріплено фото: {total}. Google Drive: перевірено ✓")
 
-        self.run_async(
-            action,
-            success,
-            label=label,
-            done_label="Фотогалерею оновлено",
-        )
-
-    def _apply_detached_images(self, group_id: int, file_ids: list[str]) -> None:
-        detached = set(file_ids)
-        rows = [item for item in self._attachment_rows(group_id) if item.file_id not in detached]
-        self.multi_image_store.set_group(group_id, rows)
-        group = self.db.get_group(group_id)
-        if group.media_file_id in detached:
-            if rows:
-                first = rows[0]
-                self.db.set_group_media(
-                    group_id,
-                    drive_url=first.drive_url,
-                    file_id=first.file_id,
-                    name=first.name,
-                    kind="image",
-                    mime=first.mime_type,
-                    size=first.size,
-                )
-            else:
-                self.db.clear_group_media(group_id)
-        self._refresh_attached_images()
+        self.run_async(action, success, label=label, done_label="Фотогалерею оновлено")
