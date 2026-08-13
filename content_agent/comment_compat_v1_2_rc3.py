@@ -15,6 +15,40 @@ def _legacy_payload(text: str, platform: str) -> bool:
     return bool(footer and footer in str(text or ""))
 
 
+class CompatibleTelegramPublisher(TelegramBotPublisher):
+    def publish(self, text: str, progress: dict[str, object], context: PublishContext, media: MediaPayload | ImageGalleryPayload | None = None) -> PublishResult:
+        if not isinstance(media, ImageGalleryPayload):
+            return super().publish(text, progress, context, media)
+        sent = int(progress.get("telegram_gallery_sent") or 0)
+        remote_ids = list(progress.get("telegram_gallery_remote_ids") or [])
+        for index in range(sent, len(media.items)):
+            if progress.get("telegram_gallery_started") == index:
+                raise PublishError(
+                    "Telegram: попереднє фото має невідомий результат; автоматичний повтор заблоковано.",
+                    retryable=False,
+                    outcome_unknown=True,
+                )
+            progress = {**progress, "telegram_gallery_started": index}
+            context.save_progress(progress)
+            result = TelegramBotPublisher.publish(
+                self,
+                text if index == 0 else "",
+                {},
+                context,
+                media.items[index],
+            )
+            if result.remote_id:
+                remote_ids.append(str(result.remote_id))
+            progress = {
+                **progress,
+                "telegram_gallery_started": None,
+                "telegram_gallery_sent": index + 1,
+                "telegram_gallery_remote_ids": remote_ids,
+            }
+            context.save_progress(progress)
+        return PublishResult(remote_id=remote_ids[0] if remote_ids else None, progress=progress)
+
+
 class CompatibleFacebookPublisher(CommentedFacebookPublisher):
     def publish(self, text: str, progress: dict[str, object], context: PublishContext, media: MediaPayload | None = None) -> PublishResult:
         if _legacy_payload(text, "facebook"):
