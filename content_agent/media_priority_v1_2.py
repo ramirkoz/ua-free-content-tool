@@ -37,3 +37,9 @@ def prioritize_media_candidates(candidates: Iterable[MediaCandidate]) -> list[Me
         return (priority, -int(item.score or 0), -area, item.url.casefold())
 
     return sorted(items, key=key)
+
+
+def prefer_real_video(candidates: Iterable[MediaCandidate]) -> list[MediaCandidate]:
+    """RC3 compatibility name for the same video-first ordering."""
+
+    return prioritize_media_candidates(candidates)
