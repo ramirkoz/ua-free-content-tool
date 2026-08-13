@@ -1,17 +1,20 @@
-name: Build Windows RC v1.2.0-dev
+name: Build Windows RC4 v1.2.0-dev
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.2.0-editorial-memory-media
 
 permissions:
   contents: read
 
 jobs:
-  windows-rc:
+  windows-rc4:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact feature commit
+      - name: Checkout exact RC4 commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -22,17 +25,22 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Validate source
+      - name: Validate RC4 source and regressions
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
           python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
           python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
-          python -c "import PIL, content_agent.main; print('RC_SOURCE_GATE_OK', PIL.__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
+          python -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc4_final_window import MainWindow; from content_agent.worker_v1_2_rc4 import Rc4PublicationWorker; from content_agent.instagram_target_v1_2_rc4 import InstagramTarget; print('RC4_SOURCE_GATE_OK', PIL.__version__, Rc4PublicationWorker.CATCHUP_GAP_SECONDS)"
+          if ($LASTEXITCODE -ne 0) { throw "RC4 imports failed" }
 
-      - name: Stamp isolated RC version
+      - name: Stamp isolated RC4 version
         shell: pwsh
         run: |
           "1.2.0-dev" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
@@ -42,7 +50,7 @@ jobs:
         shell: cmd
         run: Build_Portable_Windows.bat
 
-      - name: Validate signed runtime and GUI startup
+      - name: Validate signed RC4 runtime and GUI startup
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -51,21 +59,22 @@ jobs:
           $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
           $signature = Get-AuthenticodeSignature $exe
           if ($signature.Status -ne "Valid") { throw "Invalid launcher signature: $($signature.Status)" }
-          if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer" }
+          if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)" }
           Push-Location $root
           try {
-            & $console -I -c "import PIL, content_agent.main; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('RC_RUNTIME_OK')"
-            if ($LASTEXITCODE -ne 0) { throw "Runtime import failed" }
+            & $console -I -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc4_final_window import MainWindow; from content_agent.media_gallery_v1_2_rc4 import ImageGalleryPayload; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC4_RUNTIME_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "RC4 runtime import failed" }
           } finally { Pop-Location }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
           Start-Sleep -Seconds 12
-          if ($process.HasExited) { throw "Portable GUI exited during smoke test" }
+          if ($process.HasExited) { throw "Portable GUI exited during startup smoke test: $($process.ExitCode)" }
           Stop-Process -Id $process.Id -Force
+          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) { throw "Startup did not create local database" }
           Remove-Item $console -Force
           Remove-Item (Join-Path $root "_runtime_console._pth") -Force
           Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Defender scan extracted runtime
+      - name: Defender scan extracted RC4 runtime
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -77,16 +86,55 @@ jobs:
           & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender runtime scan failed" }
 
-      - name: Package RC
+      - name: Package and validate RC4
         id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC.zip"
-          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC_SHA256.txt"
+          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC4.zip"
+          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC4_SHA256.txt"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
-          python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; print('RC_ZIP_OK', len(z.namelist()))" $zip
+          @'
+          import sys, zipfile
+          archive = sys.argv[1]
+          required = {
+              "content_agent/ui/v1_2_rc4_window.py",
+              "content_agent/ui/v1_2_rc4_final_window.py",
+              "content_agent/ui/instagram_settings_v1_2_rc4.py",
+              "content_agent/ui/local_gallery_actions_v1_2_rc4.py",
+              "content_agent/ui/candidate_gallery_actions_v1_2_rc4.py",
+              "content_agent/ui/multi_image_actions_v1_2_rc4.py",
+              "content_agent/multi_image_store_v1_2_rc4.py",
+              "content_agent/media_gallery_v1_2_rc4.py",
+              "content_agent/worker_v1_2_rc4.py",
+              "content_agent/image_registration_v1_2_rc4.py",
+              "content_agent/instagram_api_v1_2_rc4.py",
+              "content_agent/instagram_target_v1_2_rc4.py",
+              "content_agent/facebook_comments_v1_2_rc3.py",
+              "content_agent/threads_comments_v1_2_rc3.py",
+              "content_agent/linkedin_comments_v1_2_rc3.py",
+              "content_agent/comment_compat_v1_2_rc3.py",
+          }
+          with zipfile.ZipFile(archive) as package:
+              names = package.namelist()
+              assert package.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any("\\" in name for name in names), "backslash ZIP path"
+              assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
+              executables = [name for name in names if name.casefold().endswith(".exe")]
+              assert executables == ["UA_FREE_Content_Tool.exe"], executables
+              assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
+              assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm")) for name in names), "runtime data shipped"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
+              assert package.read("VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
+              missing = required.difference(names)
+              assert not missing, sorted(missing)
+          print("RC4_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_rc4_zip.py -Encoding utf8
+          python validate_rc4_zip.py $zip
+          if ($LASTEXITCODE -ne 0) { throw "RC4 ZIP validation failed" }
+          Remove-Item validate_rc4_zip.py
           $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $zip).Path -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender ZIP scan failed" }
@@ -95,10 +143,10 @@ jobs:
           "zip=$zip" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "hash_file=$hashFile" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Upload RC artifact
+      - name: Upload final RC4 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC
+          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC4_FINAL
           path: |
             ${{ steps.package.outputs.zip }}
             ${{ steps.package.outputs.hash_file }}
