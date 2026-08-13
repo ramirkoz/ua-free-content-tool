@@ -3,14 +3,33 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from .comment_phase_v1_2_rc3 import CommentPhaseKeys, begin_phase, finish_phase, unknown_phase_error
+from .media_gallery_v1_2_rc4 import ImageGalleryPayload
 from .models import MediaPayload
 from .publication_policy_v1_2_rc3 import DONATION_COMMENT
-from .publishers import FacebookPagePublisher, PublishContext, PublishResult, _post_form
+from .publishers import FacebookPagePublisher, PublishContext, PublishError, PublishResult, _post_form, _post_multipart
 
 _KEYS = CommentPhaseKeys("facebook_donation")
 
 
 class CommentedFacebookPublisher(FacebookPagePublisher):
+    def _prepare_gallery(self, gallery: ImageGalleryPayload, progress: dict[str, object], context: PublishContext) -> tuple[list[str], dict[str, object]]:
+        photo_ids = list(progress.get("facebook_gallery_photo_ids") or [])
+        for item in gallery.items[len(photo_ids):]:
+            payload = _post_multipart(
+                f"https://graph.facebook.com/{self.graph_version}/{self.page_id}/photos",
+                {"published": "false", "access_token": self.token},
+                "source",
+                item,
+                timeout=300,
+            )
+            photo_id = str(payload.get("id") or "").strip()
+            if not photo_id:
+                raise PublishError("Facebook не повернув ID підготовленого фото.")
+            photo_ids.append(photo_id)
+            progress = {**progress, "facebook_gallery_photo_ids": photo_ids}
+            context.save_progress(progress)
+        return photo_ids, progress
+
     def publish(self, text: str, progress: dict[str, object], context: PublishContext, media: MediaPayload | None = None) -> PublishResult:
         post_id = str(progress.get(_KEYS.main_id) or "").strip()
         if not post_id:
@@ -32,10 +51,6 @@ class CommentedFacebookPublisher(FacebookPagePublisher):
                 id_key=_KEYS.main_id,
                 remote_id=post_id,
             )
-
-        # RC2 packages already queued before this policy change contain the
-        # fundraiser in their root payload. Preserve them as-is and do not add a
-        # second fundraiser below the post.
         if DONATION_COMMENT in text:
             return PublishResult(remote_id=post_id, progress=progress)
         if bool(progress.get(_KEYS.comment_completed)):
