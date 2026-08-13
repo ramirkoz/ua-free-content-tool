@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - feature/v1.2.0-editorial-memory-media
-    paths:
-      - docs/validation/RC3_BUILD_TRIGGER.md
 
 permissions:
   contents: read
