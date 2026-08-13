@@ -7,14 +7,24 @@ from tkinter import ttk
 from ..multi_image_store_v1_2_rc4 import MultiImageStore
 from ..publisher_factory_v1_2_rc3_compat import Rc3CompatiblePublisherFactory
 from ..worker_v1_2_rc4 import Rc4PublicationWorker
+from .candidate_gallery_actions_v1_2_rc4 import CandidateGalleryActionsMixin
 from .instagram_settings_v1_2_rc4 import InstagramSettingsMixin
+from .local_gallery_actions_v1_2_rc4 import LocalGalleryActionsMixin
+from .multi_image_actions_v1_2_rc4 import MultiImageActionsMixin
 from .v1_2_rc3_final_window import MainWindow as RC3FinalWindow
 
 
-class MainWindow(InstagramSettingsMixin, RC3FinalWindow):
+class MainWindow(
+    LocalGalleryActionsMixin,
+    CandidateGalleryActionsMixin,
+    MultiImageActionsMixin,
+    InstagramSettingsMixin,
+    RC3FinalWindow,
+):
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.multi_image_store = MultiImageStore()
         super().__init__(*args, **kwargs)
+        self.media_candidates_tree.configure(selectmode="extended")
         self._style_topic_search_button()
         self.publisher_factory = Rc3CompatiblePublisherFactory(self.config)
         self.worker = Rc4PublicationWorker(
