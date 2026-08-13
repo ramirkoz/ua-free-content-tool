@@ -49,6 +49,7 @@ def build_topic_prompt_rc3(
     learned_block = "\n".join(learned) if learned else "none"
     candidates_block = "\n\n".join(candidate_lines)
 
+    protocol = "ID|SCORE|same_event/related/other|short reason"
     if language == "en":
         return f"""
 You are deciding which collected news blocks describe the SAME concrete event as
@@ -69,8 +70,9 @@ RELEVANT LEARNED DECISIONS:
 CANDIDATES:
 {candidates_block}
 
-Return one line per candidate only:
-ID=<number> | MATCH=yes/no | CONFIDENCE=0-100 | REASON=<short reason>
+Return ONLY one line per candidate in this exact protocol:
+{protocol}
+SCORE is 0-100 confidence that the candidate is the same concrete event.
 """.strip()
 
     return f"""
@@ -92,6 +94,7 @@ ID=<number> | MATCH=yes/no | CONFIDENCE=0-100 | REASON=<short reason>
 КАНДИДАТИ:
 {candidates_block}
 
-Поверни лише по одному рядку на кандидата:
-ID=<число> | MATCH=yes/no | CONFIDENCE=0-100 | REASON=<коротка причина>
+Поверни ТІЛЬКИ по одному рядку на кандидата в точному форматі:
+{protocol}
+SCORE = впевненість 0-100, що це та сама конкретна подія.
 """.strip()
