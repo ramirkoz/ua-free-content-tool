@@ -5,7 +5,7 @@ import threading
 from ..collector_v1_2_rc3 import collect_source_rc3
 from ..editorial_memory_v1_2_rc3 import rank_editorial_examples_rc3, rank_topic_candidates_rc3
 from ..media_discovery_v1_2_rc3 import discover_group_media_rc3
-from ..publisher_factory_v1_2_rc3 import Rc3PublisherFactory
+from ..publisher_factory_v1_2_rc3_compat import Rc3CompatiblePublisherFactory
 from ..publication_policy_v1_2_rc3 import compose_publication_text_rc3
 from ..rewriter_v1_2_rc3 import rewrite_article_with_fallback_rc3
 from ..short_source_v1_2_rc3 import source_values_rc3
@@ -56,7 +56,7 @@ class MainWindow(RC2MainWindow):
         _install_rc3_overrides()
         super().__init__(*args, **kwargs)
 
-        self.publisher_factory = Rc3PublisherFactory(self.config)
+        self.publisher_factory = Rc3CompatiblePublisherFactory(self.config)
         self.worker = ManagedMediaPublicationWorker(
             self.db,
             self.publisher_factory,
