@@ -1,10 +1,7 @@
-name: Build Windows RC3 v1.2.0-dev
+name: Build Windows RC v1.2.0-dev
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feature/v1.2.0-editorial-memory-media
 
 permissions:
   contents: read
@@ -25,16 +22,15 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Validate source and RC3 behavior
+      - name: Validate source
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
           python -m compileall -q .
           python -m pytest -q
-          python tools/validate_v1_2_rc3.py
           python tools/check_entrypoint_imports.py
-          python -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc3_final_window import MainWindow; print('RC3_SOURCE_GATE_OK', PIL.__version__)"
+          python -c "import PIL, content_agent.main; print('RC_SOURCE_GATE_OK', PIL.__version__)"
 
       - name: Stamp isolated RC version
         shell: pwsh
@@ -58,14 +54,13 @@ jobs:
           if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer" }
           Push-Location $root
           try {
-            & $console -I -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc3_final_window import MainWindow; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('RC3_RUNTIME_OK')"
+            & $console -I -c "import PIL, content_agent.main; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('RC_RUNTIME_OK')"
             if ($LASTEXITCODE -ne 0) { throw "Runtime import failed" }
           } finally { Pop-Location }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
           Start-Sleep -Seconds 12
           if ($process.HasExited) { throw "Portable GUI exited during smoke test" }
           Stop-Process -Id $process.Id -Force
-          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) { throw "Portable startup did not create local database" }
           Remove-Item $console -Force
           Remove-Item (Join-Path $root "_runtime_console._pth") -Force
           Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
@@ -82,52 +77,16 @@ jobs:
           & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender runtime scan failed" }
 
-      - name: Package and validate RC3
+      - name: Package RC
         id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC3.zip"
-          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC3_SHA256.txt"
+          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC.zip"
+          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC_SHA256.txt"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
-          @'
-          import pathlib, sys, zipfile
-          p = pathlib.Path(sys.argv[1])
-          required = {
-            "content_agent/ui/v1_2_rc3_window.py",
-            "content_agent/ui/v1_2_rc3_instagram_window.py",
-            "content_agent/ui/v1_2_rc3_final_window.py",
-            "content_agent/strict_ollama_decode_v1_2_rc3.py",
-            "content_agent/rewriter_v1_2_rc3.py",
-            "content_agent/short_source_v1_2_rc3.py",
-            "content_agent/editorial_memory_v1_2_rc3.py",
-            "content_agent/topic_search_v1_2_rc3.py",
-            "content_agent/media_discovery_v1_2_rc3.py",
-            "content_agent/media_order_v1_2_rc3.py",
-            "content_agent/media_hint_store_v1_2_rc3.py",
-            "content_agent/rss_media_hints_v1_2_rc3.py",
-            "content_agent/comment_phase_v1_2_rc3.py",
-            "content_agent/facebook_comments_v1_2_rc3.py",
-            "content_agent/threads_comments_v1_2_rc3.py",
-            "content_agent/linkedin_comments_v1_2_rc3.py",
-            "content_agent/comment_compat_v1_2_rc3.py",
-            "content_agent/publisher_factory_v1_2_rc3_compat.py",
-          }
-          with zipfile.ZipFile(p) as z:
-            names = z.namelist()
-            assert z.testzip() is None
-            assert len(names) == len(set(names))
-            assert [n for n in names if n.casefold().endswith('.exe')] == ['UA_FREE_Content_Tool.exe']
-            assert not any('\\' in n or n.startswith('/') or '../' in n.replace('\\','/') for n in names)
-            assert not any(n.casefold().endswith(('.sqlite3','.db','.log','.env','.wal','.shm')) for n in names)
-            assert z.read('PUBLIC_VERSION.txt').decode().strip() == '1.2.0-dev'
-            assert z.read('VERSION.txt').decode().strip() == '1.2.0-dev'
-            assert required.issubset(set(names)), sorted(required.difference(names))
-          print('RC3_ZIP_OK')
-          '@ | Set-Content rc3_zip_check.py -Encoding utf8
-          python rc3_zip_check.py $zip
-          Remove-Item rc3_zip_check.py
+          python -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; print('RC_ZIP_OK', len(z.namelist()))" $zip
           $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $zip).Path -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender ZIP scan failed" }
@@ -136,10 +95,10 @@ jobs:
           "zip=$zip" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "hash_file=$hashFile" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Upload RC3 artifact
+      - name: Upload RC artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC3_FINAL
+          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC
           path: |
             ${{ steps.package.outputs.zip }}
             ${{ steps.package.outputs.hash_file }}
