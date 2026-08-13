@@ -60,6 +60,11 @@ class AppConfig:
     linkedin_profile_name: str = ""
     linkedin_token: str = field(default="", repr=False)
     linkedin_version: str = "202607"
+    instagram_enabled: bool = False
+    instagram_user_id: str = ""
+    instagram_profile_name: str = ""
+    instagram_token: str = field(default="", repr=False)
+    instagram_token_expires_at: str = ""
     telegram_bot_token: str = field(default="", repr=False)
     telegram_chat_id: str = ""
     google_client_id: str = ""
@@ -142,6 +147,8 @@ class AppConfig:
             return bool(self.threads_user_id and self.threads_token)
         if platform == "linkedin":
             return bool(self.linkedin_author_urn and self.linkedin_token and self.linkedin_version)
+        if platform == "instagram":
+            return bool(self.instagram_enabled and self.instagram_user_id and self.instagram_token and self.meta_graph_version)
         if platform == "google_drive":
             return bool(self.google_client_id and self.google_refresh_token)
         return False
