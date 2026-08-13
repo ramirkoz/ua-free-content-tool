@@ -11,11 +11,13 @@ class MultiImageActionsMixin:
         target = int(group_id or getattr(self, "current_group_id", 0) or 0)
         if not target:
             return []
-        rows = self.multi_image_store.list_group(target)
-        if rows:
-            return rows
         group = self.db.get_group(target)
-        if group.media_file_id and group.media_kind == "image":
+        if not group.media_file_id:
+            return []
+        rows = self.multi_image_store.list_group(target)
+        if rows and rows[0].file_id == group.media_file_id:
+            return rows
+        if group.media_kind == "image":
             return [StoredImageAttachment(
                 file_id=group.media_file_id,
                 name=group.media_name or "image",
