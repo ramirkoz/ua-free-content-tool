@@ -49,8 +49,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "RC3 field-feedback validation failed: $LASTEXITCODE" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed: $LASTEXITCODE" }
-          python -c "import content_agent.main; from content_agent.ui.v1_2_rc3_window import MainWindow; print('V1_2_RC3_APPLICATION_IMPORT_OK')"
-          if ($LASTEXITCODE -ne 0) { throw "RC3 application import failed: $LASTEXITCODE" }
+          python -c "import content_agent.main; from content_agent.ui.v1_2_rc3_final_window import MainWindow; print('V1_2_RC3_FINAL_APPLICATION_IMPORT_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "RC3 final application import failed: $LASTEXITCODE" }
 
       - name: Stamp isolated RC version after source validation
         shell: pwsh
@@ -77,7 +77,7 @@ jobs:
           if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)" }
           Push-Location $root
           try {
-            & $console -I -c "import PIL; import content_agent.main; from content_agent.ui.v1_2_rc3_window import MainWindow; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('SIGNED_RC3_RUNTIME_IMPORT_TK_PIL_OK')"
+            & $console -I -c "import PIL; import content_agent.main; from content_agent.ui.v1_2_rc3_final_window import MainWindow; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('SIGNED_RC3_FINAL_RUNTIME_IMPORT_TK_PIL_OK')"
             if ($LASTEXITCODE -ne 0) { throw "Isolated RC3 runtime validation failed: $LASTEXITCODE" }
           } finally {
             Pop-Location
@@ -119,11 +119,15 @@ jobs:
           archive = pathlib.Path(sys.argv[1])
           required = {
               "content_agent/ui/v1_2_rc3_window.py",
+              "content_agent/ui/v1_2_rc3_instagram_window.py",
+              "content_agent/ui/v1_2_rc3_final_window.py",
               "content_agent/strict_ollama_decode_v1_2_rc3.py",
               "content_agent/rewriter_v1_2_rc3.py",
+              "content_agent/short_source_v1_2_rc3.py",
               "content_agent/editorial_memory_v1_2_rc3.py",
               "content_agent/topic_search_v1_2_rc3.py",
               "content_agent/media_discovery_v1_2_rc3.py",
+              "content_agent/media_order_v1_2_rc3.py",
               "content_agent/media_hint_store_v1_2_rc3.py",
               "content_agent/rss_media_hints_v1_2_rc3.py",
               "content_agent/comment_phase_v1_2_rc3.py",
