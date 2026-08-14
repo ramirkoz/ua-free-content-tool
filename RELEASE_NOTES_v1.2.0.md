@@ -69,4 +69,4 @@ v1.2.0 переводить UA FREE Content Tool з локального Ollama-
 - GUI startup smoke test PASS;
 - ZIP integrity/path validation PASS.
 
-Релізна збірка повторно проходить повний `release.yml`: тести, signed runtime validation, Microsoft Defender scan, ZIP validation, checksums і GitHub Release publication.
+Релізна збірка повторно проходить повний `release.yml`: тести, signed runtime validation, Microsoft Defender scan, ZIP validation, checksums і GitHub Release publication. Release packaging uses the same verified executable allowlist as the RC8 Windows gate.
