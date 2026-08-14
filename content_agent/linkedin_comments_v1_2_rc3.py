@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from .comment_phase_v1_2_rc3 import CommentPhaseKeys, begin_phase, finish_phase, unknown_phase_error
+from .comment_phase_v1_2_rc3 import CommentPhaseKeys, begin_phase, finish_phase
 from .media_gallery_v1_2_rc4 import ImageGalleryPayload
 from .models import MediaPayload
 from .publication_policy_v1_2_rc3 import DONATION_COMMENT
@@ -10,6 +10,58 @@ from .publishers import PublishContext, PublishError, PublishResult, _upload_bin
 from .safe_publishers_v1_2 import SafeLinkedInPublisher, _linkedin_post_json
 
 _KEYS = CommentPhaseKeys("linkedin_donation")
+
+
+def _reset_started(
+    progress: dict[str, object],
+    context: PublishContext,
+    started_key: str,
+) -> dict[str, object]:
+    """Clear a phase marker only after a definite LinkedIn API rejection."""
+
+    updated = {**progress, started_key: False}
+    context.save_progress(updated)
+    return updated
+
+
+def _known_phase_error(phase: str, exc: PublishError) -> PublishError:
+    """Preserve the real LinkedIn error instead of masking it as UNKNOWN."""
+
+    return PublishError(
+        f"LinkedIn · {phase}: {exc}",
+        code=exc.code,
+        subcode=exc.subcode,
+        retryable=exc.retryable,
+        auth_error=exc.auth_error,
+        rate_limited=exc.rate_limited,
+        outcome_unknown=False,
+    )
+
+
+def _local_unknown_phase_error(phase: str, exc: BaseException | None = None) -> PublishError:
+    """Contain an ambiguous LinkedIn sub-write to LinkedIn only.
+
+    The durable ``*_started`` marker stays set, so LinkedIn itself is not blindly
+    retried. ``outcome_unknown`` stays false at worker level so independent
+    platforms, especially Telegram, can still run in the same package.
+    """
+
+    detail = f" Причина: {exc}" if exc is not None and str(exc).strip() else ""
+    return PublishError(
+        f"LinkedIn: результат етапу «{phase}» невідомий. LinkedIn повторно не викликається автоматично; "
+        f"інші платформи пакета можна продовжити.{detail}",
+        retryable=False,
+        outcome_unknown=False,
+    )
+
+
+def _unresolved_marker_error(phase: str) -> PublishError:
+    return PublishError(
+        f"LinkedIn: попередній етап «{phase}» почався без підтвердження завершення. "
+        "Повтор саме цього LinkedIn-запису заблоковано, щоб не створити дубль; інші платформи пакета можна продовжити.",
+        retryable=False,
+        outcome_unknown=False,
+    )
 
 
 class CommentedLinkedInPublisher(SafeLinkedInPublisher):
@@ -76,11 +128,14 @@ class CommentedLinkedInPublisher(SafeLinkedInPublisher):
         progress = dict(main.progress)
         post_id = str(main.remote_id or progress.get("linkedin_post_id") or "").strip()
         if not post_id:
-            raise unknown_phase_error("LinkedIn", "визначення основного поста")
+            raise _local_unknown_phase_error("визначення основного поста")
         if DONATION_COMMENT in text:
             return PublishResult(remote_id=post_id, progress=progress)
         if bool(progress.get(_KEYS.comment_completed)):
             return PublishResult(remote_id=post_id, progress=progress)
+        if bool(progress.get(_KEYS.comment_started)) and not bool(progress.get(_KEYS.comment_completed)):
+            raise _unresolved_marker_error("донатний коментар")
+
         progress = begin_phase(progress, context, started_key=_KEYS.comment_started, completed_key=_KEYS.comment_completed)
         endpoint = f"https://api.linkedin.com/rest/socialActions/{quote(post_id, safe='')}/comments"
         try:
@@ -90,8 +145,13 @@ class CommentedLinkedInPublisher(SafeLinkedInPublisher):
                 self.headers,
                 timeout=60,
             )
+        except PublishError as exc:
+            _reset_started(progress, context, _KEYS.comment_started)
+            raise _known_phase_error("донатний коментар", exc) from exc
         except Exception as exc:
-            raise unknown_phase_error("LinkedIn", "донатний коментар") from exc
+            raise _local_unknown_phase_error("донатний коментар", exc) from exc
         comment_id = str(headers.get("x-restli-id") or payload.get("id") or "").strip()
+        if not comment_id:
+            raise _local_unknown_phase_error("донатний коментар: успішна відповідь без ID")
         progress = finish_phase(progress, context, completed_key=_KEYS.comment_completed, id_key=_KEYS.comment_id, remote_id=comment_id)
         return PublishResult(remote_id=post_id, progress=progress)
