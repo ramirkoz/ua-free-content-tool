@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,10 +121,14 @@ def _latest_windows_asset() -> tuple[str, str, str]:
     if not isinstance(assets, list):
         raise RowboatError("GitHub не повернув список файлів релізу Rowboat.")
     for asset in assets:
-        if isinstance(asset, dict) and str(asset.get("name") or "").casefold().endswith("win32-x64-setup.exe"):
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "")
+        lowered = name.casefold()
+        if lowered.startswith("rowboat-win32-x64-") and lowered.endswith("-setup.exe"):
             url = str(asset.get("browser_download_url") or "")
             if url:
-                return str(asset.get("name") or "rowboat-setup.exe"), url, str(asset.get("digest") or "")
+                return name or "rowboat-setup.exe", url, str(asset.get("digest") or "")
     raise RowboatError("У поточному релізі Rowboat не знайдено Windows x64 setup.exe.")
 
 
@@ -153,11 +158,16 @@ def install_rowboat() -> Path:
         completed = subprocess.run([str(destination)], timeout=600, check=False)
     except Exception as exc:
         raise RowboatError(f"Не вдалося запустити інсталятор Rowboat: {exc}") from exc
-    if completed.returncode not in (0, 1):
+    if completed.returncode != 0:
         raise RowboatError(f"Rowboat installer завершився з кодом {completed.returncode}.")
-    exe = find_rowboat()
+    exe = None
+    for _ in range(30):
+        exe = find_rowboat()
+        if exe is not None:
+            break
+        time.sleep(1)
     if exe is None:
-        raise RowboatError("Інсталятор завершився, але rowboat.exe ще не знайдено. Перевірте завершення встановлення.")
+        raise RowboatError("Інсталятор завершився, але rowboat.exe не знайдено протягом 30 секунд.")
     memory_root()
     return exe
 
