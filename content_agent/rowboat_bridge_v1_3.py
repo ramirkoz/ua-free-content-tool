@@ -70,6 +70,8 @@ def _candidate_executables() -> list[Path]:
         try:
             values.extend(base.glob("Rowboat*/*rowboat.exe"))
             values.extend(base.glob("rowboat*/*rowboat.exe"))
+            values.extend(base.glob("Rowboat*/app-*/rowboat.exe"))
+            values.extend(base.glob("rowboat*/app-*/rowboat.exe"))
         except OSError:
             pass
     if program_files:
