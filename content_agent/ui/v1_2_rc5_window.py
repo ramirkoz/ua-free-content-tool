@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import threading
 
-from ..codex_engine_v1_3 import inspect_codex
-from ..rowboat_bridge_v1_3 import inspect_rowboat
+from ..codex_engine_v1_3 import inspect_codex, install_codex, login_chatgpt
+from ..rowboat_bridge_v1_3 import inspect_rowboat, install_rowboat
 from .ai_engine_v1_3 import AIEngineV13Mixin
 from .queue_migration_codex_v1_3 import CodexQueueMigrationDialog
 from .v1_2_rc4_final_window import MainWindow as RC4FinalWindow
@@ -52,3 +52,84 @@ class MainWindow(AIEngineV13Mixin, RC4FinalWindow):
                 self._ai_status_running = False
 
         threading.Thread(target=worker, name="ai-component-status", daemon=True).start()
+
+    def check_codex_ui(self) -> None:
+        status = inspect_codex()
+        if not status.installed:
+            install_now = self.msg.askyesno(
+                "Codex не встановлено",
+                "Codex не знайдено у локальному AI-runtime. Встановити офіційний openai-codex зараз?",
+                parent=self.root,
+            )
+            if install_now:
+                self.install_codex_ui()
+            return
+        if not status.authenticated:
+            login_now = self.msg.askyesno(
+                "Потрібен вхід через ChatGPT",
+                "Codex встановлено, але не авторизовано. Відкрити вхід через ChatGPT зараз?",
+                parent=self.root,
+            )
+            if login_now:
+                self.login_codex_ui()
+            return
+        self.refresh_ai_component_status()
+        self.set_status(f"Codex готовий: {status.account_label or 'ChatGPT account'}")
+
+    def install_codex_ui(self) -> None:
+        def success(_result: object) -> None:
+            self.refresh_ai_component_status()
+            self.set_status("Codex встановлено. Потрібен вхід через ChatGPT.")
+            login_now = self.msg.askyesno(
+                "Codex встановлено",
+                "Встановлення завершено. Увійти через ChatGPT зараз?",
+                parent=self.root,
+            )
+            if login_now:
+                self.login_codex_ui()
+
+        self.run_async(
+            install_codex,
+            success,
+            label="Встановлюю Codex у локальний AI-runtime",
+            done_label="Codex встановлено",
+        )
+
+    def login_codex_ui(self) -> None:
+        def success(_result: object) -> None:
+            self.refresh_ai_component_status()
+            self.set_status("Вхід через ChatGPT завершено. Codex готовий.")
+
+        self.run_async(
+            login_chatgpt,
+            success,
+            label="Очікую вхід через ChatGPT",
+            done_label="Codex авторизовано",
+        )
+
+    def check_rowboat_ui(self) -> None:
+        status = inspect_rowboat()
+        self.refresh_ai_component_status()
+        if status.installed:
+            self.set_status(f"Rowboat знайдено: {status.executable}")
+            return
+        install_now = self.msg.askyesno(
+            "Rowboat не знайдено",
+            "Rowboat не встановлено. Встановити останню офіційну Windows x64 версію з GitHub Releases?\n\n"
+            "UA FREE створить окремий Rowboat WorkDir і локальний Markdown-граф редакційної пам’яті.",
+            parent=self.root,
+        )
+        if install_now:
+            self.install_rowboat_ui()
+
+    def install_rowboat_ui(self) -> None:
+        def success(result: object) -> None:
+            self.refresh_ai_component_status()
+            self.set_status(f"Rowboat встановлено: {result}")
+
+        self.run_async(
+            install_rowboat,
+            success,
+            label="Завантажую та встановлюю Rowboat",
+            done_label="Rowboat встановлено",
+        )
