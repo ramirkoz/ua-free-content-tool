@@ -196,14 +196,23 @@ jobs:
           import pathlib, zipfile, sys
           archive = pathlib.Path(sys.argv[1])
           version = sys.argv[2]
+          allowed_executables = {
+              "UA_FREE_Content_Tool.exe",
+              "Lib/site-packages/pip/_vendor/distlib/t32.exe",
+              "Lib/site-packages/pip/_vendor/distlib/t64-arm.exe",
+              "Lib/site-packages/pip/_vendor/distlib/t64.exe",
+              "Lib/site-packages/pip/_vendor/distlib/w32.exe",
+              "Lib/site-packages/pip/_vendor/distlib/w64-arm.exe",
+              "Lib/site-packages/pip/_vendor/distlib/w64.exe",
+          }
           with zipfile.ZipFile(archive) as z:
               names = z.namelist()
               assert z.testzip() is None, "CRC validation failed"
               assert len(names) == len(set(names)), "duplicate ZIP paths"
               assert not any("\\" in name for name in names), "backslash ZIP path"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
-              exes = [name for name in names if name.casefold().endswith(".exe")]
-              assert exes == ["UA_FREE_Content_Tool.exe"], f"unexpected executables: {exes}"
+              exes = {name for name in names if name.casefold().endswith(".exe")}
+              assert exes == allowed_executables, f"unexpected executables: {sorted(exes)}"
               assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
               assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm")) for name in names), "runtime data shipped"
               assert z.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == version
