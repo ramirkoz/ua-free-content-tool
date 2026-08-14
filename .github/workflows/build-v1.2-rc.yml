@@ -37,7 +37,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "import openai_codex, PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; print('RC5_SOURCE_GATE_OK', PIL.__version__, openai_codex.__name__, rowboat_workdir(), memory_root())"
+          python -c "import openai_codex, PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; print('RC5_SOURCE_GATE_OK', PIL.__version__, openai_codex.__name__, rowboat_workdir(), memory_root())"
           if ($LASTEXITCODE -ne 0) { throw "RC5 imports failed" }
 
       - name: Stamp isolated RC5 version
@@ -62,7 +62,7 @@ jobs:
           if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)" }
           Push-Location $root
           try {
-            & $console -I -c "import openai_codex, PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC5_RUNTIME_OK', openai_codex.__name__, rowboat_workdir(), memory_root())"
+            & $console -I -c "import openai_codex, PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC5_RUNTIME_OK', openai_codex.__name__, rowboat_workdir(), memory_root())"
             if ($LASTEXITCODE -ne 0) { throw "RC5 runtime import failed" }
           } finally { Pop-Location }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
@@ -101,6 +101,7 @@ jobs:
           required = {
               "content_agent/ui/v1_2_rc5_window.py",
               "content_agent/ui/ai_engine_v1_3.py",
+              "content_agent/ui/queue_migration_codex_v1_3.py",
               "content_agent/codex_engine_v1_3.py",
               "content_agent/codex_news_v1_3.py",
               "content_agent/rowboat_bridge_v1_3.py",
