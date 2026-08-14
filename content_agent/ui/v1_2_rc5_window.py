@@ -15,6 +15,8 @@ class MainWindow(AIEngineV13Mixin, RC4FinalWindow):
         self._ai_status_running = False
         legacy_ui.QueueMigrationDialog = CodexQueueMigrationDialog
         super().__init__(*args, **kwargs)
+        if hasattr(self, "rewrite_button"):
+            self.rewrite_button.configure(text="Рерайт через Codex / ChatGPT")
         self.root.title("UA FREE Content Tool — v1.2.0-dev RC5 · Codex + Rowboat")
 
     def scan_ollama_models(self, show_errors: bool = True) -> None:
