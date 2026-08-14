@@ -37,7 +37,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "import openai_codex, PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; print('RC5_SOURCE_GATE_OK', PIL.__version__, openai_codex.__name__, rowboat_workdir(), memory_root())"
+          python -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog; from content_agent.codex_engine_v1_3 import inspect_codex, codex_extension_dir; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; s=inspect_codex(); assert not s.installed; print('RC5_SOURCE_GATE_OK', PIL.__version__, codex_extension_dir(), rowboat_workdir(), memory_root())"
           if ($LASTEXITCODE -ne 0) { throw "RC5 imports failed" }
 
       - name: Stamp isolated RC5 version
@@ -62,7 +62,7 @@ jobs:
           if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)" }
           Push-Location $root
           try {
-            & $console -I -c "import openai_codex, PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC5_RUNTIME_OK', openai_codex.__name__, rowboat_workdir(), memory_root())"
+            & $console -I -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc5_window import MainWindow; from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.rowboat_bridge_v1_3 import rowboat_workdir, memory_root; s=inspect_codex(); assert not s.installed; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC5_RUNTIME_OK', rowboat_workdir(), memory_root())"
             if ($LASTEXITCODE -ne 0) { throw "RC5 runtime import failed" }
           } finally { Pop-Location }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
@@ -118,18 +118,15 @@ jobs:
               assert not any("\\" in name for name in names), "backslash ZIP path"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
               executables = [name for name in names if name.casefold().endswith(".exe")]
-              assert "UA_FREE_Content_Tool.exe" in executables, executables
-              vendor_codex = [name for name in executables if name.casefold().endswith("codex.exe") and name != "UA_FREE_Content_Tool.exe"]
-              assert len(vendor_codex) == 1, executables
-              assert len(executables) == 2, executables
+              assert executables == ["UA_FREE_Content_Tool.exe"], executables
               assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
               assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm")) for name in names), "runtime data shipped"
               assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
               assert package.read("VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
               missing = required.difference(names)
               assert not missing, sorted(missing)
-              assert any(name.startswith("site-packages/openai_codex/") for name in names), "Codex Python SDK missing"
-              assert any(name.startswith("site-packages/openai_codex_cli_bin") for name in names), "Codex runtime package missing"
+              assert not any(name.startswith("site-packages/openai_codex/") for name in names), "Codex SDK must be installed on demand"
+              assert not any("codex.exe" in name.casefold() for name in names), "Codex runtime must not be bundled"
           print("RC5_ZIP_VALIDATION_OK")
           '@ | Set-Content validate_rc5_zip.py -Encoding utf8
           python validate_rc5_zip.py $zip
