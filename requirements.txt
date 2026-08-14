@@ -1,2 +1,4 @@
 cryptography==46.0.4
 Pillow==12.3.0
+openai-codex==0.144.4
+pip==26.1.2
