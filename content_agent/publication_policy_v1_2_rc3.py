@@ -13,7 +13,7 @@ def compose_publication_text_rc3(
     source_url: str,
 ) -> str:
     pieces = [str(core_text or "").strip()]
-    if platform == "telegram":
+    if platform in {"telegram", "linkedin"}:
         pieces.append(FUND_FOOTER)
     if include_source_link and str(source_url or "").strip():
         pieces.append(f"Джерело: {str(source_url).strip()}")
