@@ -4,25 +4,38 @@ from .facebook_comments_v1_2_rc3 import CommentedFacebookPublisher
 from .linkedin_comments_v1_2_rc3 import CommentedLinkedInPublisher
 from .media_gallery_v1_2_rc4 import ImageGalleryPayload
 from .models import MediaPayload
-from .publication_text import footer_for
+from .publication_text import FUND_FOOTER, footer_for
 from .publishers import PublishContext, PublishError, PublishResult, TelegramBotPublisher
 from .threads_comments_v1_2_rc3 import CommentedThreadsPublisher
 
 
 def _without_legacy_footer(text: str, platform: str) -> str:
-    """Normalize queued pre-RC3 payloads to the current comment policy.
-
-    Old queue rows may already contain the fundraising footer in the root post.
-    They must not bypass the comment-aware publisher: remove the exact fixed
-    footer from the root payload and let the platform-specific publisher create
-    the donation comment/reply with durable phase progress.
-    """
+    """Normalize queued pre-RC3 payloads for comment-only platforms."""
 
     value = str(text or "").strip()
     footer = footer_for(platform)
     if not footer or footer not in value:
         return value
     return "\n\n".join(part.strip() for part in value.split(footer) if part.strip()).strip()
+
+
+def _with_inline_fund_footer(text: str) -> str:
+    """Ensure exactly one donation block in the root post.
+
+    This also upgrades already queued LinkedIn payloads created before RC8, so
+    they do not need a new OAuth scope just to create a donation comment.
+    """
+
+    value = str(text or "").strip()
+    if FUND_FOOTER in value:
+        return value
+    parts = [part.strip() for part in value.split("\n\n") if part.strip()]
+    if parts and parts[-1].startswith("Джерело: "):
+        source = parts.pop()
+        parts.extend([FUND_FOOTER, source])
+    else:
+        parts.append(FUND_FOOTER)
+    return "\n\n".join(parts)
 
 
 class CompatibleTelegramPublisher(TelegramBotPublisher):
@@ -77,5 +90,8 @@ class CompatibleThreadsPublisher(CommentedThreadsPublisher):
 
 
 class CompatibleLinkedInPublisher(CommentedLinkedInPublisher):
-    def publish(self, text: str, progress: dict[str, object], context: PublishContext, media: MediaPayload | None = None) -> PublishResult:
-        return super().publish(_without_legacy_footer(text, "linkedin"), progress, context, media)
+    def publish(self, text: str, progress: dict[str, object], context: PublishContext, media: MediaPayload | ImageGalleryPayload | None = None) -> PublishResult:
+        # RC8 final policy: LinkedIn keeps the donation block in the root post.
+        # CommentedLinkedInPublisher detects FUND_FOOTER in text and therefore
+        # skips the separate /socialActions/.../comments call entirely.
+        return super().publish(_with_inline_fund_footer(text), progress, context, media)
