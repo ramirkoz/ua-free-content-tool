@@ -10,17 +10,17 @@ from .v1_2_rc6_window import MainWindow as RC7Window
 
 
 class MainWindow(RC7Window):
-    """RC8 live-gate build: final donation policy, queue recalculation and Codex UI wording."""
+    """v1.2.0 final window: donation policy, queue recalculation and Codex UI wording."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
-        # Ancestor RC3 installs its historical composer during startup. RC8 final
+        # Ancestor RC3 installs its historical composer during startup. v1.2.0
         # policy must win after the full MRO has initialized: Facebook + Threads
         # keep donation in comment/reply; LinkedIn + Telegram + Instagram keep it
         # inside the root post/caption.
         legacy_ui.compose_publication_text = compose_publication_text_rc4
         self._ensure_codex_rewrite_label()
-        self.root.title("UA FREE Content Tool — v1.2.0-dev RC8 · Codex + Rowboat")
+        self.root.title("UA FREE Content Tool — v1.2.0 · Codex + Rowboat")
 
     def _build_queue_tab(self) -> None:
         super()._build_queue_tab()
