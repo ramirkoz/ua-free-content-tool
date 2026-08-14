@@ -100,7 +100,11 @@ def rewrite_group_with_codex(
         headline=headline,
         fact_card=fact_card,
         rewrite=rewrite,
-        platform_texts=platform_texts_from_base(rewrite),
+        platform_texts=platform_texts_from_base(
+            rewrite,
+            include_source_link=bool(group.include_source_link),
+            source_url=group.primary_url,
+        ),
         source_count_used=len(group.articles),
         source_count_total=len(group.articles),
         auto_compacted=False,
