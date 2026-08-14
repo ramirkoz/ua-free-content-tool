@@ -1,4 +1,4 @@
-name: Build Windows RC6 v1.2.0-dev
+name: Build Windows RC7 v1.2.0-dev
 
 on:
   workflow_dispatch:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  windows-rc6:
+  windows-rc7:
     runs-on: windows-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout exact RC6 commit
+      - name: Checkout exact RC7 commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -25,7 +25,7 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Validate RC6 source and regressions
+      - name: Validate RC7 source and regressions
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -37,10 +37,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc6_window import MainWindow; from content_agent.telegram_media_v1_3_rc6 import telegram_embed_url; from content_agent.global_duplicates_v1_3_rc6 import parse_duplicate_clusters; from content_agent.codex_engine_v1_3 import inspect_codex; s=inspect_codex(); assert not s.installed; assert telegram_embed_url('https://t.me/example/123').endswith('?embed=1&mode=tme'); print('RC6_SOURCE_GATE_OK', PIL.__version__)"
-          if ($LASTEXITCODE -ne 0) { throw "RC6 imports failed" }
+          python -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc6_window import MainWindow; from content_agent.telegram_media_v1_3_rc6 import telegram_embed_url; from content_agent.global_duplicates_v1_3_rc6 import parse_duplicate_clusters; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.facebook_comments_v1_2_rc3 import CommentedFacebookPublisher; s=inspect_codex(); assert not s.installed; assert telegram_embed_url('https://t.me/example/123').endswith('?embed=1&mode=tme'); print('RC7_SOURCE_GATE_OK', PIL.__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "RC7 imports failed" }
 
-      - name: Stamp isolated RC6 version
+      - name: Stamp isolated RC7 version
         shell: pwsh
         run: |
           "1.2.0-dev" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
@@ -50,7 +50,7 @@ jobs:
         shell: cmd
         run: Build_Portable_Windows.bat
 
-      - name: Validate signed RC6 runtime and GUI startup
+      - name: Validate signed RC7 runtime and GUI startup
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -62,8 +62,8 @@ jobs:
           if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") { throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)" }
           Push-Location $root
           try {
-            & $console -I -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc6_window import MainWindow; from content_agent.telegram_media_v1_3_rc6 import extract_telegram_post_media; from content_agent.global_duplicates_v1_3_rc6 import parse_duplicate_clusters; from content_agent.codex_engine_v1_3 import inspect_codex; s=inspect_codex(); assert not s.installed; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC6_RUNTIME_OK')"
-            if ($LASTEXITCODE -ne 0) { throw "RC6 runtime import failed" }
+            & $console -I -c "import PIL, content_agent.main; from content_agent.ui.v1_2_rc6_window import MainWindow; from content_agent.telegram_media_v1_3_rc6 import extract_telegram_post_media; from content_agent.global_duplicates_v1_3_rc6 import parse_duplicate_clusters; from content_agent.codex_engine_v1_3 import inspect_codex; from content_agent.facebook_comments_v1_2_rc3 import CommentedFacebookPublisher; s=inspect_codex(); assert not s.installed; import tkinter as tk; r=tk.Tk(); r.withdraw(); r.update_idletasks(); r.destroy(); print('SIGNED_RC7_RUNTIME_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "RC7 runtime import failed" }
           } finally { Pop-Location }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
           Start-Sleep -Seconds 15
@@ -74,7 +74,7 @@ jobs:
           Remove-Item (Join-Path $root "_runtime_console._pth") -Force
           Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Defender scan extracted RC6 runtime
+      - name: Defender scan extracted RC7 runtime
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -86,14 +86,14 @@ jobs:
           & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender runtime scan failed" }
 
-      - name: Package and validate RC6
+      - name: Package and validate RC7
         id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC6.zip"
-          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC6_SHA256.txt"
+          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC7.zip"
+          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC7_SHA256.txt"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
           @'
           import sys, zipfile
@@ -107,6 +107,8 @@ jobs:
               "content_agent/global_duplicates_v1_3_rc6.py",
               "content_agent/codex_engine_v1_3.py",
               "content_agent/rowboat_bridge_v1_3.py",
+              "content_agent/facebook_comments_v1_2_rc3.py",
+              "content_agent/comment_compat_v1_2_rc3.py",
               "content_agent/ui/v1_2_rc5_window.py",
               "content_agent/ui/v1_2_rc4_window.py",
               "content_agent/worker_v1_2_rc4.py",
@@ -136,11 +138,11 @@ jobs:
               assert not missing, sorted(missing)
               assert not any(name.startswith("site-packages/openai_codex/") for name in names), "Codex SDK must be installed on demand"
               assert not any("codex.exe" in name.casefold() for name in names), "Codex runtime must not be bundled"
-          print("RC6_ZIP_VALIDATION_OK")
-          '@ | Set-Content validate_rc6_zip.py -Encoding utf8
-          python validate_rc6_zip.py $zip
-          if ($LASTEXITCODE -ne 0) { throw "RC6 ZIP validation failed" }
-          Remove-Item validate_rc6_zip.py
+          print("RC7_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_rc7_zip.py -Encoding utf8
+          python validate_rc7_zip.py $zip
+          if ($LASTEXITCODE -ne 0) { throw "RC7 ZIP validation failed" }
+          Remove-Item validate_rc7_zip.py
           $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $zip).Path -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender ZIP scan failed" }
@@ -149,10 +151,10 @@ jobs:
           "zip=$zip" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "hash_file=$hashFile" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Upload final RC6 artifact
+      - name: Upload final RC7 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC6_FINAL
+          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC7_FINAL
           path: |
             ${{ steps.package.outputs.zip }}
             ${{ steps.package.outputs.hash_file }}
