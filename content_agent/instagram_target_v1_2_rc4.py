@@ -9,7 +9,23 @@ from .instagram_api_v1_2_rc4 import (
 )
 from .media_gallery_v1_2_rc4 import ImageGalleryPayload
 from .models import MediaPayload
+from .publication_text import FUND_FOOTER
 from .publishers import PublishContext, PublishError, PublishResult, Publisher
+
+
+def _instagram_caption(text: str) -> str:
+    """Keep the donation block inside the Instagram caption, including old queue rows."""
+
+    value = str(text or "").strip()
+    if FUND_FOOTER in value:
+        return value
+    parts = [part.strip() for part in value.split("\n\n") if part.strip()]
+    if parts and parts[-1].startswith("Джерело: "):
+        source = parts.pop()
+        parts.extend([FUND_FOOTER, source])
+    else:
+        parts.append(FUND_FOOTER)
+    return "\n\n".join(parts)
 
 
 class InstagramTarget(Publisher):
@@ -32,6 +48,7 @@ class InstagramTarget(Publisher):
             return PublishResult(remote_id=remote_id, progress=progress)
         if media is None:
             raise PublishError("Instagram потребує фото або відео.", retryable=False)
+        caption = _instagram_caption(text)
         try:
             container_id = str(progress.get("instagram_container_id") or "").strip()
             if not container_id:
@@ -55,7 +72,7 @@ class InstagramTarget(Publisher):
                         self.token,
                         self.graph_version,
                         child_ids,
-                        text,
+                        caption,
                     )
                 else:
                     if not media.public_url:
@@ -66,7 +83,7 @@ class InstagramTarget(Publisher):
                         self.graph_version,
                         public_url=media.public_url,
                         kind=media.kind,
-                        caption=text,
+                        caption=caption,
                     )
                 progress = {**progress, "instagram_container_id": container_id}
                 context.save_progress(progress)
