@@ -1,0 +1,111 @@
+name: Build Windows RC8 v1.2.0-dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.2.0-editorial-memory-media
+
+permissions:
+  contents: read
+
+jobs:
+  windows-rc8:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact RC8 commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate RC8 source and regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
+          python tools/check_entrypoint_imports.py
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
+          python -c "from content_agent.ui.v1_2_rc8_window import MainWindow; from content_agent.linkedin_comments_v1_2_rc3 import CommentedLinkedInPublisher; from content_agent.facebook_comments_v1_2_rc3 import CommentedFacebookPublisher; print('RC8_SOURCE_GATE_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "RC8 imports failed" }
+
+      - name: Stamp dev version
+        shell: pwsh
+        run: |
+          "1.2.0-dev" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
+          "1.2.0-dev" | Set-Content VERSION.txt -Encoding ascii
+
+      - name: Build signed portable runtime
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate RC8 runtime startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          if (-not (Test-Path $exe)) { throw "Launcher missing" }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 12
+          if ($process.HasExited) { throw "Portable GUI exited during startup smoke test: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Package RC8 portable
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "Release\UA_FREE_Content_Tool_v1.2.0-dev\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v1.2.0-dev_Windows_Portable_RC8.zip"
+          $hashFile = "UA_FREE_Content_Tool_v1.2.0-dev_RC8_SHA256.txt"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
+          @'
+          import sys, zipfile
+          archive = sys.argv[1]
+          required = {
+              "content_agent/ui/v1_2_rc8_window.py",
+              "content_agent/linkedin_comments_v1_2_rc3.py",
+              "content_agent/facebook_comments_v1_2_rc3.py",
+              "content_agent/main.py",
+          }
+          with zipfile.ZipFile(archive) as package:
+              names = package.namelist()
+              assert package.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.0-dev"
+              missing = required.difference(names)
+              assert not missing, sorted(missing)
+          print("RC8_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_rc8_zip.py -Encoding utf8
+          python validate_rc8_zip.py $zip
+          if ($LASTEXITCODE -ne 0) { throw "RC8 ZIP validation failed" }
+          Remove-Item validate_rc8_zip.py
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content $hashFile -Encoding ascii
+          "zip=$zip" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "hash_file=$hashFile" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload final RC8 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.2.0-dev_Windows_RC8_FINAL
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.hash_file }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
