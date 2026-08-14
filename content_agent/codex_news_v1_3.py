@@ -18,26 +18,26 @@ _FORBIDDEN_LINE = re.compile(
 
 
 def _clean_json_text(raw: str) -> str:
-    text = str(raw or "").strip()
-    text = _CODE_FENCE.sub("", text).strip()
-    return text
+    return _CODE_FENCE.sub("", str(raw or "").strip()).strip()
 
 
 def _source_prose(group: NewsGroup) -> str:
     blocks: list[str] = []
     for index, article in enumerate(group.articles, start=1):
         blocks.append(
-            f"ДЖЕРЕЛО {index}\n"
-            f"Назва джерела: {article.source_name or 'невідомо'}\n"
-            f"Заголовок: {article.title}\n"
-            f"Час: {article.published_at or 'не визначено'}\n"
-            f"URL: {article.url}\n"
-            f"Текст:\n{article.raw_text.strip()}"
+            f"ДЖЕРЕЛО {index}\nНазва джерела: {article.source_name or 'невідомо'}\n"
+            f"Заголовок: {article.title}\nЧас: {article.published_at or 'не визначено'}\n"
+            f"URL: {article.url}\nТекст:\n{article.raw_text.strip()}"
         )
     return "\n\n---\n\n".join(blocks)
 
 
-def build_rewrite_prompt(group: NewsGroup, examples: Sequence[EditorialExample]) -> str:
+def build_rewrite_prompt(
+    group: NewsGroup,
+    examples: Sequence[EditorialExample],
+    *,
+    graph_memory: str = "",
+) -> str:
     source = _source_prose(group)
     plain_length = sum(len(str(item.raw_text or "").strip()) for item in group.articles)
     short_rule = (
@@ -45,8 +45,13 @@ def build_rewrite_prompt(group: NewsGroup, examples: Sequence[EditorialExample])
         if plain_length <= 420
         else "Фінальний rewrite має бути 1–4 короткі абзаци, максимум 900 символів."
     )
-    memory = format_examples_for_prompt(examples, language="uk")
-    memory_block = f"\n\nРЕЛЕВАНТНІ СХВАЛЕНІ РЕДАКТОРОМ ПРИКЛАДИ:\n{memory}" if memory else ""
+    examples_text = format_examples_for_prompt(examples, language="uk")
+    memory_parts: list[str] = []
+    if examples_text:
+        memory_parts.append("СХОЖІ СХВАЛЕНІ РЕДАКТОРОМ ПРИКЛАДИ:\n" + examples_text)
+    if graph_memory:
+        memory_parts.append("РЕЛЕВАНТНИЙ ЛОКАЛЬНИЙ ГРАФ РЕДАКЦІЙНОЇ ПАМ'ЯТІ:\n" + graph_memory)
+    memory_block = "\n\n" + "\n\n".join(memory_parts) if memory_parts else ""
     return f"""
 Ти виконуєш редакційний рерайт новини для UA FREE.
 
@@ -59,6 +64,7 @@ def build_rewrite_prompt(group: NewsGroup, examples: Sequence[EditorialExample])
 6. Не включай URL, донатний блок, назви службових секцій або пояснення моделі в rewrite.
 7. headline має бути коротким нейтральним заголовком.
 8. fact_card є короткою службовою довідкою для редактора, а не частиною rewrite.
+9. Редакційна пам'ять показує стиль і попередні рішення, але НЕ є джерелом нових фактів для поточної новини.
 
 Поверни РІВНО один JSON-об'єкт без markdown і без тексту до/після нього:
 {{"headline":"...","fact_card":"...","rewrite":"..."}}
@@ -69,8 +75,13 @@ def build_rewrite_prompt(group: NewsGroup, examples: Sequence[EditorialExample])
 """.strip()
 
 
-def rewrite_group_with_codex(group: NewsGroup, examples: Sequence[EditorialExample]) -> RewriteResult:
-    raw = run_codex(build_rewrite_prompt(group, examples))
+def rewrite_group_with_codex(
+    group: NewsGroup,
+    examples: Sequence[EditorialExample],
+    *,
+    graph_memory: str = "",
+) -> RewriteResult:
+    raw = run_codex(build_rewrite_prompt(group, examples, graph_memory=graph_memory))
     try:
         payload = json.loads(_clean_json_text(raw))
     except json.JSONDecodeError as exc:
@@ -96,11 +107,18 @@ def rewrite_group_with_codex(group: NewsGroup, examples: Sequence[EditorialExamp
     )
 
 
-def run_topic_prompt_with_codex(prompt: str) -> dict[int, object]:
+def run_topic_prompt_with_codex(prompt: str, *, graph_memory: str = "") -> dict[int, object]:
+    memory = (
+        "\n\nПОПЕРЕДНІ РЕДАКЦІЙНІ РІШЕННЯ З ЛОКАЛЬНОЇ ПАМ'ЯТІ:\n"
+        + graph_memory
+        + "\nВикористовуй їх лише як приклади правил об'єднання, а не як факти поточних кандидатів."
+        if graph_memory
+        else ""
+    )
     reinforced = (
         prompt
+        + memory
         + "\n\nПоверни тільки рядки у форматі ID|SCORE|same_event/related/other|коротка причина. "
         "Не додавай markdown, вступ або підсумок."
     )
-    raw = run_codex(reinforced)
-    return parse_topic_matches(raw)
+    return parse_topic_matches(run_codex(reinforced))
