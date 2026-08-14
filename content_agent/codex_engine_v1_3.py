@@ -19,6 +19,50 @@ class CodexEngineError(RuntimeError):
     pass
 
 
+class _HiddenSubprocessProxy:
+    """Module-local subprocess proxy that hides Codex app-server consoles on Windows."""
+
+    def __init__(self, base: object):
+        self._base = base
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._base, name)
+
+    def Popen(self, *args: object, **kwargs: object):  # noqa: N802 - mirrors subprocess API
+        if os.name == "nt":
+            flags = int(kwargs.get("creationflags", 0) or 0)
+            flags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0)
+            kwargs["creationflags"] = flags
+            startupinfo = kwargs.get("startupinfo")
+            if startupinfo is None and hasattr(subprocess, "STARTUPINFO"):
+                info = subprocess.STARTUPINFO()
+                info.dwFlags |= int(getattr(subprocess, "STARTF_USESHOWWINDOW", 0) or 0)
+                info.wShowWindow = int(getattr(subprocess, "SW_HIDE", 0) or 0)
+                kwargs["startupinfo"] = info
+        return subprocess.Popen(*args, **kwargs)
+
+
+def _patch_codex_sdk_subprocess() -> None:
+    """Patch only the SDK module reference, never the process-wide subprocess module."""
+
+    if os.name != "nt":
+        return
+    for module_name in (
+        "openai_codex.client",
+        "openai_codex._client",
+        "openai_codex.app_server",
+        "openai_codex._app_server",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        current = getattr(module, "subprocess", None)
+        if current is None or isinstance(current, _HiddenSubprocessProxy):
+            continue
+        setattr(module, "subprocess", _HiddenSubprocessProxy(current))
+
+
 @dataclass(frozen=True, slots=True)
 class CodexStatus:
     installed: bool
@@ -44,9 +88,11 @@ def _activate_extension_dir() -> None:
 def _load_sdk():
     _activate_extension_dir()
     try:
-        return importlib.import_module("openai_codex")
+        sdk = importlib.import_module("openai_codex")
     except Exception as exc:
         raise CodexEngineError("Codex SDK не встановлено або пошкоджено.") from exc
+    _patch_codex_sdk_subprocess()
+    return sdk
 
 
 def _account_label(account: Any) -> str:
