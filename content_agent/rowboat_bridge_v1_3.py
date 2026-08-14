@@ -23,12 +23,20 @@ class RowboatError(RuntimeError):
 class RowboatStatus:
     installed: bool
     executable: str = ""
+    workdir: str = ""
     memory_root: str = ""
     detail: str = ""
 
 
+def rowboat_workdir() -> Path:
+    root = data_dir() / "RowboatWorkDir"
+    (root / "knowledge").mkdir(parents=True, exist_ok=True)
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def memory_root() -> Path:
-    root = data_dir() / "EditorialMemoryGraph"
+    root = rowboat_workdir() / "knowledge" / "ua-free"
     root.mkdir(parents=True, exist_ok=True)
     (root / "editorial-examples").mkdir(exist_ok=True)
     (root / "topic-decisions").mkdir(exist_ok=True)
@@ -39,7 +47,8 @@ def memory_root() -> Path:
             "Локальний Markdown-граф редакційної пам'яті UA FREE Content Tool.\n\n"
             "- [[editorial-examples]] — схвалені редактором тексти.\n"
             "- [[topic-decisions]] — рішення про об'єднання або непов'язаність матеріалів.\n\n"
-            "Ці файли можна переглядати та редагувати як звичайний Markdown і відкривати у Rowboat/Obsidian-сумісних інструментах.\n",
+            "Цей каталог розташований усередині Rowboat WorkDir/knowledge. "
+            "UA FREE Content Tool читає його напряму, а Rowboat запускається з цим самим WorkDir.\n",
             encoding="utf-8",
         )
     return root
@@ -53,12 +62,13 @@ def _candidate_executables() -> list[Path]:
         base = Path(local)
         values.extend([
             base / "Rowboat-win32-x64" / "rowboat.exe",
+            base / "rowboat" / "rowboat.exe",
             base / "Programs" / "Rowboat" / "rowboat.exe",
             base / "Programs" / "rowboat" / "rowboat.exe",
-            base / "rowboat" / "rowboat.exe",
         ])
         try:
             values.extend(base.glob("Rowboat*/*rowboat.exe"))
+            values.extend(base.glob("rowboat*/*rowboat.exe"))
         except OSError:
             pass
     if program_files:
@@ -77,15 +87,30 @@ def find_rowboat() -> Path | None:
 
 
 def inspect_rowboat() -> RowboatStatus:
+    workdir = rowboat_workdir()
     graph = memory_root()
     exe = find_rowboat()
     if exe is None:
-        return RowboatStatus(False, memory_root=str(graph), detail="Rowboat не знайдено. Локальна Markdown-пам'ять UA FREE вже готова.")
-    return RowboatStatus(True, executable=str(exe), memory_root=str(graph), detail="Rowboat знайдено. Локальна Markdown-пам'ять UA FREE готова.")
+        return RowboatStatus(
+            False,
+            workdir=str(workdir),
+            memory_root=str(graph),
+            detail="Rowboat не знайдено. Ізольований WorkDir і Markdown-пам'ять UA FREE уже готові.",
+        )
+    return RowboatStatus(
+        True,
+        executable=str(exe),
+        workdir=str(workdir),
+        memory_root=str(graph),
+        detail="Rowboat знайдено. Він запускатиметься з окремим UA FREE WorkDir.",
+    )
 
 
 def _latest_windows_asset() -> tuple[str, str, str]:
-    request = urllib.request.Request(ROWBOAT_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": "UA-FREE-Content-Tool"})
+    request = urllib.request.Request(
+        ROWBOAT_RELEASE_API,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "UA-FREE-Content-Tool"},
+    )
     try:
         with urllib.request.urlopen(request, timeout=45) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -141,7 +166,11 @@ def open_rowboat() -> None:
     exe = find_rowboat()
     if exe is None:
         raise RowboatError("Rowboat не встановлено.")
-    subprocess.Popen([str(exe)], close_fds=True)
+    workdir = rowboat_workdir()
+    memory_root()
+    env = dict(os.environ)
+    env["ROWBOAT_WORKDIR"] = str(workdir)
+    subprocess.Popen([str(exe)], close_fds=True, env=env)
 
 
 def open_memory_folder() -> None:
