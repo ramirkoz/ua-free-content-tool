@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
 
 import pytest
 
-from content_agent import codex_news_v1_3
+from content_agent import codex_news_v1_3, rowboat_bridge_v1_3
 from content_agent.codex_engine_v1_3 import CodexEngineError
 from content_agent.codex_news_v1_3 import build_rewrite_prompt, rewrite_group_with_codex
 from content_agent.models import Article, NewsGroup
 from content_agent.paths import reset_path_cache_for_tests
-from content_agent.rowboat_bridge_v1_3 import memory_context, memory_root, sync_editorial_memory
+from content_agent.rowboat_bridge_v1_3 import memory_context, memory_root, rowboat_workdir, sync_editorial_memory
 from content_agent.ui.ai_engine_v1_3 import AIEngineV13Mixin
 
 
@@ -104,10 +106,41 @@ def test_rowboat_memory_graph_exports_and_retrieves(tmp_path: Path, monkeypatch:
     counts = sync_editorial_memory(FakeDatabase())
     root = memory_root()
     assert counts == {"examples": 1, "decisions": 1}
+    assert root == rowboat_workdir() / "knowledge" / "ua-free"
     assert (root / "editorial-examples" / "example-7.md").is_file()
     context = memory_context("молодіжний простір відкрили 14 серпня")
     assert "молодіжний простір" in context.casefold()
     reset_path_cache_for_tests()
+
+
+def test_rowboat_release_matcher_accepts_versioned_windows_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "assets": [
+            {
+                "name": "Rowboat-win32-x64-0.8.7-setup.exe",
+                "browser_download_url": "https://github.com/rowboatlabs/rowboat/releases/download/v0.8.7/Rowboat-win32-x64-0.8.7-setup.exe",
+                "digest": "sha256:abc123",
+            }
+        ]
+    }
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+            return False
+
+    monkeypatch.setattr(
+        rowboat_bridge_v1_3.urllib.request,
+        "urlopen",
+        lambda _request, timeout=45: FakeResponse(json.dumps(payload).encode("utf-8")),
+    )
+    name, url, digest = rowboat_bridge_v1_3._latest_windows_asset()
+    assert name == "Rowboat-win32-x64-0.8.7-setup.exe"
+    assert url.endswith("Rowboat-win32-x64-0.8.7-setup.exe")
+    assert digest == "sha256:abc123"
 
 
 def test_ollama_prewarm_is_disabled_in_rc5() -> None:
