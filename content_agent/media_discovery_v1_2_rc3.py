@@ -10,6 +10,7 @@ from .media_hint_store_v1_2_rc3 import SourceMediaHintStore
 from .media_priority_v1_2 import prefer_real_video
 from .models import Article
 from .network import NetworkError, fetch_url
+from .telegram_media_v1_3_rc6 import discover_telegram_post_media, telegram_post_parts
 
 logger = logging.getLogger("content_agent.media")
 _VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v")
@@ -97,14 +98,22 @@ def _discover_page(url: str, source_label: str, *, follow_related: bool = True) 
 
 
 def discover_group_media_rc3(articles: list[Article]) -> list[MediaCandidate]:
-    """Prefer collection-time hints, then live source/canonical/player discovery."""
+    """Use exact-post Telegram discovery; keep generic discovery for other sources."""
 
     store = SourceMediaHintStore()
     candidates: list[MediaCandidate] = []
+    telegram_sources = 0
     for article in articles:
         if not article.url:
             continue
         label = article.source_name or article.title or article.url
+        if telegram_post_parts(article.url) is not None:
+            telegram_sources += 1
+            candidates.extend(discover_telegram_post_media(article.url, label))
+            # Deliberately do not parse channel pages, generic background images,
+            # or old collection hints for Telegram. They are the source of emoji
+            # assets and media from neighbouring posts.
+            continue
         stored = store.get(article.url)
         for item in stored:
             if item.origin == "telegram:player-page":
@@ -115,8 +124,9 @@ def discover_group_media_rc3(articles: list[Article]) -> list[MediaCandidate]:
             candidates.extend(_discover_page(variant, label, follow_related=True))
     result = prefer_real_video(deduplicate_media_candidates(candidates))
     logger.info(
-        "RC3 media discovery sources=%s candidates=%s videos=%s",
+        "RC6 media discovery sources=%s telegram_exact=%s candidates=%s videos=%s",
         len(articles),
+        telegram_sources,
         len(result),
         sum(item.kind == "video" for item in result),
     )
