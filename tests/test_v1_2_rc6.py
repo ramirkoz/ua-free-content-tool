@@ -1,5 +1,9 @@
+import os
+
+from content_agent import codex_engine_v1_3
 from content_agent.config import AppConfig
-from content_agent.global_duplicates_v1_3_rc6 import parse_duplicate_clusters
+from content_agent.global_duplicates_v1_3_rc6 import build_global_duplicate_prompt, parse_duplicate_clusters
+from content_agent.models import Article, NewsGroup
 from content_agent.telegram_media_v1_3_rc6 import (
     extract_telegram_post_media,
     telegram_embed_url,
@@ -63,3 +67,46 @@ def test_global_duplicate_clusters_cannot_overlap() -> None:
     clusters = parse_duplicate_clusters(raw, {1, 2, 3, 4, 5})
     assert len(clusters) == 1
     assert clusters[0].group_ids == (1, 2)
+
+
+def test_global_prompt_contains_every_new_group() -> None:
+    groups = []
+    for group_id in (10, 20, 30):
+        article = Article(
+            id=group_id,
+            source_id=1,
+            title=f"Title {group_id}",
+            url=f"https://t.me/example/{group_id}",
+            raw_text=f"Unique text for group {group_id}",
+            status="new",
+        )
+        groups.append(
+            NewsGroup(
+                id=group_id,
+                canonical_title=f"Group {group_id}",
+                status="new",
+                created_at="2026-08-14T08:00:00+00:00",
+                updated_at="2026-08-14T08:00:00+00:00",
+                source_count=1,
+                articles=[article],
+            )
+        )
+    prompt = build_global_duplicate_prompt(groups)
+    for group_id in (10, 20, 30):
+        assert f"ID={group_id}" in prompt
+        assert f"Unique text for group {group_id}" in prompt
+
+
+def test_codex_subprocess_proxy_hides_console_on_windows(monkeypatch) -> None:
+    if os.name != "nt":
+        return
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(codex_engine_v1_3.subprocess, "Popen", fake_popen)
+    proxy = codex_engine_v1_3._HiddenSubprocessProxy(codex_engine_v1_3.subprocess)
+    proxy.Popen(["codex.exe", "app-server"])
+    assert int(captured.get("creationflags", 0)) & int(codex_engine_v1_3.subprocess.CREATE_NO_WINDOW)
