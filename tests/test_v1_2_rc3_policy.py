@@ -17,10 +17,15 @@ def test_telegram_keeps_footer() -> None:
     assert FUND_FOOTER in text
 
 
-def test_social_root_posts_do_not_include_footer() -> None:
-    for platform in ("facebook", "threads", "linkedin", "instagram"):
+def test_comment_only_social_root_posts_do_not_include_footer() -> None:
+    for platform in ("facebook", "threads", "instagram"):
         text = compose_publication_text_rc3("News", platform, include_source_link=False, source_url="")
         assert FUND_FOOTER not in text
+
+
+def test_linkedin_keeps_footer_in_root_post() -> None:
+    text = compose_publication_text_rc3("News", "linkedin", include_source_link=False, source_url="")
+    assert FUND_FOOTER in text
 
 
 def test_short_source_uses_raw_article_prose_not_group_wrapper() -> None:
