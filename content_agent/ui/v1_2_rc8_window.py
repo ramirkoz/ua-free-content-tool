@@ -3,15 +3,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from tkinter import ttk
 
+from ..publication_policy_v1_2_rc4 import compose_publication_text_rc4
 from ..scheduling import KYIV, next_publish_slot
+from . import main_window as legacy_ui
 from .v1_2_rc6_window import MainWindow as RC7Window
 
 
 class MainWindow(RC7Window):
-    """RC8 live-gate build: LinkedIn isolation, queue recalculation and correct Codex UI wording."""
+    """RC8 live-gate build: final donation policy, queue recalculation and Codex UI wording."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
+        # Ancestor RC3 installs its historical composer during startup. RC8 final
+        # policy must win after the full MRO has initialized: Facebook + Threads
+        # keep donation in comment/reply; LinkedIn + Telegram + Instagram keep it
+        # inside the root post/caption.
+        legacy_ui.compose_publication_text = compose_publication_text_rc4
         self._ensure_codex_rewrite_label()
         self.root.title("UA FREE Content Tool — v1.2.0-dev RC8 · Codex + Rowboat")
 
