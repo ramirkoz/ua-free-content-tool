@@ -12,7 +12,9 @@ from content_agent.codex_news_v1_3 import build_rewrite_prompt, rewrite_group_wi
 from content_agent.models import Article, NewsGroup
 from content_agent.paths import reset_path_cache_for_tests
 from content_agent.rowboat_bridge_v1_3 import memory_context, memory_root, rowboat_workdir, sync_editorial_memory
+from content_agent.ui import queue_migration_codex_v1_3
 from content_agent.ui.ai_engine_v1_3 import AIEngineV13Mixin
+from content_agent.ui.queue_migration_codex_v1_3 import CodexQueueMigrationDialog
 
 
 def _group(*texts: str) -> NewsGroup:
@@ -141,6 +143,18 @@ def test_rowboat_release_matcher_accepts_versioned_windows_setup(monkeypatch: py
     assert name == "Rowboat-win32-x64-0.8.7-setup.exe"
     assert url.endswith("Rowboat-win32-x64-0.8.7-setup.exe")
     assert digest == "sha256:abc123"
+
+
+def test_queue_migration_uses_codex_and_respects_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(queue_migration_codex_v1_3, "run_codex", lambda _prompt: "Короткий схвалений текст.")
+    result = CodexQueueMigrationDialog._compress_with_codex("Довгий схвалений текст.", 100, "uk")
+    assert result == "Короткий схвалений текст."
+
+
+def test_queue_migration_rejects_codex_over_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(queue_migration_codex_v1_3, "run_codex", lambda _prompt: "x" * 101)
+    with pytest.raises(RuntimeError):
+        CodexQueueMigrationDialog._compress_with_codex("Довгий текст.", 100, "uk")
 
 
 def test_ollama_prewarm_is_disabled_in_rc5() -> None:
