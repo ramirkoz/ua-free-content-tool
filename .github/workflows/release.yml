@@ -6,12 +6,19 @@ on:
       version:
         description: Release version without the v prefix
         required: true
-        default: "1.1.3"
+        default: "1.2.0"
       prerelease:
         description: Publish as a prerelease
         required: true
         type: boolean
         default: false
+  push:
+    branches:
+      - main
+    paths:
+      - PUBLIC_VERSION.txt
+      - VERSION.txt
+      - 'RELEASE_NOTES_v*.md'
 
 permissions:
   contents: write
@@ -19,6 +26,9 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      DISPATCH_VERSION: ${{ inputs.version || '' }}
+      DISPATCH_PRERELEASE: ${{ inputs.prerelease || false }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -35,8 +45,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ inputs.version }}"
+          $version = "$env:DISPATCH_VERSION".Trim()
           $publicVersion = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          if (-not $version) { $version = $publicVersion }
           $internalVersion = (Get-Content VERSION.txt -Raw).Trim()
           $notes = "RELEASE_NOTES_v$version.md"
           if ($publicVersion -ne $version) {
@@ -48,6 +59,7 @@ jobs:
           if (-not (Test-Path $notes)) {
             throw "Release notes not found: $notes"
           }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install test dependencies
         shell: pwsh
@@ -100,7 +112,7 @@ jobs:
           git add FILE_MANIFEST.sha256
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
-            git commit -m "Refresh repository manifest for v${{ inputs.version }}"
+            git commit -m "Refresh repository manifest for v$env:RELEASE_VERSION"
             if ($LASTEXITCODE -ne 0) { throw "Manifest commit failed: $LASTEXITCODE" }
             git push origin HEAD:main
             if ($LASTEXITCODE -ne 0) { throw "Manifest push failed: $LASTEXITCODE" }
@@ -116,7 +128,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ inputs.version }}"
+          $version = $env:RELEASE_VERSION
           $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool").Path
           $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
           $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
@@ -155,7 +167,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ inputs.version }}"
+          $version = $env:RELEASE_VERSION
           $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool").Path
           $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
@@ -170,7 +182,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ inputs.version }}"
+          $version = $env:RELEASE_VERSION
           $releaseRoot = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
           $portableZip = "UA_FREE_Content_Tool_v${version}_Windows_Portable.zip"
           $sourceZip = "UA_FREE_Content_Tool_v${version}_Source.zip"
@@ -183,6 +195,7 @@ jobs:
           @'
           import pathlib, zipfile, sys
           archive = pathlib.Path(sys.argv[1])
+          version = sys.argv[2]
           with zipfile.ZipFile(archive) as z:
               names = z.namelist()
               assert z.testzip() is None, "CRC validation failed"
@@ -193,11 +206,11 @@ jobs:
               assert exes == ["UA_FREE_Content_Tool.exe"], f"unexpected executables: {exes}"
               assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
               assert not any(name.casefold().endswith((".sqlite3", ".db", ".log", ".env", ".wal", ".shm")) for name in names), "runtime data shipped"
-              assert z.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "${{ inputs.version }}"
-              assert z.read("VERSION.txt").decode("utf-8").strip() == "${{ inputs.version }}"
+              assert z.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == version
+              assert z.read("VERSION.txt").decode("utf-8").strip() == version
           print("RELEASE_ZIP_VALIDATION_OK")
           '@ | Set-Content validate_release_zip.py -Encoding utf8
-          python validate_release_zip.py $portableZip
+          python validate_release_zip.py $portableZip $version
           if ($LASTEXITCODE -ne 0) { throw "Release ZIP validation failed: $LASTEXITCODE" }
           Remove-Item validate_release_zip.py
 
@@ -223,7 +236,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ inputs.version }}"
+          $version = $env:RELEASE_VERSION
           $tag = "v$version"
           $notes = "RELEASE_NOTES_v$version.md"
           $portableZip = "${{ steps.assets.outputs.portable_zip }}"
@@ -246,6 +259,6 @@ jobs:
           } else {
             $arguments = @("release", "create", $tag, $portableZip, $sourceZip, $checksums, "--target", "main", "--title", "UA FREE Content Tool v$version", "--notes-file", $notes, "--latest")
           }
-          if ("${{ inputs.prerelease }}" -eq "true") { $arguments += "--prerelease" }
+          if ("$env:DISPATCH_PRERELEASE".ToLowerInvariant() -eq "true") { $arguments += "--prerelease" }
           & gh @arguments
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release publication failed: $LASTEXITCODE" }
