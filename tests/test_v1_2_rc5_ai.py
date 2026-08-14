@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -65,8 +64,8 @@ def test_codex_rewrite_accepts_strict_json(monkeypatch: pytest.MonkeyPatch) -> N
     result = rewrite_group_with_codex(group, [])
     assert result.headline == "Новий простір"
     assert result.source_count_used == 1
-    assert result.platform_texts
-    assert group.primary_url in result.platform_texts["telegram"]
+    assert result.platform_texts["telegram"] == result.rewrite
+    assert group.primary_url not in result.platform_texts["telegram"]
 
 
 def test_codex_rewrite_rejects_invalid_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
