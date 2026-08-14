@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from .editorial_memory import weighted_similarity
 from .paths import data_dir
 
 ROWBOAT_RELEASE_API = "https://api.github.com/repos/rowboatlabs/rowboat/releases/latest"
@@ -57,8 +58,7 @@ def _candidate_executables() -> list[Path]:
             base / "rowboat" / "rowboat.exe",
         ])
         try:
-            for child in base.glob("Rowboat*/*rowboat.exe"):
-                values.append(child)
+            values.extend(base.glob("Rowboat*/*rowboat.exe"))
         except OSError:
             pass
     if program_files:
@@ -80,24 +80,12 @@ def inspect_rowboat() -> RowboatStatus:
     graph = memory_root()
     exe = find_rowboat()
     if exe is None:
-        return RowboatStatus(
-            installed=False,
-            memory_root=str(graph),
-            detail="Rowboat не знайдено. Локальна Markdown-пам'ять UA FREE вже готова.",
-        )
-    return RowboatStatus(
-        installed=True,
-        executable=str(exe),
-        memory_root=str(graph),
-        detail="Rowboat знайдено. Локальна Markdown-пам'ять UA FREE готова.",
-    )
+        return RowboatStatus(False, memory_root=str(graph), detail="Rowboat не знайдено. Локальна Markdown-пам'ять UA FREE вже готова.")
+    return RowboatStatus(True, executable=str(exe), memory_root=str(graph), detail="Rowboat знайдено. Локальна Markdown-пам'ять UA FREE готова.")
 
 
 def _latest_windows_asset() -> tuple[str, str, str]:
-    request = urllib.request.Request(
-        ROWBOAT_RELEASE_API,
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "UA-FREE-Content-Tool"},
-    )
+    request = urllib.request.Request(ROWBOAT_RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": "UA-FREE-Content-Tool"})
     try:
         with urllib.request.urlopen(request, timeout=45) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -107,14 +95,10 @@ def _latest_windows_asset() -> tuple[str, str, str]:
     if not isinstance(assets, list):
         raise RowboatError("GitHub не повернув список файлів релізу Rowboat.")
     for asset in assets:
-        if not isinstance(asset, dict):
-            continue
-        name = str(asset.get("name") or "")
-        if name.casefold().endswith("win32-x64-setup.exe"):
+        if isinstance(asset, dict) and str(asset.get("name") or "").casefold().endswith("win32-x64-setup.exe"):
             url = str(asset.get("browser_download_url") or "")
-            digest = str(asset.get("digest") or "")
             if url:
-                return name, url, digest
+                return str(asset.get("name") or "rowboat-setup.exe"), url, str(asset.get("digest") or "")
     raise RowboatError("У поточному релізі Rowboat не знайдено Windows x64 setup.exe.")
 
 
@@ -168,55 +152,51 @@ def open_memory_folder() -> None:
         subprocess.Popen(["xdg-open", str(root)])
 
 
-def _safe_slug(value: str, fallback: str) -> str:
-    cleaned = "".join(char if char.isalnum() or char in "-_" else "-" for char in str(value or "").strip())
-    cleaned = "-".join(part for part in cleaned.split("-") if part)
-    return (cleaned[:80] or fallback).lower()
-
-
 def sync_editorial_memory(database) -> dict[str, int]:
     root = memory_root()
     examples_dir = root / "editorial-examples"
     decisions_dir = root / "topic-decisions"
-    examples = database.list_editorial_examples(language="uk")
-    for item in examples:
-        item_id = getattr(item, "id", None) or hashlib.sha1(str(getattr(item, "final_text", "")).encode("utf-8")).hexdigest()[:12]
-        final_text = str(getattr(item, "final_text", "") or "").strip()
-        source_text = str(getattr(item, "source_text", "") or "").strip()
-        headline = str(getattr(item, "headline", "") or "").strip()
-        name = examples_dir / f"example-{item_id}.md"
-        name.write_text(
+    examples = list(database.list_editorial_examples(language="uk"))
+    for row in examples:
+        item_id = row.get("id") or hashlib.sha1(str(row.get("final_text") or "").encode("utf-8")).hexdigest()[:12]
+        final_text = str(row.get("final_text") or "").strip()
+        source_text = str(row.get("source_text") or "").strip()
+        headline = str(row.get("headline") or "").strip()
+        (examples_dir / f"example-{item_id}.md").write_text(
             "---\ntype: editorial-example\nlanguage: uk\n---\n\n"
-            f"# {headline or 'Схвалений рерайт'}\n\n"
-            f"## Джерело\n\n{source_text}\n\n"
-            f"## Фінальний текст\n\n{final_text}\n\n"
-            "Зв'язки: [[UA FREE Editorial Memory]]\n",
+            f"# {headline or 'Схвалений рерайт'}\n\n## Джерело\n\n{source_text}\n\n"
+            f"## Фінальний текст\n\n{final_text}\n\nЗв'язки: [[UA FREE Editorial Memory]]\n",
             encoding="utf-8",
         )
-    feedback = []
-    if hasattr(database, "list_topic_merge_feedback"):
-        try:
-            feedback = list(database.list_topic_merge_feedback(language="uk"))
-        except TypeError:
-            feedback = list(database.list_topic_merge_feedback())
-    for index, item in enumerate(feedback, start=1):
-        if isinstance(item, dict):
-            decision = str(item.get("decision") or "unknown")
-            anchor = str(item.get("anchor_text") or "")
-            candidate = str(item.get("candidate_text") or "")
-        else:
-            decision = str(getattr(item, "decision", "unknown"))
-            anchor = str(getattr(item, "anchor_text", "") or "")
-            candidate = str(getattr(item, "candidate_text", "") or "")
+    feedback = list(database.list_topic_feedback(language="uk")) if hasattr(database, "list_topic_feedback") else []
+    for row in feedback:
+        decision = str(row.get("decision") or "unknown")
+        anchor = str(row.get("anchor_text") or "")
+        candidate = str(row.get("candidate_text") or "")
         fingerprint = hashlib.sha1(f"{decision}|{anchor}|{candidate}".encode("utf-8")).hexdigest()[:12]
-        path = decisions_dir / f"decision-{fingerprint}.md"
-        path.write_text(
+        (decisions_dir / f"decision-{fingerprint}.md").write_text(
             "---\ntype: topic-decision\n"
-            f"decision: {decision}\n---\n\n"
-            f"# Редакційне рішення: {decision}\n\n"
-            f"## Матеріал A\n\n{anchor}\n\n"
-            f"## Матеріал B\n\n{candidate}\n\n"
+            f"decision: {decision}\n---\n\n# Редакційне рішення: {decision}\n\n"
+            f"## Матеріал A\n\n{anchor}\n\n## Матеріал B\n\n{candidate}\n\n"
             "Зв'язки: [[UA FREE Editorial Memory]]\n",
             encoding="utf-8",
         )
     return {"examples": len(examples), "decisions": len(feedback)}
+
+
+def memory_context(query_text: str, *, limit: int = 6) -> str:
+    ranked: list[tuple[float, str]] = []
+    root = memory_root()
+    for folder in (root / "editorial-examples", root / "topic-decisions"):
+        for path in folder.glob("*.md"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            score = weighted_similarity(query_text, text)
+            if score >= 0.04:
+                ranked.append((score, text[:2200]))
+    ranked.sort(key=lambda item: -item[0])
+    if not ranked:
+        return ""
+    return "\n\n--- MEMORY ---\n\n".join(text for _score, text in ranked[:max(1, int(limit))])
