@@ -1,0 +1,128 @@
+name: Build Windows v1.2.1 RC1 clean
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/v1.2.1-publishing-media-clean
+
+permissions:
+  contents: read
+
+jobs:
+  windows-v121-rc1:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact v1.2.1 RC1 commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate source and regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
+          python tools/check_entrypoint_imports.py
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
+          python -c "from content_agent.comment_compat_v1_2_rc3 import CompatibleTelegramPublisher; from content_agent.threads_comments_v1_2_rc3 import CommentedThreadsPublisher; from content_agent.ui.v1_2_rc8_window import MainWindow; print('V121_RC1_SOURCE_GATE_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "v1.2.1 imports failed" }
+
+      - name: Stamp RC version
+        shell: pwsh
+        run: |
+          "1.2.1-rc1" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
+          "1.2.1-rc1" | Set-Content VERSION.txt -Encoding ascii
+
+      - name: Build portable runtime
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate runtime startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc1\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          if (-not (Test-Path $exe)) { throw "Launcher missing" }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 12
+          if ($process.HasExited) { throw "Portable GUI exited during startup smoke test: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Microsoft Defender scan
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc1\UA_FREE_Content_Tool").Path
+          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
+          & $mp -Scan -ScanType 3 -File $root
+          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender runtime scan failed with exit code $LASTEXITCODE" }
+
+      - name: Package portable
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "Release\UA_FREE_Content_Tool_v1.2.1-rc1\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v1.2.1-rc1_Windows_Portable.zip"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
+          @'
+          import sys, zipfile
+          archive = sys.argv[1]
+          required = {
+              "content_agent/comment_compat_v1_2_rc3.py",
+              "content_agent/threads_comments_v1_2_rc3.py",
+              "content_agent/ui/v1_2_rc8_window.py",
+              "content_agent/main.py",
+          }
+          with zipfile.ZipFile(archive) as package:
+              names = package.namelist()
+              assert package.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.1-rc1"
+              missing = required.difference(names)
+              assert not missing, sorted(missing)
+              forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log"))]
+              assert not forbidden, forbidden[:10]
+          print("V121_RC1_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_v121_rc1_zip.py -Encoding utf8
+          python validate_v121_rc1_zip.py $zip
+          if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
+          Remove-Item validate_v121_rc1_zip.py
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v1.2.1-rc1_SHA256.txt" -Encoding ascii
+
+      - name: Defender scan final ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          & $mp -Scan -ScanType 3 -File "UA_FREE_Content_Tool_v1.2.1-rc1_Windows_Portable.zip"
+          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender ZIP scan failed with exit code $LASTEXITCODE" }
+
+      - name: Upload test portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.2.1_RC1_FINAL
+          path: |
+            UA_FREE_Content_Tool_v1.2.1-rc1_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.2.1-rc1_SHA256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
