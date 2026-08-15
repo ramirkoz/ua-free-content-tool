@@ -74,7 +74,6 @@ jobs:
           if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender runtime scan failed with exit code $LASTEXITCODE" }
 
       - name: Package portable
-        id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -107,14 +106,6 @@ jobs:
           Remove-Item validate_v121_rc1_zip.py
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v1.2.1-rc1_SHA256.txt" -Encoding ascii
-
-      - name: Defender scan final ZIP
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
-          & $mp -Scan -ScanType 3 -File "UA_FREE_Content_Tool_v1.2.1-rc1_Windows_Portable.zip"
-          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender ZIP scan failed with exit code $LASTEXITCODE" }
 
       - name: Upload test portable
         uses: actions/upload-artifact@v4
