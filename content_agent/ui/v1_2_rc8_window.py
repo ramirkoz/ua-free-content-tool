@@ -20,7 +20,8 @@ class MainWindow(RC7Window):
         # inside the root post/caption.
         legacy_ui.compose_publication_text = compose_publication_text_rc4
         self._ensure_codex_rewrite_label()
-        self.root.title("UA FREE Content Tool — v1.2.0 · Codex + Rowboat")
+        self._install_media_selection_counter()
+        self.root.title("UA FREE Content Tool — v1.2.1 · Codex + Rowboat")
 
     def _build_queue_tab(self) -> None:
         super()._build_queue_tab()
@@ -32,6 +33,37 @@ class MainWindow(RC7Window):
         button = getattr(self, "recalculate_queue_button", None)
         if button is not None:
             button.configure(text="Перерахувати чергу")
+        self._update_media_selection_counter()
+
+    def _install_media_selection_counter(self) -> None:
+        tree = getattr(self, "media_candidates_tree", None)
+        if tree is None:
+            return
+        self.media_add_selected_button = None
+        for child in tree.master.winfo_children():
+            if not isinstance(child, ttk.Button):
+                continue
+            try:
+                label = str(child.cget("text"))
+            except Exception:
+                continue
+            if label in {"Додати вибране", "Використати вибране"}:
+                self.media_add_selected_button = child
+                break
+        tree.bind("<<TreeviewSelect>>", lambda _event: self._update_media_selection_counter(), add="+")
+        self._update_media_selection_counter()
+
+    def _update_media_selection_counter(self) -> None:
+        tree = getattr(self, "media_candidates_tree", None)
+        button = getattr(self, "media_add_selected_button", None)
+        if tree is None or button is None:
+            return
+        count = len(tree.selection())
+        button.configure(text=f"Додати вибране · обрано: {count}")
+
+    def _set_media_candidates(self, candidates):
+        super()._set_media_candidates(candidates)
+        self._update_media_selection_counter()
 
     def _ensure_codex_rewrite_label(self) -> None:
         button = getattr(self, "rewrite_button", None)
