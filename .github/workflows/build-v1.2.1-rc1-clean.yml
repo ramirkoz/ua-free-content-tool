@@ -37,7 +37,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "from content_agent.comment_compat_v1_2_rc3 import CompatibleTelegramPublisher; from content_agent.threads_comments_v1_2_rc3 import CommentedThreadsPublisher; from content_agent.ui.v1_2_rc8_window import MainWindow; print('V121_RC1_SOURCE_GATE_OK')"
+          python -c "from content_agent.comment_compat_v1_2_rc3 import CompatibleTelegramPublisher; from content_agent.threads_comments_v1_2_rc3 import CommentedThreadsPublisher; from content_agent.target_presets_v1_2_1 import TargetPresetState; from content_agent.ui.v1_2_rc8_window import MainWindow; print('V121_RC1_SOURCE_GATE_OK')"
           if ($LASTEXITCODE -ne 0) { throw "v1.2.1 imports failed" }
 
       - name: Stamp RC version
@@ -86,6 +86,7 @@ jobs:
           required = {
               "content_agent/comment_compat_v1_2_rc3.py",
               "content_agent/threads_comments_v1_2_rc3.py",
+              "content_agent/target_presets_v1_2_1.py",
               "content_agent/ui/v1_2_rc8_window.py",
               "content_agent/main.py",
           }
