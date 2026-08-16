@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from .codex_engine_v1_3 import CodexEngineError, run_codex
+from .ai_router_v1_2_1 import AIRouterError, run_ai
 from .models import NewsGroup
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -101,9 +101,9 @@ def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateClu
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise CodexEngineError("Codex повернув глобальний пошук дублікатів не у валідному JSON.") from exc
+        raise AIRouterError("AI повернув глобальний пошук дублікатів не у валідному JSON.") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("clusters"), list):
-        raise CodexEngineError("Codex повернув неправильну структуру глобального пошуку дублікатів.")
+        raise AIRouterError("AI повернув неправильну структуру глобального пошуку дублікатів.")
     result: list[DuplicateCluster] = []
     used: set[int] = set()
     for row in payload["clusters"]:
@@ -139,5 +139,10 @@ def find_global_duplicate_clusters(
     if len(groups) < 2:
         return []
     prompt = build_global_duplicate_prompt(groups, feedback=feedback, graph_memory=graph_memory)
-    raw = run_codex(prompt)
-    return parse_duplicate_clusters(raw, {group.id for group in groups})
+    valid_ids = {group.id for group in groups}
+
+    def validate(raw: str) -> None:
+        parse_duplicate_clusters(raw, valid_ids)
+
+    routed = run_ai(prompt, validator=validate)
+    return parse_duplicate_clusters(routed.text, valid_ids)
