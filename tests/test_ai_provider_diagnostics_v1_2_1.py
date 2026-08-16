@@ -13,7 +13,7 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
     cfg = router.AIProviderSecrets(
         gemini_api_key="gem",
         nvidia_api_key="nv",
-        cerebras_api_key="cer",
+        groq_api_key="groq",
     )
     calls: list[tuple[str, str]] = []
 
@@ -21,7 +21,7 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
     monkeypatch.setattr(
         diagnostics,
         "_configured",
-        lambda slot, _cfg: slot.provider in {"gemini", "nvidia", "cerebras"},
+        lambda slot, _cfg: slot.provider in {"gemini", "nvidia", "groq"},
     )
 
     nvidia_models = [slot.model for slot in router.MODEL_SLOTS if slot.provider == "nvidia"]
@@ -30,7 +30,7 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
         calls.append((slot.provider, slot.model))
         if slot.provider == "nvidia" and slot.model == nvidia_models[0]:
             raise router.AIModelError("first model unavailable", kind="model")
-        if slot.provider == "cerebras":
+        if slot.provider == "groq":
             raise router.AIModelError("bad key", kind="auth")
         return "UA_FREE_PROVIDER_OK"
 
@@ -40,11 +40,11 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
 
     assert sum(provider == "gemini" for provider, _model in calls) == 1
     assert sum(provider == "nvidia" for provider, _model in calls) == 2
-    assert sum(provider == "cerebras" for provider, _model in calls) == 1
+    assert sum(provider == "groq" for provider, _model in calls) == 1
     assert by_provider["gemini"].status == "ok"
     assert by_provider["nvidia"].status == "ok"
     assert by_provider["nvidia"].model == nvidia_models[1]
-    assert by_provider["cerebras"].status == "error"
+    assert by_provider["groq"].status == "error"
 
 
 def test_provider_quota_stops_without_hammering_other_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,17 +79,21 @@ def test_unconfigured_provider_is_not_called(monkeypatch: pytest.MonkeyPatch) ->
     assert all(row.status == "unconfigured" for row in rows)
 
 
-def test_provider_slot_groups_are_unique_and_preserve_all_models() -> None:
+def test_provider_slot_groups_are_unique_and_only_production_providers_remain() -> None:
     groups = diagnostics._provider_slot_groups()
     providers = [provider for provider, _slots in groups]
     assert len(providers) == len(set(providers))
     assert providers[0] == "codex"
     assert providers[-1] == "local"
+    assert set(providers) == {"codex", "gemini", "nvidia", "groq", "cloudflare", "local"}
+    assert "sambanova" not in providers
+    assert "cerebras" not in providers
+    assert "openrouter" not in providers
     nvidia = dict(groups)["nvidia"]
     assert len(nvidia) >= 2
 
 
-def test_rc5_single_test_button_runs_provider_diagnostics_and_router() -> None:
+def test_final_single_test_button_runs_provider_diagnostics_and_router() -> None:
     source = inspect.getsource(MainWindow.test_ai_router_ui)
     assert "test_configured_providers" in source
     assert "test_ai_router" in source
