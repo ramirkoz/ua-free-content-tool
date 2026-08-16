@@ -31,7 +31,7 @@ def test_provider_secrets_round_trip_is_encrypted(tmp_path: Path, monkeypatch: p
 
 
 def test_quota_failure_cools_provider_and_falls_to_next_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = router.AIProviderSecrets(nvidia_api_key="x", cerebras_api_key="y")
+    cfg = router.AIProviderSecrets(nvidia_api_key="x", groq_api_key="y")
     state = router.AIRouterState()
     saved: list[router.AIRouterState] = []
     calls: list[str] = []
@@ -42,7 +42,7 @@ def test_quota_failure_cools_provider_and_falls_to_next_provider(monkeypatch: py
     monkeypatch.setattr(
         router,
         "_configured",
-        lambda slot, _cfg: slot.provider in {"nvidia", "cerebras"},
+        lambda slot, _cfg: slot.provider in {"nvidia", "groq"},
     )
 
     def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str) -> str:
@@ -53,7 +53,7 @@ def test_quota_failure_cools_provider_and_falls_to_next_provider(monkeypatch: py
 
     monkeypatch.setattr(router, "_invoke_slot", invoke)
     result = router.run_ai("test")
-    assert result.provider == "cerebras"
+    assert result.provider == "groq"
     assert calls[0] == "DeepSeek V4 Pro / NVIDIA"
     assert not any("Nemotron 3 Ultra" in value for value in calls)
     assert "provider:nvidia" in state.cooldowns
@@ -87,7 +87,7 @@ def test_invalid_model_output_falls_to_next_model(monkeypatch: pytest.MonkeyPatc
     assert calls[1] == "Nemotron 3 Ultra 550B / NVIDIA"
 
 
-def test_registry_prioritizes_quality_and_keeps_local_last() -> None:
+def test_registry_prioritizes_quality_and_keeps_only_production_providers() -> None:
     labels = [slot.label for slot in router.MODEL_SLOTS]
     assert labels[:6] == [
         "Codex / ChatGPT",
@@ -97,5 +97,14 @@ def test_registry_prioritizes_quality_and_keeps_local_last() -> None:
         "GLM-5.2 / NVIDIA",
         "Qwen 3.5 397B / NVIDIA",
     ]
+    assert {slot.provider for slot in router.MODEL_SLOTS} == {
+        "codex",
+        "gemini",
+        "nvidia",
+        "groq",
+        "cloudflare",
+        "local",
+    }
+    assert len(router.MODEL_SLOTS) == 13
     assert router.MODEL_SLOTS[-1].provider == "local"
     assert [slot.priority for slot in router.MODEL_SLOTS] == list(range(1, len(router.MODEL_SLOTS) + 1))
