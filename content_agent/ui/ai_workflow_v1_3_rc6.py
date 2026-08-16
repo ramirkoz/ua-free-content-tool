@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..ai_router_v1_2_1 import last_ai_result_label
 from ..codex_news_v1_3 import rewrite_group_with_codex
 from ..editorial_memory import rank_editorial_examples
 from ..global_duplicates_v1_3_rc6 import DuplicateCluster, find_global_duplicate_clusters
@@ -18,7 +19,7 @@ class AIWorkflowRC6Mixin:
         config = self.config  # type: ignore[attr-defined]
 
         def action() -> object:
-            # Every DB read, memory sync, retrieval pass and Codex startup lives
+            # Every DB read, memory sync, retrieval pass and AI Router call lives
             # here, not in the Tk event handler. The click must return immediately.
             self.db.set_group_options(group_id, include_source_link=include_source_link)  # type: ignore[attr-defined]
             group = self.db.get_group(group_id)  # type: ignore[attr-defined]
@@ -36,7 +37,7 @@ class AIWorkflowRC6Mixin:
             group, rewrite_result, example_count = result  # type: ignore[misc]
             assert isinstance(group, NewsGroup)
             assert isinstance(rewrite_result, RewriteResult)
-            # The user may have opened another group while Codex was working.
+            # The user may have opened another group while AI was working.
             if getattr(self, "current_group_id", None) != group.id:
                 self.set_status(  # type: ignore[attr-defined]
                     f"Рерайт блока #{group.id} готовий і збережений; зараз відкрито інший блок."
@@ -54,26 +55,27 @@ class AIWorkflowRC6Mixin:
                 rewrite_text=rewrite_result.rewrite,
                 platform_texts=rewrite_result.platform_texts,
             )
+            engine = last_ai_result_label()
             if config.learning_enabled:
                 self.db.record_learning_event(  # type: ignore[attr-defined]
                     "rewrite_generated",
                     language=config.ui_language,
                     group_id=group.id,
-                    payload={"model": "codex-chatgpt", "fallback": False, "examples": example_count},
+                    payload={"model": engine, "fallback": engine != "Codex / ChatGPT", "examples": example_count},
                 )
             self.refresh_groups()  # type: ignore[attr-defined]
             if getattr(self, "current_group_id", None) == group.id:
                 self.update_text_metrics()  # type: ignore[attr-defined]
             self.set_status(  # type: ignore[attr-defined]
-                f"Рерайт створено через Codex · джерел {rewrite_result.source_count_used} із {rewrite_result.source_count_total}"
+                f"Рерайт створено · AI: {engine} · джерел {rewrite_result.source_count_used} із {rewrite_result.source_count_total}"
                 f" · прикладів пам'яті {example_count}"
             )
 
         self.run_async(  # type: ignore[attr-defined]
             action,
             success,
-            label="Готую матеріали й запускаю Codex у фоні",
-            done_label="Рерайт Codex завершено",
+            label="Готую матеріали й запускаю AI Router у фоні",
+            done_label="AI-рерайт завершено",
         )
 
     def find_all_by_topic(self) -> None:
@@ -107,13 +109,14 @@ class AIWorkflowRC6Mixin:
             if len(groups) < 2:
                 self.topic_search_status_var.set("Для глобального порівняння потрібно щонайменше 2 нові блоки.")  # type: ignore[attr-defined]
                 return
+            engine = last_ai_result_label()
             if not clusters:
                 self.topic_search_status_var.set(  # type: ignore[attr-defined]
-                    f"Codex порівняв {len(groups)} нових блоків. Дублікатів для об'єднання не запропоновано."
+                    f"AI Router ({engine}) порівняв {len(groups)} нових блоків. Дублікатів для об'єднання не запропоновано."
                 )
                 return
             self.topic_search_status_var.set(  # type: ignore[attr-defined]
-                f"Codex порівняв {len(groups)} нових блоків і запропонував {len(clusters)} об'єднань."
+                f"AI Router ({engine}) порівняв {len(groups)} нових блоків і запропонував {len(clusters)} об'єднань."
             )
             by_id = {group.id: group for group in groups}
             GlobalDuplicatesDialog(
@@ -126,7 +129,7 @@ class AIWorkflowRC6Mixin:
         self.run_async(  # type: ignore[attr-defined]
             action,
             success,
-            label="Codex: порівнюю всі нові матеріали між собою",
+            label="AI Router: порівнюю всі нові матеріали між собою",
             done_label="Глобальний пошук дублікатів завершено",
         )
 
