@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Sequence
 
-from .codex_engine_v1_3 import CodexEngineError, run_codex
+from .ai_router_v1_2_1 import AIRouterError, run_ai
 from .editorial_memory import EditorialExample, format_examples_for_prompt
 from .models import NewsGroup, RewriteResult
 from .publication_text import validate_editorial_text
@@ -75,27 +75,34 @@ def build_rewrite_prompt(
 """.strip()
 
 
+def _validate_rewrite_json(raw: str) -> None:
+    try:
+        payload = json.loads(_clean_json_text(raw))
+    except json.JSONDecodeError as exc:
+        raise AIRouterError("AI повернув рерайт не у валідному JSON.") from exc
+    if not isinstance(payload, dict):
+        raise AIRouterError("AI повернув неправильну структуру рерайту.")
+    headline = str(payload.get("headline") or "").strip()
+    rewrite = str(payload.get("rewrite") or "").strip()
+    if not headline or not rewrite:
+        raise AIRouterError("AI не повернув заголовок або текст рерайту.")
+    if _FORBIDDEN_LINE.search(rewrite) or rewrite.startswith(("{", "[")):
+        raise AIRouterError("AI змішав службові секції з публічним текстом.")
+    validate_editorial_text(rewrite)
+
+
 def rewrite_group_with_codex(
     group: NewsGroup,
     examples: Sequence[EditorialExample],
     *,
     graph_memory: str = "",
 ) -> RewriteResult:
-    raw = run_codex(build_rewrite_prompt(group, examples, graph_memory=graph_memory))
-    try:
-        payload = json.loads(_clean_json_text(raw))
-    except json.JSONDecodeError as exc:
-        raise CodexEngineError("Codex повернув рерайт не у валідному JSON. Відповідь не збережено.") from exc
-    if not isinstance(payload, dict):
-        raise CodexEngineError("Codex повернув неправильну структуру рерайту.")
+    prompt = build_rewrite_prompt(group, examples, graph_memory=graph_memory)
+    routed = run_ai(prompt, validator=_validate_rewrite_json)
+    payload = json.loads(_clean_json_text(routed.text))
     headline = str(payload.get("headline") or "").strip()
     fact_card = str(payload.get("fact_card") or "").strip()
     rewrite = str(payload.get("rewrite") or "").strip()
-    if not headline or not rewrite:
-        raise CodexEngineError("Codex не повернув заголовок або текст рерайту.")
-    if _FORBIDDEN_LINE.search(rewrite) or rewrite.startswith(("{", "[")):
-        raise CodexEngineError("Codex змішав службові секції з публічним текстом. Відповідь відхилено.")
-    validate_editorial_text(rewrite)
     return RewriteResult(
         headline=headline,
         fact_card=fact_card,
@@ -111,6 +118,19 @@ def rewrite_group_with_codex(
     )
 
 
+def _validate_topic_output(raw: str) -> None:
+    text = str(raw or "").strip()
+    if not text:
+        raise AIRouterError("AI повернув порожню відповідь для пошуку схожих.")
+    parsed = parse_topic_matches(text)
+    if parsed:
+        return
+    lowered = text.casefold()
+    if lowered in {"none", "немає", "no matches", "no_match", "0"}:
+        return
+    raise AIRouterError("AI повернув пошук схожих у неправильному форматі.")
+
+
 def run_topic_prompt_with_codex(prompt: str, *, graph_memory: str = "") -> dict[int, object]:
     memory = (
         "\n\nПОПЕРЕДНІ РЕДАКЦІЙНІ РІШЕННЯ З ЛОКАЛЬНОЇ ПАМ'ЯТІ:\n"
@@ -123,6 +143,9 @@ def run_topic_prompt_with_codex(prompt: str, *, graph_memory: str = "") -> dict[
         prompt
         + memory
         + "\n\nПоверни тільки рядки у форматі ID|SCORE|same_event/related/other|коротка причина. "
-        "Не додавай markdown, вступ або підсумок."
+        "Якщо збігів немає, поверни рівно NONE. Не додавай markdown, вступ або підсумок."
     )
-    return parse_topic_matches(run_codex(reinforced))
+    routed = run_ai(reinforced, validator=_validate_topic_output)
+    if routed.text.strip().casefold() == "none":
+        return {}
+    return parse_topic_matches(routed.text)
