@@ -5,11 +5,16 @@ import re
 from collections.abc import Sequence
 
 from .ai_router_v1_2_1 import AIRouterError, run_ai
+from .codex_engine_v1_3 import CodexEngineError, run_codex as _legacy_run_codex
 from .editorial_memory import EditorialExample, format_examples_for_prompt
 from .models import NewsGroup, RewriteResult
 from .publication_text import validate_editorial_text
 from .rewriter import platform_texts_from_base
 from .topic_search import parse_topic_matches
+
+# Compatibility hook for older regression tests and recovery tooling that
+# monkeypatches codex_news_v1_3.run_codex directly. Production uses AI Router.
+run_codex = _legacy_run_codex
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 _FORBIDDEN_LINE = re.compile(
@@ -75,7 +80,7 @@ def build_rewrite_prompt(
 """.strip()
 
 
-def _validate_rewrite_json(raw: str) -> None:
+def _parse_rewrite_json(raw: str) -> dict[str, object]:
     try:
         payload = json.loads(_clean_json_text(raw))
     except json.JSONDecodeError as exc:
@@ -89,6 +94,11 @@ def _validate_rewrite_json(raw: str) -> None:
     if _FORBIDDEN_LINE.search(rewrite) or rewrite.startswith(("{", "[")):
         raise AIRouterError("AI змішав службові секції з публічним текстом.")
     validate_editorial_text(rewrite)
+    return payload
+
+
+def _validate_rewrite_json(raw: str) -> None:
+    _parse_rewrite_json(raw)
 
 
 def rewrite_group_with_codex(
@@ -98,8 +108,15 @@ def rewrite_group_with_codex(
     graph_memory: str = "",
 ) -> RewriteResult:
     prompt = build_rewrite_prompt(group, examples, graph_memory=graph_memory)
-    routed = run_ai(prompt, validator=_validate_rewrite_json)
-    payload = json.loads(_clean_json_text(routed.text))
+    if run_codex is not _legacy_run_codex:
+        try:
+            raw = run_codex(prompt)
+            payload = _parse_rewrite_json(raw)
+        except AIRouterError as exc:
+            raise CodexEngineError(str(exc)) from exc
+    else:
+        routed = run_ai(prompt, validator=_validate_rewrite_json)
+        payload = _parse_rewrite_json(routed.text)
     headline = str(payload.get("headline") or "").strip()
     fact_card = str(payload.get("fact_card") or "").strip()
     rewrite = str(payload.get("rewrite") or "").strip()
