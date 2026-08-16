@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..ai_provider_diagnostics_v1_2_1 import ProviderDiagnostic, test_configured_providers
-from ..ai_router_v1_2_1 import save_provider_secrets
+from ..ai_router_v1_2_1 import save_provider_secrets, test_ai_router
 from .v1_2_rc9_window import MainWindow as RC9Window
 
 
@@ -28,14 +28,14 @@ _STATUS_MARKS: dict[str, tuple[str, str]] = {
 
 
 class MainWindow(RC9Window):
-    """v1.2.1 RC4 window with explicit health checks for every AI provider."""
+    """v1.2.1 RC5 window with one unambiguous AI Router test and provider health marks."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self._provider_indicator_widgets: dict[str, list[tuple[ttk.Label, str]]] = {}
         self._provider_diagnostics: dict[str, ProviderDiagnostic] = {}
         super().__init__(*args, **kwargs)
         self._install_provider_diagnostics_ui()
-        self.root.title("UA FREE Content Tool — v1.2.1 RC4 · AI Router diagnostics")
+        self.root.title("UA FREE Content Tool — v1.2.1 RC5 · AI Router diagnostics")
 
     def _find_ai_router_frame(self) -> ttk.LabelFrame | None:
         notebook = getattr(self, "notebook", None)
@@ -60,7 +60,7 @@ class MainWindow(RC9Window):
             return
 
         label_lookup: dict[str, ttk.Label] = {}
-        action_parent: tk.Misc | None = None
+        test_button: ttk.Button | None = None
         local_checkbutton: ttk.Checkbutton | None = None
         stack = list(frame.winfo_children())
         while stack:
@@ -75,7 +75,7 @@ class MainWindow(RC9Window):
             elif isinstance(widget, ttk.Button):
                 try:
                     if str(widget.cget("text")) == "Тест AI Router":
-                        action_parent = widget.master
+                        test_button = widget
                 except tk.TclError:
                     pass
             elif isinstance(widget, ttk.Checkbutton):
@@ -98,12 +98,8 @@ class MainWindow(RC9Window):
         self._local_diagnostic_checkbutton = local_checkbutton
         self._local_diagnostic_base_text = "Локальний аварійний AI"
 
-        if action_parent is not None:
-            ttk.Button(
-                action_parent,
-                text="Перевірити всі AI-провайдери",
-                command=self.test_all_ai_providers_ui,
-            ).pack(side="left", padx=(16, 0))
+        if test_button is not None:
+            test_button.configure(command=self.test_ai_router_ui)
 
         self._reset_provider_indicators()
 
@@ -154,6 +150,11 @@ class MainWindow(RC9Window):
         super().save_ai_provider_settings()
         self._reset_provider_indicators()
 
+    def clear_ai_router_cooldowns_ui(self) -> None:
+        super().clear_ai_router_cooldowns_ui()
+        if self._provider_diagnostics:
+            self.refresh_ai_component_status()
+
     def refresh_ai_component_status(self) -> None:
         super().refresh_ai_component_status()
         if not self._provider_diagnostics:
@@ -164,7 +165,7 @@ class MainWindow(RC9Window):
         warning_count = sum(row.status == "warning" for row in rows)
         current = self.ai_router_status_var.get()
         self.ai_router_status_var.set(
-            f"{current} · перевірка провайдерів: ✓ {ok_count}"
+            f"{current} · ключі: ✓ {ok_count}"
             + (f" · ✗ {error_count}" if error_count else "")
             + (f" · ⚠ {warning_count}" if warning_count else "")
         )
@@ -181,18 +182,19 @@ class MainWindow(RC9Window):
                 self._set_provider_indicator(row.provider, row.status)
         self.refresh_ai_component_status()
 
+    def _provider_diagnostic_summary(self, rows: list[ProviderDiagnostic]) -> str:
         checked = [row for row in rows if row.status != "unconfigured"]
-        problems = [row for row in checked if row.status in {"error", "warning"}]
         if not checked:
-            self.set_status("AI-провайдери не налаштовані.")
-            return
-        summary = f"Перевірено AI-провайдерів: {len(checked)} · працює {sum(row.status == 'ok' for row in checked)}"
+            return "AI-провайдери не налаштовані"
+        ok_count = sum(row.status == "ok" for row in checked)
+        problems = [row for row in checked if row.status in {"error", "warning"}]
+        summary = f"Ключі перевірено: {len(checked)} · працює {ok_count}"
         if problems:
-            first = problems[0]
-            summary += f" · {first.label}: {first.detail}"
-        self.set_status(summary)
+            details = "; ".join(f"{row.label}: {row.detail}" for row in problems[:3])
+            summary += f" · проблеми: {details}"
+        return summary
 
-    def test_all_ai_providers_ui(self) -> None:
+    def test_ai_router_ui(self) -> None:
         try:
             save_provider_secrets(self._provider_secrets_from_ui())
         except Exception as exc:
@@ -205,15 +207,36 @@ class MainWindow(RC9Window):
                 provider,
                 "testing" if self._provider_is_configured_in_ui(provider) else "unconfigured",
             )
-        self.set_status("Перевіряю кожен налаштований AI-провайдер окремо…")
+        self.set_status("Перевіряю всі AI-провайдери, потім сам пріоритетний ланцюг…")
+
+        def action() -> object:
+            rows = test_configured_providers()
+            try:
+                router_result = test_ai_router()
+                router_ok = True
+            except Exception as exc:
+                router_result = f"AI Router не пройшов контрольний виклик: {exc}"
+                router_ok = False
+            return rows, router_result, router_ok
 
         def success(result: object) -> None:
-            rows = [row for row in list(result) if isinstance(row, ProviderDiagnostic)] if isinstance(result, list) else []
+            try:
+                rows_raw, router_result, router_ok = result  # type: ignore[misc]
+            except Exception:
+                self.set_status(f"Неправильний результат діагностики: {result}")
+                return
+            rows = [row for row in list(rows_raw) if isinstance(row, ProviderDiagnostic)]
             self._apply_provider_diagnostics(rows)
+            summary = self._provider_diagnostic_summary(rows)
+            route_mark = "✓" if bool(router_ok) else "✗"
+            self.set_status(f"{summary} · {route_mark} {router_result}")
 
         self.run_async(
-            test_configured_providers,
+            action,
             success,
-            label="AI Router: перевіряю всі провайдери окремо",
-            done_label="Перевірку AI-провайдерів завершено",
+            label="AI Router: перевіряю всі ключі та failover",
+            done_label="AI Router і ключі перевірено",
         )
+
+    def test_all_ai_providers_ui(self) -> None:
+        self.test_ai_router_ui()
