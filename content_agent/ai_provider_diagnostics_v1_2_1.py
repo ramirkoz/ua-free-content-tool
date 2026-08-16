@@ -26,10 +26,7 @@ PROVIDER_LABELS: dict[str, str] = {
     "codex": "Codex / ChatGPT",
     "gemini": "Google Gemini",
     "nvidia": "NVIDIA NIM",
-    "sambanova": "SambaNova",
-    "cerebras": "Cerebras",
     "groq": "Groq",
-    "openrouter": "OpenRouter",
     "cloudflare": "Cloudflare",
     "local": "Локальний AI",
 }
@@ -56,7 +53,7 @@ def _status_for_error(error: AIModelError) -> str:
 
 
 def test_configured_providers() -> list[ProviderDiagnostic]:
-    """Test every configured provider independently without changing router cooldown state.
+    """Test every production provider independently without changing cooldown state.
 
     Multi-model providers are considered healthy when any configured model responds to the
     control prompt. Authentication/configuration failures stop immediately; model-specific
