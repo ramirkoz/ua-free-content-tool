@@ -1,4 +1,4 @@
-name: Build Windows v1.2.1 RC1 clean
+name: Build Windows v1.2.1 RC2 clean
 
 on:
   workflow_dispatch:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  windows-v121-rc1:
+  windows-v121-rc2:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact v1.2.1 RC1 commit
+      - name: Checkout exact v1.2.1 RC2 commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -37,14 +37,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "from content_agent.comment_compat_v1_2_rc3 import CompatibleTelegramPublisher; from content_agent.threads_comments_v1_2_rc3 import CommentedThreadsPublisher; from content_agent.target_presets_v1_2_1 import TargetPresetState; from content_agent.ui.v1_2_rc8_window import MainWindow; print('V121_RC1_SOURCE_GATE_OK')"
-          if ($LASTEXITCODE -ne 0) { throw "v1.2.1 imports failed" }
+          python -c "from content_agent.ai_router_v1_2_1 import MODEL_SLOTS, AIProviderSecrets; from content_agent.comment_compat_v1_2_rc3 import CompatibleTelegramPublisher; from content_agent.threads_comments_v1_2_rc3 import CommentedThreadsPublisher; from content_agent.target_presets_v1_2_1 import TargetPresetState; from content_agent.ui.v1_2_rc9_window import MainWindow; assert len(MODEL_SLOTS) >= 17; print('V121_RC2_SOURCE_GATE_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "v1.2.1 RC2 imports failed" }
 
       - name: Stamp RC version
         shell: pwsh
         run: |
-          "1.2.1-rc1" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
-          "1.2.1-rc1" | Set-Content VERSION.txt -Encoding ascii
+          "1.2.1-rc2" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
+          "1.2.1-rc2" | Set-Content VERSION.txt -Encoding ascii
 
       - name: Build portable runtime
         shell: cmd
@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc1\UA_FREE_Content_Tool").Path
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc2\UA_FREE_Content_Tool").Path
           $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
           if (-not (Test-Path $exe)) { throw "Launcher missing" }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc1\UA_FREE_Content_Tool").Path
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc2\UA_FREE_Content_Tool").Path
           $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
           if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
           & $mp -Scan -ScanType 3 -File $root
@@ -77,17 +77,20 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = "Release\UA_FREE_Content_Tool_v1.2.1-rc1\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.2.1-rc1_Windows_Portable.zip"
+          $root = "Release\UA_FREE_Content_Tool_v1.2.1-rc2\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v1.2.1-rc2_Windows_Portable.zip"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
           @'
           import sys, zipfile
           archive = sys.argv[1]
           required = {
+              "content_agent/ai_router_v1_2_1.py",
+              "content_agent/codex_news_v1_3.py",
+              "content_agent/ui/ai_engine_v1_3.py",
+              "content_agent/ui/v1_2_rc9_window.py",
               "content_agent/comment_compat_v1_2_rc3.py",
               "content_agent/threads_comments_v1_2_rc3.py",
               "content_agent/target_presets_v1_2_1.py",
-              "content_agent/ui/v1_2_rc8_window.py",
               "content_agent/main.py",
           }
           with zipfile.ZipFile(archive) as package:
@@ -95,26 +98,26 @@ jobs:
               assert package.testzip() is None, "CRC validation failed"
               assert len(names) == len(set(names)), "duplicate ZIP paths"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
-              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.1-rc1"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.1-rc2"
               missing = required.difference(names)
               assert not missing, sorted(missing)
               forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log"))]
               assert not forbidden, forbidden[:10]
-          print("V121_RC1_ZIP_VALIDATION_OK")
-          '@ | Set-Content validate_v121_rc1_zip.py -Encoding utf8
-          python validate_v121_rc1_zip.py $zip
+          print("V121_RC2_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_v121_rc2_zip.py -Encoding utf8
+          python validate_v121_rc2_zip.py $zip
           if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
-          Remove-Item validate_v121_rc1_zip.py
+          Remove-Item validate_v121_rc2_zip.py
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v1.2.1-rc1_SHA256.txt" -Encoding ascii
+          "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v1.2.1-rc2_SHA256.txt" -Encoding ascii
 
       - name: Upload test portable
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.2.1_RC1_FINAL
+          name: UA_FREE_Content_Tool_v1.2.1_RC2_AI_ROUTER
           path: |
-            UA_FREE_Content_Tool_v1.2.1-rc1_Windows_Portable.zip
-            UA_FREE_Content_Tool_v1.2.1-rc1_SHA256.txt
+            UA_FREE_Content_Tool_v1.2.1-rc2_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.2.1-rc2_SHA256.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
