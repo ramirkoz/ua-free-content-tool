@@ -3,13 +3,17 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from ..codex_engine_v1_3 import (
-    CodexEngineError,
-    inspect_codex,
-    install_codex,
-    login_chatgpt,
-    test_codex,
+from ..ai_router_v1_2_1 import (
+    AIProviderSecrets,
+    AIRouterError,
+    clear_router_cooldowns,
+    last_ai_result_label,
+    load_provider_secrets,
+    router_overview,
+    save_provider_secrets,
+    test_ai_router,
 )
+from ..codex_engine_v1_3 import inspect_codex, install_codex, login_chatgpt
 from ..codex_news_v1_3 import rewrite_group_with_codex, run_topic_prompt_with_codex
 from ..editorial_memory import rank_editorial_examples, rank_topic_candidates
 from ..models import RewriteResult
@@ -53,46 +57,150 @@ class AIEngineV13Mixin:
             return
         parent = target.master
         target.destroy()
-        frame = ttk.LabelFrame(parent, text="1. AI та редакційна пам’ять", padding=10)
+        frame = ttk.LabelFrame(parent, text="1. AI Router та редакційна пам’ять", padding=10)
         children = [child for child in parent.winfo_children() if child is not frame]
         pack_options: dict[str, object] = {"fill": "x", "pady": (0, 8)}
         if children:
             pack_options["before"] = children[0]
         frame.pack(**pack_options)
         frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
 
+        self.ai_router_status_var = tk.StringVar(value="AI Router: перевірка не виконувалась")
         self.codex_status_var = tk.StringVar(value="Codex: перевірка не виконувалась")
         self.rowboat_status_var = tk.StringVar(value="Rowboat: перевірка не виконувалась")
         self.memory_graph_status_var = tk.StringVar(value="Редакційна пам’ять: готова до синхронізації")
 
-        ttk.Label(frame, text="Codex / ChatGPT", font="TkHeadingFont").grid(row=0, column=0, sticky="w")
-        ttk.Label(frame, textvariable=self.codex_status_var, foreground="#555").grid(row=0, column=1, columnspan=4, sticky="w", padx=(10, 0))
-        ttk.Button(frame, text="Перевірити Codex", command=self.check_codex_ui).grid(row=1, column=0, padx=(0, 6), pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Встановити / відновити Codex", command=self.install_codex_ui).grid(row=1, column=1, padx=6, pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Увійти через ChatGPT", command=self.login_codex_ui).grid(row=1, column=2, padx=6, pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Тест AI", command=self.test_codex_ui).grid(row=1, column=3, padx=6, pady=(6, 4), sticky="w")
-
-        ttk.Separator(frame, orient="horizontal").grid(row=2, column=0, columnspan=5, sticky="ew", pady=8)
-        ttk.Label(frame, text="Rowboat / локальний граф пам’яті", font="TkHeadingFont").grid(row=3, column=0, sticky="w")
-        ttk.Label(frame, textvariable=self.rowboat_status_var, foreground="#555").grid(row=3, column=1, columnspan=4, sticky="w", padx=(10, 0))
-        ttk.Button(frame, text="Знайти Rowboat", command=self.check_rowboat_ui).grid(row=4, column=0, padx=(0, 6), pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Встановити Rowboat", command=self.install_rowboat_ui).grid(row=4, column=1, padx=6, pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Відкрити Rowboat", command=self.open_rowboat_ui).grid(row=4, column=2, padx=6, pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Синхронізувати пам’ять", command=self.sync_memory_ui).grid(row=4, column=3, padx=6, pady=(6, 4), sticky="w")
-        ttk.Button(frame, text="Відкрити папку пам’яті", command=self.open_memory_ui).grid(row=4, column=4, padx=(6, 0), pady=(6, 4), sticky="w")
-        ttk.Label(frame, textvariable=self.memory_graph_status_var, foreground="#555").grid(row=5, column=0, columnspan=5, sticky="w", pady=(4, 0))
+        ttk.Label(frame, text="AI Router · автоматичний пріоритет", font="TkHeadingFont").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.ai_router_status_var, foreground="#555").grid(
+            row=0, column=1, columnspan=4, sticky="w", padx=(10, 0)
+        )
         ttk.Label(
             frame,
             text=(
-                "Ollama більше не використовується. Codex виконує рерайт і семантичний аналіз; "
-                "редакційна пам’ять зберігається локально у Markdown-графі."
+                "Будь-яка AI-задача йде через один ланцюг: найякісніша доступна модель → наступна при quota/429/timeout/поганій відповіді. "
+                "Недоступні моделі отримують cooldown і перевіряються знову автоматично."
             ),
-            wraplength=1050,
+            wraplength=1120,
             foreground="#555",
-        ).grid(row=6, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(4, 7))
+
+        try:
+            secrets = load_provider_secrets()
+        except AIRouterError:
+            secrets = AIProviderSecrets()
+        self.ai_provider_vars = {
+            "nvidia_api_key": tk.StringVar(value=secrets.nvidia_api_key),
+            "gemini_api_key": tk.StringVar(value=secrets.gemini_api_key),
+            "sambanova_api_key": tk.StringVar(value=secrets.sambanova_api_key),
+            "cerebras_api_key": tk.StringVar(value=secrets.cerebras_api_key),
+            "groq_api_key": tk.StringVar(value=secrets.groq_api_key),
+            "openrouter_api_key": tk.StringVar(value=secrets.openrouter_api_key),
+            "cloudflare_account_id": tk.StringVar(value=secrets.cloudflare_account_id),
+            "cloudflare_api_token": tk.StringVar(value=secrets.cloudflare_api_token),
+            "local_base_url": tk.StringVar(value=secrets.local_base_url),
+            "local_model": tk.StringVar(value=secrets.local_model),
+        }
+        self.ai_local_enabled_var = tk.BooleanVar(value=secrets.local_enabled)
+
+        rows = [
+            ("NVIDIA NIM API Key", "nvidia_api_key", True),
+            ("Google Gemini API Key", "gemini_api_key", True),
+            ("SambaNova API Key", "sambanova_api_key", True),
+            ("Cerebras API Key", "cerebras_api_key", True),
+            ("Groq API Key", "groq_api_key", True),
+            ("OpenRouter API Key", "openrouter_api_key", True),
+        ]
+        for index, (label, key, secret) in enumerate(rows, start=2):
+            column = 0 if index < 5 else 2
+            row = index if index < 5 else index - 3
+            ttk.Label(frame, text=label).grid(row=row, column=column, sticky="w", pady=2)
+            ttk.Entry(
+                frame,
+                textvariable=self.ai_provider_vars[key],
+                show="•" if secret else "",
+                width=46,
+            ).grid(row=row, column=column + 1, sticky="ew", padx=(8, 14), pady=2)
+
+        ttk.Label(frame, text="Cloudflare Account ID").grid(row=5, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.ai_provider_vars["cloudflare_account_id"], width=46).grid(
+            row=5, column=1, sticky="ew", padx=(8, 14), pady=2
+        )
+        ttk.Label(frame, text="Cloudflare API Token").grid(row=5, column=2, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.ai_provider_vars["cloudflare_api_token"], show="•", width=46).grid(
+            row=5, column=3, sticky="ew", padx=(8, 14), pady=2
+        )
+
+        ttk.Checkbutton(frame, text="Локальний аварійний AI", variable=self.ai_local_enabled_var).grid(
+            row=6, column=0, sticky="w", pady=(4, 2)
+        )
+        ttk.Entry(frame, textvariable=self.ai_provider_vars["local_base_url"], width=46).grid(
+            row=6, column=1, sticky="ew", padx=(8, 14), pady=2
+        )
+        ttk.Label(frame, text="Модель").grid(row=6, column=2, sticky="e", pady=2)
+        ttk.Entry(frame, textvariable=self.ai_provider_vars["local_model"], width=28).grid(
+            row=6, column=3, sticky="ew", padx=(8, 14), pady=2
+        )
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=7, column=0, columnspan=5, sticky="w", pady=(7, 4))
+        ttk.Button(actions, text="Зберегти AI-провайдери", command=self.save_ai_provider_settings).pack(side="left")
+        ttk.Button(actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(16, 0))
+        ttk.Button(actions, text="Увійти через ChatGPT", command=self.login_codex_ui).pack(side="left", padx=(6, 0))
+
+        ttk.Label(frame, textvariable=self.codex_status_var, foreground="#555").grid(
+            row=8, column=0, columnspan=5, sticky="w", pady=(2, 5)
+        )
+        ttk.Separator(frame, orient="horizontal").grid(row=9, column=0, columnspan=5, sticky="ew", pady=6)
+        ttk.Label(frame, text="Rowboat / локальний граф пам’яті", font="TkHeadingFont").grid(row=10, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.rowboat_status_var, foreground="#555").grid(
+            row=10, column=1, columnspan=4, sticky="w", padx=(10, 0)
+        )
+        rowboat_actions = ttk.Frame(frame)
+        rowboat_actions.grid(row=11, column=0, columnspan=5, sticky="w", pady=(5, 2))
+        ttk.Button(rowboat_actions, text="Знайти Rowboat", command=self.check_rowboat_ui).pack(side="left")
+        ttk.Button(rowboat_actions, text="Встановити Rowboat", command=self.install_rowboat_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(rowboat_actions, text="Відкрити Rowboat", command=self.open_rowboat_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(rowboat_actions, text="Синхронізувати пам’ять", command=self.sync_memory_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(rowboat_actions, text="Відкрити папку пам’яті", command=self.open_memory_ui).pack(side="left", padx=(6, 0))
+        ttk.Label(frame, textvariable=self.memory_graph_status_var, foreground="#555").grid(
+            row=12, column=0, columnspan=5, sticky="w", pady=(4, 0)
+        )
+
+    def _provider_secrets_from_ui(self) -> AIProviderSecrets:
+        values = self.ai_provider_vars
+        return AIProviderSecrets(
+            gemini_api_key=values["gemini_api_key"].get(),
+            nvidia_api_key=values["nvidia_api_key"].get(),
+            sambanova_api_key=values["sambanova_api_key"].get(),
+            cerebras_api_key=values["cerebras_api_key"].get(),
+            groq_api_key=values["groq_api_key"].get(),
+            openrouter_api_key=values["openrouter_api_key"].get(),
+            cloudflare_account_id=values["cloudflare_account_id"].get(),
+            cloudflare_api_token=values["cloudflare_api_token"].get(),
+            local_enabled=self.ai_local_enabled_var.get(),
+            local_base_url=values["local_base_url"].get(),
+            local_model=values["local_model"].get(),
+        )
+
+    def save_ai_provider_settings(self) -> None:
+        try:
+            save_provider_secrets(self._provider_secrets_from_ui())
+        except Exception as exc:
+            self._show_error(exc)  # type: ignore[attr-defined]
+            return
+        self.refresh_ai_component_status()
+        self.set_status("AI-провайдери збережено. Cooldown скинуто.")  # type: ignore[attr-defined]
+
+    def clear_ai_router_cooldowns_ui(self) -> None:
+        clear_router_cooldowns()
+        self.refresh_ai_component_status()
+        self.set_status("Cooldown AI Router скинуто.")  # type: ignore[attr-defined]
 
     def refresh_ai_component_status(self) -> None:
-        if not hasattr(self, "codex_status_var"):
+        if not hasattr(self, "ai_router_status_var"):
             return
         codex = inspect_codex()
         if not codex.installed:
@@ -102,11 +210,37 @@ class AIEngineV13Mixin:
             self.codex_status_var.set(f"Codex {codex.version}: готовий{suffix}")
         else:
             self.codex_status_var.set(f"Codex {codex.version}: потрібен вхід через ChatGPT")
+        try:
+            rows = router_overview()
+            configured = [row for row in rows if row["configured"]]
+            healthy = [row for row in configured if not row["cooldown_seconds"]]
+            cooldown = len(configured) - len(healthy)
+            self.ai_router_status_var.set(
+                f"AI Router: підключено {len(configured)} слотів · доступно зараз {len(healthy)}"
+                + (f" · cooldown {cooldown}" if cooldown else "")
+                + f" · останній: {last_ai_result_label()}"
+            )
+        except Exception as exc:
+            self.ai_router_status_var.set(f"AI Router: {exc}")
         rowboat = inspect_rowboat()
         self.rowboat_status_var.set(
             f"Rowboat: знайдено · {rowboat.executable}" if rowboat.installed else "Rowboat: не знайдено"
         )
         self.memory_graph_status_var.set(f"Пам’ять: {rowboat.memory_root}")
+
+    def test_ai_router_ui(self) -> None:
+        self.save_ai_provider_settings()
+
+        def success(result: object) -> None:
+            self.refresh_ai_component_status()
+            self.set_status(str(result))  # type: ignore[attr-defined]
+
+        self.run_async(  # type: ignore[attr-defined]
+            test_ai_router,
+            success,
+            label="AI Router: перевіряю пріоритетний ланцюг",
+            done_label="AI Router перевірено",
+        )
 
     def check_codex_ui(self) -> None:
         self.refresh_ai_component_status()
@@ -114,21 +248,22 @@ class AIEngineV13Mixin:
 
     def install_codex_ui(self) -> None:
         def success(_result: object) -> None:
+            clear_router_cooldowns()
             self.refresh_ai_component_status()
             self.set_status("Codex встановлено / відновлено.")  # type: ignore[attr-defined]
+
         self.run_async(install_codex, success, label="Встановлюю Codex", done_label="Codex встановлено")  # type: ignore[attr-defined]
 
     def login_codex_ui(self) -> None:
         def success(_result: object) -> None:
+            clear_router_cooldowns()
             self.refresh_ai_component_status()
-            self.set_status("Вхід через ChatGPT завершено. Codex готовий.")  # type: ignore[attr-defined]
+            self.set_status("Вхід через ChatGPT завершено. Codex знову доступний для AI Router.")  # type: ignore[attr-defined]
+
         self.run_async(login_chatgpt, success, label="Очікую вхід через ChatGPT", done_label="Codex авторизовано")  # type: ignore[attr-defined]
 
     def test_codex_ui(self) -> None:
-        def success(result: object) -> None:
-            self.refresh_ai_component_status()
-            self.set_status(str(result))  # type: ignore[attr-defined]
-        self.run_async(test_codex, success, label="Перевіряю Codex", done_label="Codex відповідає")  # type: ignore[attr-defined]
+        self.test_ai_router_ui()
 
     def check_rowboat_ui(self) -> None:
         self.refresh_ai_component_status()
@@ -144,6 +279,7 @@ class AIEngineV13Mixin:
         def success(result: object) -> None:
             self.refresh_ai_component_status()
             self.set_status(f"Rowboat встановлено: {result}")  # type: ignore[attr-defined]
+
         self.run_async(install_rowboat, success, label="Завантажую та встановлюю Rowboat", done_label="Rowboat встановлено")  # type: ignore[attr-defined]
 
     def open_rowboat_ui(self) -> None:
@@ -155,11 +291,13 @@ class AIEngineV13Mixin:
     def sync_memory_ui(self) -> None:
         def action() -> object:
             return sync_editorial_memory(self.db)  # type: ignore[attr-defined]
+
         def success(result: object) -> None:
             values = dict(result) if isinstance(result, dict) else {}
             self.memory_graph_status_var.set(
                 f"Пам’ять синхронізовано: прикладів {values.get('examples', 0)}, рішень {values.get('decisions', 0)}."
             )
+
         self.run_async(action, success, label="Синхронізую редакційну пам’ять", done_label="Пам’ять синхронізовано")  # type: ignore[attr-defined]
 
     def open_memory_ui(self) -> None:
@@ -202,25 +340,27 @@ class AIEngineV13Mixin:
                 rewrite_text=rewrite_result.rewrite,
                 platform_texts=rewrite_result.platform_texts,
             )
+            engine = last_ai_result_label()
             if config.learning_enabled:
                 self.db.record_learning_event(  # type: ignore[attr-defined]
                     "rewrite_generated",
                     language=config.ui_language,
                     group_id=group.id,
-                    payload={"model": "codex-chatgpt", "fallback": False, "examples": example_count},
+                    payload={"model": engine, "fallback": engine != "Codex / ChatGPT", "examples": example_count},
                 )
             self.refresh_groups()  # type: ignore[attr-defined]
             self.update_text_metrics()  # type: ignore[attr-defined]
+            self.refresh_ai_component_status()
             self.set_status(  # type: ignore[attr-defined]
-                f"Рерайт створено через Codex / ChatGPT · джерел {rewrite_result.source_count_used} із {rewrite_result.source_count_total}"
+                f"Рерайт створено · AI: {engine} · джерел {rewrite_result.source_count_used} із {rewrite_result.source_count_total}"
                 f" · прикладів пам’яті {example_count}"
             )
 
         self.run_async(  # type: ignore[attr-defined]
             action,
             success,
-            label=f"Рерайт через Codex: {group.source_count} джерел",
-            done_label="Рерайт Codex завершено",
+            label=f"AI Router: рерайт {group.source_count} джерел",
+            done_label="AI-рерайт завершено",
         )
 
     def find_all_by_topic(self) -> None:
@@ -246,7 +386,7 @@ class AIEngineV13Mixin:
             return
         rows_by_id = {int(row["group_id"]): row for row in candidate_rows}
         shortlisted = [rows_by_id[item.group_id] for item in local_candidates if item.group_id in rows_by_id]
-        self.topic_search_status_var.set(f"Codex перевіряє {len(shortlisted)} кандидатів…")  # type: ignore[attr-defined]
+        self.topic_search_status_var.set(f"AI Router перевіряє {len(shortlisted)} кандидатів…")  # type: ignore[attr-defined]
 
         def action() -> object:
             sync_editorial_memory(self.db)  # type: ignore[attr-defined]
@@ -268,10 +408,13 @@ class AIEngineV13Mixin:
                 row = rows_by_id.get(match.group_id)
                 if row is not None:
                     candidate_data.append({**row, "score": match.score, "reason": match.reason})
+            self.refresh_ai_component_status()
             if not candidate_data:
                 self.topic_search_status_var.set(self.t("Схожих матеріалів для об’єднання не знайдено."))  # type: ignore[attr-defined]
                 return
-            self.topic_search_status_var.set(f"Кандидатів на об’єднання: {len(candidate_data)}")  # type: ignore[attr-defined]
+            self.topic_search_status_var.set(
+                f"Кандидатів на об’єднання: {len(candidate_data)} · AI: {last_ai_result_label()}"
+            )  # type: ignore[attr-defined]
             TopicCandidatesDialog(
                 self.root,  # type: ignore[attr-defined]
                 anchor_id=anchor_id,
@@ -284,6 +427,6 @@ class AIEngineV13Mixin:
         self.run_async(  # type: ignore[attr-defined]
             action,
             success,
-            label=f"Codex аналізує схожість: {len(shortlisted)} кандидатів",
+            label=f"AI Router аналізує схожість: {len(shortlisted)} кандидатів",
             done_label="Пошук схожих завершено",
         )

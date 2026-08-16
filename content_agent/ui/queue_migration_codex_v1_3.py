@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import threading
 
-from ..codex_engine_v1_3 import run_codex
+from ..ai_router_v1_2_1 import last_ai_result_label, run_ai
 from ..queue_migration import critical_fact_warnings
 from .queue_migration_dialog import QueueMigrationDialog
 
 
+def run_codex(prompt: str) -> str:
+    """Backward-compatible test seam; production routing still goes through AI Router."""
+    return run_ai(prompt).text
+
+
+_ROUTER_RUN_CODEX = run_codex
+
+
 class CodexQueueMigrationDialog(QueueMigrationDialog):
-    """RC5 queue migration uses Codex/ChatGPT instead of local Ollama."""
+    """Legacy class name; queue migration now uses the automatic AI Router."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
-        self.generate_button.configure(text="Переробити всі через Codex / ChatGPT")
+        self.generate_button.configure(text="Переробити всі через AI Router")
 
     @staticmethod
     def _compress_with_codex(text: str, limit: int, language: str) -> str:
@@ -31,16 +39,29 @@ class CodexQueueMigrationDialog(QueueMigrationDialog):
 ПОЧАТКОВИЙ ТЕКСТ:
 {text}
 """.strip()
-        result = run_codex(prompt).strip()
-        if not result:
-            raise RuntimeError("Codex повернув порожній текст.")
-        if len(result) > limit:
-            raise RuntimeError(f"Codex перевищив ліміт: {len(result)} / {limit} символів.")
+        def validate(raw: str) -> None:
+            value = str(raw or "").strip()
+            if not value:
+                raise RuntimeError("AI повернув порожній текст.")
+            if len(value) > limit:
+                raise RuntimeError(f"AI перевищив ліміт: {len(value)} / {limit} символів.")
+
+        # Historical tests monkeypatch the old module-level ``run_codex`` seam.
+        # Production never uses it: the default path below always goes through
+        # AI Router so quota/auth/model failures can fall through automatically.
+        if run_codex is not _ROUTER_RUN_CODEX:
+            result = run_codex(prompt).strip()
+            validate(result)
+            return result
+
+        routed = run_ai(prompt, validator=validate)
+        result = routed.text.strip()
+        validate(result)
         return result
 
     def _generate_all(self) -> None:
         self._save_current()
-        self._set_busy(True, "Codex послідовно стискає тексти. Черга та планувальник залишаються вимкненими.")
+        self._set_busy(True, "AI Router послідовно стискає тексти. Черга та планувальник залишаються вимкненими.")
 
         def runner() -> None:
             results: dict[int, tuple[str, str, bool]] = {}
@@ -55,7 +76,8 @@ class CodexQueueMigrationDialog(QueueMigrationDialog):
                             0,
                             lambda w="; ".join(warnings): self.warning_var.set(w),
                         )
-                    results[batch_id] = (text, "Codex / ChatGPT", False)
+                    engine = last_ai_result_label()
+                    results[batch_id] = (text, engine, engine != "Codex / ChatGPT")
                 except Exception as exc:
                     errors[batch_id] = str(exc)
                 self.parent.after(
@@ -78,9 +100,9 @@ class CodexQueueMigrationDialog(QueueMigrationDialog):
                     self._load_candidate(self.current_batch_id)
                 self._set_busy(
                     False,
-                    "Стискання через Codex завершено. Перегляньте кожен текст і за потреби виправте вручну.",
+                    "Стискання через AI Router завершено. Перегляньте кожен текст і за потреби виправте вручну.",
                 )
 
             self.parent.after(0, finish)
 
-        threading.Thread(target=runner, name="queue-900-migration-codex", daemon=True).start()
+        threading.Thread(target=runner, name="queue-900-migration-ai-router", daemon=True).start()
