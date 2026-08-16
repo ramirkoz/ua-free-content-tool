@@ -194,6 +194,18 @@ class MainWindow(RC9Window):
             summary += f" · проблеми: {details}"
         return summary
 
+    def _provider_diagnostic_report(self, rows: list[ProviderDiagnostic], router_result: object, router_ok: bool) -> str:
+        lines: list[str] = []
+        for row in rows:
+            mark, _color = _STATUS_MARKS.get(row.status, _STATUS_MARKS["unconfigured"])
+            if row.status == "unconfigured":
+                lines.append(f"{mark} {row.label} — не налаштовано")
+            else:
+                lines.append(f"{mark} {row.label} — {row.detail}")
+        lines.append("")
+        lines.append(("✓ " if router_ok else "✗ ") + str(router_result))
+        return "\n".join(lines)
+
     def test_ai_router_ui(self) -> None:
         try:
             save_provider_secrets(self._provider_secrets_from_ui())
@@ -230,6 +242,11 @@ class MainWindow(RC9Window):
             summary = self._provider_diagnostic_summary(rows)
             route_mark = "✓" if bool(router_ok) else "✗"
             self.set_status(f"{summary} · {route_mark} {router_result}")
+            self.msg.showinfo(
+                "AI Router — результати перевірки",
+                self._provider_diagnostic_report(rows, router_result, bool(router_ok)),
+                parent=self.root,
+            )
 
         self.run_async(
             action,
