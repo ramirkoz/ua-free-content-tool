@@ -1,4 +1,4 @@
-name: Build Windows v1.2.1 RC4 clean
+name: Build Windows v1.2.1 RC5 clean
 
 on:
   workflow_dispatch:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  windows-v121-rc4:
+  windows-v121-rc5:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact v1.2.1 RC4 commit
+      - name: Checkout exact v1.2.1 RC5 commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -37,14 +37,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "from content_agent.ai_router_v1_2_1 import MODEL_SLOTS; from content_agent.ai_provider_diagnostics_v1_2_1 import ProviderDiagnostic, test_configured_providers; from content_agent.global_duplicates_v1_3_rc6 import find_global_duplicate_clusters; from content_agent.ui.v1_2_rc10_window import MainWindow; assert len(MODEL_SLOTS) >= 17; print('V121_RC4_SOURCE_GATE_OK')"
-          if ($LASTEXITCODE -ne 0) { throw "v1.2.1 RC4 imports failed" }
+          python -c "from content_agent.ai_router_v1_2_1 import MODEL_SLOTS; from content_agent.ai_provider_diagnostics_v1_2_1 import ProviderDiagnostic, test_configured_providers; from content_agent.global_duplicates_v1_3_rc6 import find_global_duplicate_clusters; from content_agent.ui.v1_2_rc10_window import MainWindow; assert len(MODEL_SLOTS) >= 17; print('V121_RC5_SOURCE_GATE_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "v1.2.1 RC5 imports failed" }
 
       - name: Stamp RC version
         shell: pwsh
         run: |
-          "1.2.1-rc4" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
-          "1.2.1-rc4" | Set-Content VERSION.txt -Encoding ascii
+          "1.2.1-rc5" | Set-Content PUBLIC_VERSION.txt -Encoding ascii
+          "1.2.1-rc5" | Set-Content VERSION.txt -Encoding ascii
 
       - name: Build portable runtime
         shell: cmd
@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc4\UA_FREE_Content_Tool").Path
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc5\UA_FREE_Content_Tool").Path
           $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
           if (-not (Test-Path $exe)) { throw "Launcher missing" }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc4\UA_FREE_Content_Tool").Path
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.2.1-rc5\UA_FREE_Content_Tool").Path
           $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
           if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
           & $mp -Scan -ScanType 3 -File $root
@@ -77,8 +77,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = "Release\UA_FREE_Content_Tool_v1.2.1-rc4\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.2.1-rc4_Windows_Portable.zip"
+          $root = "Release\UA_FREE_Content_Tool_v1.2.1-rc5\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v1.2.1-rc5_Windows_Portable.zip"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
           @'
           import sys, zipfile
@@ -102,26 +102,26 @@ jobs:
               assert package.testzip() is None, "CRC validation failed"
               assert len(names) == len(set(names)), "duplicate ZIP paths"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
-              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.1-rc4"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.2.1-rc5"
               missing = required.difference(names)
               assert not missing, sorted(missing)
               forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log"))]
               assert not forbidden, forbidden[:10]
-          print("V121_RC4_ZIP_VALIDATION_OK")
-          '@ | Set-Content validate_v121_rc4_zip.py -Encoding utf8
-          python validate_v121_rc4_zip.py $zip
+          print("V121_RC5_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_v121_rc5_zip.py -Encoding utf8
+          python validate_v121_rc5_zip.py $zip
           if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
-          Remove-Item validate_v121_rc4_zip.py
+          Remove-Item validate_v121_rc5_zip.py
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v1.2.1-rc4_SHA256.txt" -Encoding ascii
+          "$hash  $zip" | Set-Content "UA_FREE_Content_Tool_v1.2.1-rc5_SHA256.txt" -Encoding ascii
 
       - name: Upload test portable
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.2.1_RC4_PROVIDER_DIAGNOSTICS
+          name: UA_FREE_Content_Tool_v1.2.1_RC5_UNIFIED_AI_TEST
           path: |
-            UA_FREE_Content_Tool_v1.2.1-rc4_Windows_Portable.zip
-            UA_FREE_Content_Tool_v1.2.1-rc4_SHA256.txt
+            UA_FREE_Content_Tool_v1.2.1-rc5_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.2.1-rc5_SHA256.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
