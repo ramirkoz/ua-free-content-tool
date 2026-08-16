@@ -35,15 +35,11 @@ PROVIDER_LABELS: dict[str, str] = {
 }
 
 
-def _representative_slots() -> list[AIModelSlot]:
-    result: list[AIModelSlot] = []
-    seen: set[str] = set()
+def _provider_slot_groups() -> list[tuple[str, list[AIModelSlot]]]:
+    groups: dict[str, list[AIModelSlot]] = {}
     for slot in MODEL_SLOTS:
-        if slot.provider in seen:
-            continue
-        seen.add(slot.provider)
-        result.append(slot)
-    return result
+        groups.setdefault(slot.provider, []).append(slot)
+    return list(groups.items())
 
 
 def _runtime_slot(slot: AIModelSlot, cfg: AIProviderSecrets) -> AIModelSlot:
@@ -60,53 +56,60 @@ def _status_for_error(error: AIModelError) -> str:
 
 
 def test_configured_providers() -> list[ProviderDiagnostic]:
-    """Test every configured provider independently without changing router cooldown state."""
+    """Test every configured provider independently without changing router cooldown state.
+
+    Multi-model providers are considered healthy when any configured model responds to the
+    control prompt. Authentication/configuration failures stop immediately; model-specific
+    and temporary failures fall through to the next model of the same provider.
+    """
+
     cfg = load_provider_secrets()
     rows: list[ProviderDiagnostic] = []
     prompt = "Return exactly this text and nothing else: UA_FREE_PROVIDER_OK"
 
-    for original in _representative_slots():
-        slot = _runtime_slot(original, cfg)
-        label = PROVIDER_LABELS.get(slot.provider, slot.provider)
-        if not _configured(slot, cfg):
-            rows.append(ProviderDiagnostic(slot.provider, label, "unconfigured", "не налаштовано", slot.model))
-            continue
-        try:
-            text = _invoke_slot(slot, cfg, prompt).strip()
-            if "UA_FREE_PROVIDER_OK" not in text:
-                rows.append(
-                    ProviderDiagnostic(
-                        slot.provider,
-                        label,
-                        "warning",
-                        "провайдер відповів, але контрольний текст не збігся",
-                        slot.model,
-                    )
-                )
-                continue
-        except AIModelError as exc:
-            rows.append(
-                ProviderDiagnostic(
-                    slot.provider,
-                    label,
-                    _status_for_error(exc),
-                    str(exc)[:300],
-                    slot.model,
-                )
-            )
-            continue
-        except Exception as exc:
-            rows.append(
-                ProviderDiagnostic(
-                    slot.provider,
-                    label,
-                    "warning",
-                    f"тимчасова помилка перевірки: {exc}"[:300],
-                    slot.model,
-                )
-            )
+    for provider, original_slots in _provider_slot_groups():
+        slots = [_runtime_slot(slot, cfg) for slot in original_slots]
+        label = PROVIDER_LABELS.get(provider, provider)
+        if not slots or not any(_configured(slot, cfg) for slot in slots):
+            model = slots[0].model if slots else ""
+            rows.append(ProviderDiagnostic(provider, label, "unconfigured", "не налаштовано", model))
             continue
 
-        rows.append(ProviderDiagnostic(slot.provider, label, "ok", f"працює · {slot.model}", slot.model))
+        failures: list[str] = []
+        terminal_status = "warning"
+        terminal_model = slots[0].model
+        success_row: ProviderDiagnostic | None = None
+
+        for slot in slots:
+            terminal_model = slot.model
+            try:
+                text = _invoke_slot(slot, cfg, prompt).strip()
+                if "UA_FREE_PROVIDER_OK" not in text:
+                    failures.append(f"{slot.model}: контрольний текст не збігся")
+                    continue
+            except AIModelError as exc:
+                failures.append(f"{slot.model}: {exc}")
+                if exc.kind in {"auth", "configuration"}:
+                    terminal_status = "error"
+                    break
+                if exc.kind == "quota":
+                    terminal_status = "warning"
+                    break
+                continue
+            except Exception as exc:
+                failures.append(f"{slot.model}: тимчасова помилка перевірки: {exc}")
+                continue
+
+            success_row = ProviderDiagnostic(provider, label, "ok", f"працює · {slot.model}", slot.model)
+            break
+
+        if success_row is not None:
+            rows.append(success_row)
+            continue
+
+        detail = failures[-1] if failures else "провайдер не повернув успішної відповіді"
+        if len(failures) > 1:
+            detail += f" · перевірено моделей: {len(failures)}"
+        rows.append(ProviderDiagnostic(provider, label, terminal_status, detail[:300], terminal_model))
 
     return rows
