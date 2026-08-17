@@ -201,3 +201,24 @@ def test_queue_migration_rejects_codex_over_limit(monkeypatch: pytest.MonkeyPatc
 def test_ollama_prewarm_is_disabled_in_rc5() -> None:
     instance = object.__new__(AIEngineV13Mixin)
     assert instance._prewarm_ollama_model_async("legacy-model") is None
+
+
+def test_emergency_ollama_rewrite_uses_compact_marker_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    group = _group("Дуже довгий текст про подію. " * 600)
+    seen: dict[str, object] = {}
+    raw = "ЗАГОЛОВОК: Короткий заголовок\nТЕКСТ: Короткий точний рерайт без вигаданих фактів."
+
+    def fake_run_ai(prompt: str, **kwargs):
+        seen.update(kwargs)
+        assert len(str(kwargs["local_prompt"])) <= 5200
+        assert kwargs["local_max_output_tokens"] == 320
+        assert kwargs["local_timeout_seconds"] == 120
+        kwargs["validator"](raw)
+        from types import SimpleNamespace
+        return SimpleNamespace(text=raw)
+
+    monkeypatch.setattr(codex_news_v1_3, "run_ai", fake_run_ai)
+    result = rewrite_group_with_codex(group, [])
+    assert result.headline == "Короткий заголовок"
+    assert result.rewrite == "Короткий точний рерайт без вигаданих фактів."
+    assert result.fact_card
