@@ -39,6 +39,7 @@ def _openai_call_limited(
     prompt: str,
     *,
     max_output_tokens: int,
+    timeout_seconds: int = 120,
 ) -> str:
     url, api_key = legacy._openai_endpoint(slot, cfg)
     payload: dict[str, object] = {
@@ -75,7 +76,7 @@ def _openai_call_limited(
             method="POST",
             headers=headers,
             body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            timeout=120,
+            timeout=max(3, int(timeout_seconds)),
             max_bytes=4 * 1024 * 1024,
             allowed_content_types={"application/json", "application/problem+json", "text/json", "text/plain"},
             max_redirects=1,
@@ -114,6 +115,7 @@ def _gemini_call_limited(
     prompt: str,
     *,
     max_output_tokens: int,
+    timeout_seconds: int = 120,
 ) -> str:
     model = quote(slot.model, safe="-._")
     key = quote(cfg.gemini_api_key, safe="")
@@ -134,7 +136,7 @@ def _gemini_call_limited(
             method="POST",
             headers={"Content-Type": "application/json", "Accept": "application/json, application/problem+json"},
             body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            timeout=120,
+            timeout=max(3, int(timeout_seconds)),
             max_bytes=4 * 1024 * 1024,
             allowed_content_types={"application/json", "application/problem+json", "text/json", "text/plain"},
             max_redirects=1,
@@ -273,14 +275,14 @@ def _repair_local_output(
     )
 
 
-def _invoke_limited(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str, max_output_tokens: int) -> str:
+def _invoke_limited(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str, max_output_tokens: int, *, timeout_seconds: int = 120) -> str:
     if slot.family == "codex":
         return legacy._invoke_slot(slot, cfg, prompt)
     if slot.family == "gemini":
-        return _gemini_call_limited(slot, cfg, prompt, max_output_tokens=max_output_tokens)
+        return _gemini_call_limited(slot, cfg, prompt, max_output_tokens=max_output_tokens, timeout_seconds=timeout_seconds)
     if slot.family == "local":
         return _local_call_limited(slot, cfg, prompt, max_output_tokens=max_output_tokens)
-    return _openai_call_limited(slot, cfg, prompt, max_output_tokens=max_output_tokens)
+    return _openai_call_limited(slot, cfg, prompt, max_output_tokens=max_output_tokens, timeout_seconds=timeout_seconds)
 
 
 def run_ai(
@@ -292,6 +294,10 @@ def run_ai(
     local_max_output_tokens: int | None = None,
     local_timeout_seconds: int = 120,
     local_repair: bool = True,
+    cloud_timeout_seconds: int = 120,
+    task_timeout_seconds: int | None = None,
+    skip_providers: set[str] | frozenset[str] | tuple[str, ...] = (),
+    suppress_provider_on_quota: bool = False,
 ) -> AIResult:
     """Run one bounded AI task with a compact, independently budgeted Ollama fallback."""
     if int(max_output_tokens) >= 4096:
@@ -302,7 +308,10 @@ def run_ai(
         raise AIRouterError("AI Router отримав порожній запит.")
     local_text_prompt = str(local_prompt or text_prompt).strip()
     local_budget = max(64, int(local_max_output_tokens or max_output_tokens))
-    local_timeout = max(30, min(240, int(local_timeout_seconds)))
+    local_timeout = max(3, min(240, int(local_timeout_seconds)))
+    cloud_timeout = max(3, min(120, int(cloud_timeout_seconds)))
+    deadline = (time.monotonic() + max(3, int(task_timeout_seconds))) if task_timeout_seconds is not None else None
+    suppressed_providers = {str(value).strip().casefold() for value in skip_providers if str(value).strip()}
     cfg = legacy.load_provider_secrets()
     state = legacy.load_router_state()
     now = time.time()
@@ -319,11 +328,14 @@ def run_ai(
                 "Локальний AI · авто: Ollama → llama.cpp",
                 slot.family,
             )
+        if slot.provider.casefold() in suppressed_providers:
+            continue
         if not legacy._configured(slot, cfg):
             continue
+        if deadline is not None and time.monotonic() >= deadline:
+            failures.append("Загальний ліміт часу AI-завдання вичерпано.")
+            break
 
-        # The local engine has no paid API quota to protect. A previous timeout must
-        # never prevent a recovered/running Ollama from being tried as the last resort.
         if slot.provider != "local":
             if legacy._cooldown_active(state, legacy._provider_key(slot.provider), now) or legacy._cooldown_active(
                 state, legacy._slot_key(slot), now
@@ -334,11 +346,15 @@ def run_ai(
         runtime_slot = slot
         try:
             if slot.provider == "local":
+                remaining = None if deadline is None else max(0, int(deadline - time.monotonic()))
+                if remaining is not None and remaining < 3:
+                    failures.append("Загальний ліміт часу AI-завдання вичерпано перед локальним fallback.")
+                    break
                 output, target = _invoke_local_compat(
                     cfg,
                     local_text_prompt,
                     max_output_tokens=local_budget,
-                    timeout_seconds=local_timeout,
+                    timeout_seconds=min(local_timeout, remaining) if remaining is not None else local_timeout,
                 )
                 output = str(output).strip()
                 runtime_slot = AIModelSlot(
@@ -349,7 +365,19 @@ def run_ai(
                     slot.family,
                 )
             else:
-                output = _invoke_limited(slot, cfg, text_prompt, max_output_tokens).strip()
+                remaining = None if deadline is None else max(0, int(deadline - time.monotonic()))
+                if remaining is not None and remaining < 3:
+                    failures.append("Загальний ліміт часу AI-завдання вичерпано.")
+                    break
+                try:
+                    output = _invoke_limited(
+                        slot, cfg, text_prompt, max_output_tokens,
+                        timeout_seconds=min(cloud_timeout, remaining) if remaining is not None else cloud_timeout,
+                    ).strip()
+                except TypeError as exc:
+                    if "timeout_seconds" not in str(exc):
+                        raise
+                    output = _invoke_limited(slot, cfg, text_prompt, max_output_tokens).strip()
 
             if not output:
                 raise AIModelError("Порожня відповідь.", kind="bad_response")
@@ -378,6 +406,8 @@ def run_ai(
                     validator(output)
         except AIModelError as exc:
             failures.append(f"{runtime_slot.label}: {exc}")
+            if suppress_provider_on_quota and exc.kind == "quota":
+                suppressed_providers.add(slot.provider.casefold())
             if exc.kind == "request_too_large":
                 continue
             if slot.provider != "local":
