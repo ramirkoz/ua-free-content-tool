@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..ai_router_v1_2_1 import last_ai_result_label
 from ..codex_news_v1_3 import rewrite_group_with_codex
 from ..editorial_memory import rank_editorial_examples
-from ..global_duplicates_v1_3_rc6 import DuplicateCluster, find_global_duplicate_clusters
+from ..global_duplicates_v1_2_2_rc5 import DuplicateCluster, find_global_duplicate_clusters, last_duplicate_search_label
 from ..models import NewsGroup, RewriteResult
 from ..rowboat_bridge_v1_3 import memory_context, sync_editorial_memory
 from .global_duplicates_dialog_v1_3_rc6 import GlobalDuplicatesDialog
@@ -109,14 +109,14 @@ class AIWorkflowRC6Mixin:
             if len(groups) < 2:
                 self.topic_search_status_var.set("Для глобального порівняння потрібно щонайменше 2 нові блоки.")  # type: ignore[attr-defined]
                 return
-            engine = last_ai_result_label()
+            engine = last_duplicate_search_label()
             if not clusters:
                 self.topic_search_status_var.set(  # type: ignore[attr-defined]
-                    f"AI Router ({engine}) порівняв {len(groups)} нових блоків. Дублікатів для об'єднання не запропоновано."
+                    f"{engine}: перевірено {len(groups)} нових блоків. Дублікатів для об'єднання не запропоновано."
                 )
                 return
             self.topic_search_status_var.set(  # type: ignore[attr-defined]
-                f"AI Router ({engine}) порівняв {len(groups)} нових блоків і запропонував {len(clusters)} об'єднань."
+                f"{engine}: перевірено {len(groups)} нових блоків і запропоновано {len(clusters)} об'єднань."
             )
             by_id = {group.id: group for group in groups}
             GlobalDuplicatesDialog(
