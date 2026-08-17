@@ -110,3 +110,56 @@ def test_codex_subprocess_proxy_hides_console_on_windows(monkeypatch) -> None:
     proxy = codex_engine_v1_3._HiddenSubprocessProxy(codex_engine_v1_3.subprocess)
     proxy.Popen(["codex.exe", "app-server"])
     assert int(captured.get("creationflags", 0)) & int(codex_engine_v1_3.subprocess.CREATE_NO_WINDOW)
+
+
+def test_global_duplicate_large_inbox_is_split_into_bounded_batches() -> None:
+    from content_agent.global_duplicates_v1_3_rc6 import build_global_duplicate_batches
+
+    groups = []
+    for group_id in range(1, 61):
+        article = Article(
+            id=group_id,
+            source_id=1,
+            title=f"Title {group_id}",
+            url=f"https://example.com/{group_id}",
+            raw_text=(f"Company Alpha event {group_id % 9} details and update " * 30),
+            status="new",
+        )
+        groups.append(
+            NewsGroup(
+                id=group_id,
+                canonical_title=f"Company Alpha update {group_id % 9} item {group_id}",
+                status="new",
+                created_at="2026-08-17T08:00:00+00:00",
+                updated_at="2026-08-17T08:00:00+00:00",
+                source_count=1,
+                articles=[article],
+            )
+        )
+    batches = build_global_duplicate_batches(groups)
+    assert len(batches) > 1
+    assert all(2 <= len(batch) <= 20 for batch in batches)
+    assert all(len(build_global_duplicate_prompt(batch)) <= 8000 for batch in batches)
+
+
+def test_global_duplicate_prompt_caps_feedback_and_graph_memory() -> None:
+    groups = []
+    for group_id in (1, 2):
+        groups.append(
+            NewsGroup(
+                id=group_id,
+                canonical_title=f"Group {group_id}",
+                status="new",
+                created_at="2026-08-17T08:00:00+00:00",
+                updated_at="2026-08-17T08:00:00+00:00",
+                source_count=1,
+                articles=[Article(id=group_id, source_id=1, title="x", url="https://e/x", raw_text="text " * 500, status="new")],
+            )
+        )
+    feedback = [
+        {"decision": "merged", "anchor_text": "A" * 1000, "candidate_text": "B" * 1000}
+        for _ in range(100)
+    ]
+    prompt = build_global_duplicate_prompt(groups, feedback=feedback, graph_memory="M" * 10000)
+    assert len(prompt) <= 8000
+    assert prompt.count("ОБ'ЄДНАНО") <= 12
