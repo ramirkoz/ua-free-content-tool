@@ -151,3 +151,31 @@ def test_bounded_quota_cools_only_model_not_whole_provider(monkeypatch: pytest.M
     assert result.provider == "nvidia"
     assert "provider:nvidia" not in state.cooldowns
     assert any(key.startswith("model:nvidia:") for key in state.cooldowns)
+
+
+def test_bounded_router_retries_local_once_after_validation_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = legacy.AIProviderSecrets(local_enabled=True)
+    state = legacy.AIRouterState()
+    calls: list[str] = []
+    target = local.LocalAITarget("ollama", local.OLLAMA_BASE_URL, "qwen3:4b", "qwen3:4b / Ollama")
+
+    monkeypatch.setattr(legacy, "load_provider_secrets", lambda: cfg)
+    monkeypatch.setattr(legacy, "load_router_state", lambda: state)
+    monkeypatch.setattr(legacy, "save_router_state", lambda _value: None)
+    monkeypatch.setattr(legacy, "_configured", lambda slot, _cfg: slot.provider == "local")
+
+    def local_call(_cfg, prompt, *, max_output_tokens):
+        calls.append(prompt)
+        return ("BAD" if len(calls) == 1 else "VALID"), target
+
+    monkeypatch.setattr(bounded, "_invoke_local_with_target", local_call)
+
+    def validator(text: str) -> None:
+        if text != "VALID":
+            raise ValueError("invalid format")
+
+    result = bounded.run_ai("return strict format", validator=validator, max_output_tokens=900)
+    assert result.text == "VALID"
+    assert result.model == "qwen3:4b"
+    assert result.label == "qwen3:4b / Ollama"
+    assert len(calls) == 2
