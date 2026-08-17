@@ -64,6 +64,8 @@ def _extract_jsonish_string(text: str, key: str) -> str:
             break
         raw.append(char)
     value = "".join(raw)
+    # json.loads gives us proper \n, quotes and Unicode escapes. Actual newlines
+    # are escaped first because small models occasionally emit invalid pretty JSON.
     escaped_value = value.replace("\r", "\\r").replace("\n", "\\n")
     try:
         return str(json.loads('"' + escaped_value + '"')).strip()
@@ -89,6 +91,13 @@ def _fact_card_from_text(text: str, limit: int = 600) -> str:
 
 
 def _decode_rewrite_payload(response_text: str) -> dict[str, object]:
+    """Decode either legacy JSON or the faster plain-text newsroom protocol.
+
+    Constrained JSON generation is surprisingly expensive on small CPU-only
+    systems. FIX18 therefore asks Ollama for a headline and article text using
+    simple markers, but still accepts JSON for compatibility with older models.
+    """
+
     text = _strip_code_fence(response_text)
     if not text:
         raise OllamaError("Ollama повернула порожній текст.")
@@ -100,6 +109,8 @@ def _decode_rewrite_payload(response_text: str) -> dict[str, object]:
     if isinstance(decoded, dict):
         return decoded
 
+    # qwen/gemma can stop a few tokens before closing a JSON object. Recover the
+    # useful fields instead of dumping the raw object into the publication editor.
     jsonish = text.lstrip().startswith("{") or bool(
         re.search(r'(?is)["\'](?:headline|fact_card|rewrite)["\']\s*:', text)
     )
@@ -117,19 +128,23 @@ def _decode_rewrite_payload(response_text: str) -> dict[str, object]:
     headline = ""
     rewrite = ""
     fact_card = ""
+
     headline_match = re.search(r"(?im)^\s*(?:ЗАГОЛОВОК|HEADLINE)\s*:\s*(.+?)\s*$", text)
     text_match = re.search(r"(?ims)^\s*(?:ТЕКСТ|РЕРАЙТ|TEXT|ARTICLE)\s*:\s*(.+)\Z", text)
     facts_match = re.search(
         r"(?ims)^\s*(?:ФАКТИ|ФАКТ-КАРТКА|FACTS|FACT CARD)\s*:\s*(.+?)(?=^\s*(?:ТЕКСТ|РЕРАЙТ|TEXT|ARTICLE)\s*:|\Z)",
         text,
     )
+
     if headline_match:
         headline = headline_match.group(1).strip()
     if text_match:
         rewrite = text_match.group(1).strip()
     if facts_match:
         fact_card = facts_match.group(1).strip()
+
     if not rewrite:
+        # Models sometimes obey the requested layout but omit the literal marker.
         lines = [line.rstrip() for line in text.splitlines()]
         if lines and not headline:
             first = lines[0].strip()
@@ -138,12 +153,20 @@ def _decode_rewrite_payload(response_text: str) -> dict[str, object]:
                 rewrite = "\n".join(lines[1:]).strip()
         if not rewrite:
             rewrite = text
+
     if not fact_card:
         fact_card = _fact_card_from_text(rewrite)
     return {"headline": headline, "fact_card": fact_card, "rewrite": rewrite}
 
 
 class OllamaClient:
+    """Small local Ollama client optimized for interactive newsroom rewrites.
+
+    FIX18 deliberately avoids constrained JSON decoding and NDJSON idle timers.
+    A single non-streaming request is faster and much more reliable on CPU-only
+    laptops. Model loading is still kept separate and the model stays resident.
+    """
+
     def __init__(self, base_url: str, timeout: int = 240, load_timeout: int = 120):
         self.base_url = base_url.rstrip("/")
         self.timeout = max(20, int(timeout))
@@ -208,6 +231,8 @@ class OllamaClient:
             return False
 
     def preload_model(self, model: str) -> None:
+        """Load one model into RAM/VRAM without asking it to write anything."""
+
         model = str(model or "").strip()
         if not model:
             raise OllamaError("Спочатку оберіть установлену модель Ollama.")
@@ -245,6 +270,7 @@ class OllamaClient:
             if isinstance(result, dict) and result.get("error"):
                 raise OllamaError(str(result["error"]))
 
+
     def generate_text(
         self,
         model: str,
@@ -253,6 +279,8 @@ class OllamaClient:
         num_predict: int = 512,
         temperature: float = 0.05,
     ) -> str:
+        """Generate plain text for one local classification/retrieval task."""
+
         if not model:
             raise OllamaError("Спочатку оберіть установлену модель Ollama.")
         with _OLLAMA_OPERATION_LOCK:
@@ -289,7 +317,9 @@ class OllamaClient:
             except HTTPError as exc:
                 raise OllamaError(f"Ollama повернула HTTP {exc.code}.") from exc
             except (URLError, TimeoutError, socket.timeout) as exc:
-                raise OllamaTimeoutError(f"Ollama не завершила локальне AI-завдання за {self.timeout} секунд.") from exc
+                raise OllamaTimeoutError(
+                    f"Ollama не завершила локальне AI-завдання за {self.timeout} секунд."
+                ) from exc
             try:
                 result = json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -309,9 +339,17 @@ class OllamaClient:
         num_predict: int = 384,
         temperature: float = 0.1,
     ) -> dict[str, object]:
+        """Generate one rewrite and return the legacy dictionary interface.
+
+        ``schema`` remains in the signature for compatibility, but it is not sent
+        to Ollama. Grammar-constrained JSON was the source of long first-token
+        stalls on the user's machine.
+        """
+
         del schema
         if not model:
             raise OllamaError("Спочатку оберіть установлену модель Ollama.")
+
         with _OLLAMA_OPERATION_LOCK:
             self.preload_model(model)
             if len(prompt) <= 4_500:
@@ -347,7 +385,10 @@ class OllamaClient:
             except HTTPError as exc:
                 raise OllamaError(f"Ollama повернула HTTP {exc.code}.") from exc
             except (URLError, TimeoutError, socket.timeout) as exc:
-                raise OllamaTimeoutError(f"Ollama не завершила один рерайт за {self.timeout} секунд.") from exc
+                raise OllamaTimeoutError(
+                    f"Ollama не завершила один рерайт за {self.timeout} секунд."
+                ) from exc
+
             elapsed = time.monotonic() - started
             try:
                 result = json.loads(body.decode("utf-8"))
