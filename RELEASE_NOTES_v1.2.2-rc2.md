@@ -32,7 +32,7 @@ RC2 keeps the bounded global duplicate search from RC1 and fixes the local emerg
 
 ## Automated validation
 
-Final validated branch head before release-notes-only commit: `08415f74388f6aac10e88da9b26c0bb4cfd52d18`.
+Validated code commit: `08415f74388f6aac10e88da9b26c0bb4cfd52d18`.
 
 - Windows CI: PASS on Python 3.11, 3.12 and 3.13.
 - Full Windows RC2 gate: PASS.
