@@ -200,6 +200,7 @@ def _invoke_local_with_target(
     prompt: str,
     *,
     max_output_tokens: int,
+    timeout_seconds: int = 120,
 ) -> tuple[str, object]:
     try:
         return generate_local_text(
@@ -209,6 +210,7 @@ def _invoke_local_with_target(
             prompt=prompt,
             max_output_tokens=max_output_tokens,
             temperature=0.0,
+            timeout_seconds=timeout_seconds,
         )
     except LocalAIRuntimeError as exc:
         lowered = str(exc).casefold()
@@ -221,6 +223,31 @@ def _invoke_local_with_target(
         raise AIModelError(str(exc), kind=kind) from exc
 
 
+def _invoke_local_compat(
+    cfg: AIProviderSecrets,
+    prompt: str,
+    *,
+    max_output_tokens: int,
+    timeout_seconds: int,
+) -> tuple[str, object]:
+    """Preserve older recovery/test hooks while the runtime gains task timeouts."""
+    try:
+        return _invoke_local_with_target(
+            cfg,
+            prompt,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+    except TypeError as exc:
+        if "timeout_seconds" not in str(exc):
+            raise
+        return _invoke_local_with_target(
+            cfg,
+            prompt,
+            max_output_tokens=max_output_tokens,
+        )
+
+
 def _repair_local_output(
     cfg: AIProviderSecrets,
     original_prompt: str,
@@ -228,19 +255,21 @@ def _repair_local_output(
     validation_error: Exception,
     *,
     max_output_tokens: int,
+    timeout_seconds: int = 60,
 ) -> tuple[str, object]:
-    instruction_head = original_prompt[:3500].strip()
+    instruction_head = original_prompt[:1800].strip()
     repair_prompt = (
         "Виправ ЛИШЕ формат попередньої відповіді. Не додавай нових фактів і не пояснюй свої дії. "
         "Поверни тільки той формат, який вимагався в інструкції.\n\n"
         f"ПОЧАТОК ІНСТРУКЦІЇ:\n{instruction_head}\n\n"
         f"ПОМИЛКА ПЕРЕВІРКИ: {validation_error}\n\n"
-        f"ПОПЕРЕДНЯ ВІДПОВІДЬ:\n{bad_output[:7000]}"
+        f"ПОПЕРЕДНЯ ВІДПОВІДЬ:\n{bad_output[:2600]}"
     )
-    return _invoke_local_with_target(
+    return _invoke_local_compat(
         cfg,
         repair_prompt,
-        max_output_tokens=max_output_tokens,
+        max_output_tokens=min(max_output_tokens, 220),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -259,14 +288,21 @@ def run_ai(
     *,
     validator: Callable[[str], object] | None = None,
     max_output_tokens: int = 4096,
+    local_prompt: str | None = None,
+    local_max_output_tokens: int | None = None,
+    local_timeout_seconds: int = 120,
+    local_repair: bool = True,
 ) -> AIResult:
-    """Run one bounded AI task with Ollama as a real last-resort provider."""
+    """Run one bounded AI task with a compact, independently budgeted Ollama fallback."""
     if int(max_output_tokens) >= 4096:
         return legacy.run_ai(prompt, validator=validator)
 
     text_prompt = str(prompt or "").strip()
     if not text_prompt:
         raise AIRouterError("AI Router отримав порожній запит.")
+    local_text_prompt = str(local_prompt or text_prompt).strip()
+    local_budget = max(64, int(local_max_output_tokens or max_output_tokens))
+    local_timeout = max(30, min(240, int(local_timeout_seconds)))
     cfg = legacy.load_provider_secrets()
     state = legacy.load_router_state()
     now = time.time()
@@ -298,10 +334,11 @@ def run_ai(
         runtime_slot = slot
         try:
             if slot.provider == "local":
-                output, target = _invoke_local_with_target(
+                output, target = _invoke_local_compat(
                     cfg,
-                    text_prompt,
-                    max_output_tokens=max_output_tokens,
+                    local_text_prompt,
+                    max_output_tokens=local_budget,
+                    timeout_seconds=local_timeout,
                 )
                 output = str(output).strip()
                 runtime_slot = AIModelSlot(
@@ -320,14 +357,15 @@ def run_ai(
                 try:
                     validator(output)
                 except Exception as first_validation_error:
-                    if slot.provider != "local":
+                    if slot.provider != "local" or not local_repair:
                         raise
                     repaired, target = _repair_local_output(
                         cfg,
-                        text_prompt,
+                        local_text_prompt,
                         output,
                         first_validation_error,
-                        max_output_tokens=max_output_tokens,
+                        max_output_tokens=local_budget,
+                        timeout_seconds=min(60, local_timeout),
                     )
                     output = str(repaired).strip()
                     runtime_slot = AIModelSlot(
