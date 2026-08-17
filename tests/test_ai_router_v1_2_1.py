@@ -30,7 +30,7 @@ def test_provider_secrets_round_trip_is_encrypted(tmp_path: Path, monkeypatch: p
     assert loaded.local_model == "test-model"
 
 
-def test_quota_failure_cools_provider_and_falls_to_next_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_quota_falls_to_next_model_before_next_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = router.AIProviderSecrets(nvidia_api_key="x", groq_api_key="y")
     state = router.AIRouterState()
     saved: list[router.AIRouterState] = []
@@ -47,16 +47,20 @@ def test_quota_failure_cools_provider_and_falls_to_next_provider(monkeypatch: py
 
     def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str) -> str:
         calls.append(slot.label)
+        if slot.provider == "nvidia" and len([value for value in calls if "NVIDIA" in value]) == 1:
+            raise router.AIModelError("model quota", kind="quota", retry_after=3600)
         if slot.provider == "nvidia":
-            raise router.AIModelError("quota", kind="quota", retry_after=3600)
-        return "OK"
+            return "OK"
+        return "GROQ"
 
     monkeypatch.setattr(router, "_invoke_slot", invoke)
     result = router.run_ai("test")
-    assert result.provider == "groq"
+    assert result.provider == "nvidia"
     assert calls[0] == "DeepSeek V4 Pro / NVIDIA"
-    assert not any("Nemotron 3 Ultra" in value for value in calls)
-    assert "provider:nvidia" in state.cooldowns
+    assert any("Nemotron 3 Ultra" in value for value in calls)
+    assert not any("Groq" in value for value in calls)
+    assert "provider:nvidia" not in state.cooldowns
+    assert any(key.startswith("model:nvidia:") for key in state.cooldowns)
     assert saved
 
 
