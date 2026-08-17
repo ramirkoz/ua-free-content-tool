@@ -1,22 +1,42 @@
 # UA FREE Content Tool v1.2.2 RC7
 
-RC7 fixes the reproduced RC6 failure where global duplicate search completed with the message that the time limit was reached and returned no proposals, even though obvious duplicates were visible in the inbox.
+RC7 fixed the reproduced live RC6 failure where global duplicate search could time out and return no proposals despite an obvious duplicate pair in a large Inbox.
 
-## Fixed
-- Strictly bounded duplicate candidate generation for large noisy inboxes.
-- Title-focused blocking with rare adjacent title bigrams and a small body-text supplement.
-- Candidate pair materialization is capped at 12,000; final review graph remains capped at 160 edges and 4 neighbours per group.
-- Deterministic review candidates are no longer erased when AI returns NONE or otherwise rejects the compact AI batch.
-- Added regression coverage for the visible Zaporizhzhia education-account duplicate pair from the live RC6 screenshot.
-- Added dense 1000-item inbox regression coverage.
+## Final live acceptance
 
-## Safety
-- No automatic merge. Every proposed merge still requires manual confirmation.
-- Existing AI Router and Ollama-first local fallback remain unchanged.
+On 17.08.2026 the same working `Data` used to reproduce the earlier failures passed live acceptance:
+
+- rewrite completed successfully through the production AI Router;
+- global duplicate grouping returned relevant proposals;
+- the application remained responsive;
+- the workflow worked end to end on the real working dataset.
+
+RC7 is therefore promoted into the stable v1.2.2 codebase.
+
+## Duplicate grouping changes
+
+- Strictly bounded title-first candidate generator.
+- Rare adjacent title bigrams are prioritized.
+- Only a small body-text supplement is used.
+- Candidate-pair materialization is capped.
+- Final candidate graph is bounded.
+- Strong deterministic review candidates survive AI `NONE`, invalid output, quota errors and timeout.
+- No automatic merge: every proposal still requires explicit human confirmation.
+
+## Runtime and AI
+
+- Production rewrite uses the bounded AI Router.
+- Existing Ollama is the final local emergency fallback.
+- Ollama is reused if already installed; models are not pulled automatically.
+- Local prompts are compacted for smaller models.
+- Duplicate search is non-blocking, cancellable and protected by deadlines/watchdog handling.
 
 ## Validation
-- 406 tests PASS on the first Windows RC7 build gate before this documentation-only commit.
-- Windows CI Python 3.11 / 3.12 / 3.13 PASS.
-- Portable build, GUI startup smoke, Microsoft Defender and ZIP validation PASS.
 
-Live acceptance remains required before main/stable are changed.
+- 406 tests PASS on the final RC7 Windows gate.
+- Windows CI Python 3.11 / 3.12 / 3.13 PASS.
+- Portable build PASS.
+- GUI startup smoke PASS.
+- Microsoft Defender PASS.
+- ZIP CRC/integrity validation PASS.
+- Live working-Data acceptance PASS.
