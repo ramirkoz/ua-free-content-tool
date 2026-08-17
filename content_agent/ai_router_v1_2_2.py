@@ -195,6 +195,55 @@ def _local_call_limited(
         raise AIModelError(str(exc), kind=kind) from exc
 
 
+def _invoke_local_with_target(
+    cfg: AIProviderSecrets,
+    prompt: str,
+    *,
+    max_output_tokens: int,
+) -> tuple[str, object]:
+    try:
+        return generate_local_text(
+            preferred_model=cfg.local_model,
+            manual_base_url=cfg.local_base_url,
+            manual_model=cfg.local_model,
+            prompt=prompt,
+            max_output_tokens=max_output_tokens,
+            temperature=0.0,
+        )
+    except LocalAIRuntimeError as exc:
+        lowered = str(exc).casefold()
+        if "завеликий" in lowered:
+            kind = "request_too_large"
+        elif any(token in lowered for token in ("не налаштован", "url має бути", "локальних моделей немає")):
+            kind = "configuration"
+        else:
+            kind = "temporary"
+        raise AIModelError(str(exc), kind=kind) from exc
+
+
+def _repair_local_output(
+    cfg: AIProviderSecrets,
+    original_prompt: str,
+    bad_output: str,
+    validation_error: Exception,
+    *,
+    max_output_tokens: int,
+) -> tuple[str, object]:
+    instruction_head = original_prompt[:3500].strip()
+    repair_prompt = (
+        "Виправ ЛИШЕ формат попередньої відповіді. Не додавай нових фактів і не пояснюй свої дії. "
+        "Поверни тільки той формат, який вимагався в інструкції.\n\n"
+        f"ПОЧАТОК ІНСТРУКЦІЇ:\n{instruction_head}\n\n"
+        f"ПОМИЛКА ПЕРЕВІРКИ: {validation_error}\n\n"
+        f"ПОПЕРЕДНЯ ВІДПОВІДЬ:\n{bad_output[:7000]}"
+    )
+    return _invoke_local_with_target(
+        cfg,
+        repair_prompt,
+        max_output_tokens=max_output_tokens,
+    )
+
+
 def _invoke_limited(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str, max_output_tokens: int) -> str:
     if slot.family == "codex":
         return legacy._invoke_slot(slot, cfg, prompt)
@@ -211,7 +260,7 @@ def run_ai(
     validator: Callable[[str], object] | None = None,
     max_output_tokens: int = 4096,
 ) -> AIResult:
-    """Router variant for bounded tasks; legacy behavior remains unchanged elsewhere."""
+    """Run one bounded AI task with Ollama as a real last-resort provider."""
     if int(max_output_tokens) >= 4096:
         return legacy.run_ai(prompt, validator=validator)
 
@@ -227,41 +276,104 @@ def run_ai(
     for original in legacy.MODEL_SLOTS:
         slot = original
         if slot.provider == "local":
-            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, "Локальний AI · авто: Ollama → llama.cpp", slot.family)
+            slot = AIModelSlot(
+                slot.priority,
+                slot.provider,
+                cfg.local_model or slot.model,
+                "Локальний AI · авто: Ollama → llama.cpp",
+                slot.family,
+            )
         if not legacy._configured(slot, cfg):
             continue
-        if legacy._cooldown_active(state, legacy._provider_key(slot.provider), now) or legacy._cooldown_active(state, legacy._slot_key(slot), now):
-            continue
+
+        # The local engine has no paid API quota to protect. A previous timeout must
+        # never prevent a recovered/running Ollama from being tried as the last resort.
+        if slot.provider != "local":
+            if legacy._cooldown_active(state, legacy._provider_key(slot.provider), now) or legacy._cooldown_active(
+                state, legacy._slot_key(slot), now
+            ):
+                continue
+
         attempted.append(slot.label)
+        runtime_slot = slot
         try:
-            output = _invoke_limited(slot, cfg, text_prompt, max_output_tokens).strip()
+            if slot.provider == "local":
+                output, target = _invoke_local_with_target(
+                    cfg,
+                    text_prompt,
+                    max_output_tokens=max_output_tokens,
+                )
+                output = str(output).strip()
+                runtime_slot = AIModelSlot(
+                    slot.priority,
+                    slot.provider,
+                    str(getattr(target, "model", "") or slot.model),
+                    str(getattr(target, "label", "") or slot.label),
+                    slot.family,
+                )
+            else:
+                output = _invoke_limited(slot, cfg, text_prompt, max_output_tokens).strip()
+
             if not output:
                 raise AIModelError("Порожня відповідь.", kind="bad_response")
             if validator is not None:
-                validator(output)
+                try:
+                    validator(output)
+                except Exception as first_validation_error:
+                    if slot.provider != "local":
+                        raise
+                    repaired, target = _repair_local_output(
+                        cfg,
+                        text_prompt,
+                        output,
+                        first_validation_error,
+                        max_output_tokens=max_output_tokens,
+                    )
+                    output = str(repaired).strip()
+                    runtime_slot = AIModelSlot(
+                        slot.priority,
+                        slot.provider,
+                        str(getattr(target, "model", "") or runtime_slot.model),
+                        str(getattr(target, "label", "") or runtime_slot.label),
+                        slot.family,
+                    )
+                    validator(output)
         except AIModelError as exc:
-            failures.append(f"{slot.label}: {exc}")
+            failures.append(f"{runtime_slot.label}: {exc}")
             if exc.kind == "request_too_large":
-                # This task was too large for this slot, but the provider itself
-                # is healthy and must remain available for the next small request.
                 continue
-            key_name = legacy._provider_key(slot.provider) if exc.kind in {"auth", "configuration"} else legacy._slot_key(slot)
-            legacy._put_cooldown(state, key_name, legacy._cooldown_seconds(exc), str(exc))
-            legacy.save_router_state(state)
+            if slot.provider != "local":
+                key_name = (
+                    legacy._provider_key(slot.provider)
+                    if exc.kind in {"auth", "configuration"}
+                    else legacy._slot_key(slot)
+                )
+                legacy._put_cooldown(state, key_name, legacy._cooldown_seconds(exc), str(exc))
+                legacy.save_router_state(state)
             continue
         except Exception as exc:
-            failures.append(f"{slot.label}: відповідь не пройшла перевірку ({exc})")
-            legacy._put_cooldown(state, legacy._slot_key(slot), 10 * 60, f"validation: {exc}")
-            legacy.save_router_state(state)
+            failures.append(f"{runtime_slot.label}: відповідь не пройшла перевірку ({exc})")
+            if slot.provider != "local":
+                legacy._put_cooldown(state, legacy._slot_key(slot), 10 * 60, f"validation: {exc}")
+                legacy.save_router_state(state)
             continue
 
-        state.last_provider = slot.provider
-        state.last_model = slot.model
-        state.last_label = slot.label
+        state.last_provider = runtime_slot.provider
+        state.last_model = runtime_slot.model
+        state.last_label = runtime_slot.label
         state.last_success_at = time.time()
         state.cooldowns.pop(legacy._slot_key(slot), None)
+        if slot.provider == "local":
+            state.cooldowns.pop(legacy._provider_key(slot.provider), None)
         legacy.save_router_state(state)
-        return AIResult(output, slot.provider, slot.model, slot.label, slot.priority, tuple(attempted))
+        return AIResult(
+            output,
+            runtime_slot.provider,
+            runtime_slot.model,
+            runtime_slot.label,
+            runtime_slot.priority,
+            tuple(attempted),
+        )
 
     if not attempted:
         raise AIRouterError(
