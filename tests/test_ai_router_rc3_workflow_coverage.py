@@ -34,9 +34,10 @@ def test_global_duplicate_search_uses_ai_router(monkeypatch: pytest.MonkeyPatch)
     calls: list[str] = []
     raw = '{"clusters":[{"group_ids":[1,2],"confidence":93,"reason":"та сама подія"}]}'
 
-    def fake_run_ai(prompt: str, *, validator=None):
+    def fake_run_ai(prompt: str, *, validator=None, max_output_tokens=4096):
         calls.append(prompt)
         assert validator is not None
+        assert max_output_tokens <= 900
         validator(raw)
         return SimpleNamespace(text=raw)
 
@@ -52,7 +53,7 @@ def test_global_duplicate_search_uses_ai_router(monkeypatch: pytest.MonkeyPatch)
 def test_queue_migration_production_path_uses_router_validator(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    def fake_run_ai(prompt: str, *, validator=None):
+    def fake_run_ai(prompt: str, *, validator=None, max_output_tokens=4096):
         calls.append(prompt)
         assert validator is not None
         value = "Короткий текст."
