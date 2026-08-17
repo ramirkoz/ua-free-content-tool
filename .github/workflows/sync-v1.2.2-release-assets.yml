@@ -1,0 +1,44 @@
+name: Sync v1.2.2 release assets
+
+on:
+  push:
+    branches:
+      - fix/v1.2.2-ai-duplicate-batching
+    paths:
+      - '.github/workflows/sync-v1.2.2-release-assets.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect-release-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact published v1.2.2 assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download v1.2.2 \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets \
+            --pattern 'UA_FREE_Content_Tool_v1.2.2_Windows_Portable.zip' \
+            --pattern 'UA_FREE_Content_Tool_v1.2.2_Source.zip' \
+            --pattern 'SHA256SUMS.txt'
+          test -f release-assets/UA_FREE_Content_Tool_v1.2.2_Windows_Portable.zip
+          test -f release-assets/UA_FREE_Content_Tool_v1.2.2_Source.zip
+          test -f release-assets/SHA256SUMS.txt
+          cat release-assets/SHA256SUMS.txt
+          sha256sum release-assets/UA_FREE_Content_Tool_v1.2.2_Windows_Portable.zip
+          sha256sum release-assets/UA_FREE_Content_Tool_v1.2.2_Source.zip
+
+      - name: Upload exact release assets for Drive synchronization
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.2.2_PUBLISHED_ASSETS
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
