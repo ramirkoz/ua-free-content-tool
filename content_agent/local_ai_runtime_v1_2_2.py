@@ -367,6 +367,7 @@ def generate_local_text(
     prompt: str,
     max_output_tokens: int = 4096,
     temperature: float = 0.05,
+    timeout_seconds: int = 240,
 ) -> tuple[str, LocalAITarget]:
     target = resolve_local_target(
         preferred_model=preferred_model,
@@ -376,7 +377,12 @@ def generate_local_text(
     )
     if target.engine == "ollama":
         try:
-            text = OllamaClient(target.base_url, timeout=240, load_timeout=120).generate_text(
+            task_timeout = max(30, min(600, int(timeout_seconds)))
+            text = OllamaClient(
+                target.base_url,
+                timeout=task_timeout,
+                load_timeout=min(120, task_timeout),
+            ).generate_text(
                 target.model,
                 prompt,
                 num_predict=max(64, min(4096, int(max_output_tokens))),
