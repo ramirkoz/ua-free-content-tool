@@ -73,3 +73,24 @@ def test_active_rc6_ai_workflows_do_not_import_codex_engine_directly() -> None:
     for module in (global_duplicates, queue_migration):
         source = Path(module.__file__).read_text(encoding="utf-8")
         assert "codex_engine_v1_3" not in source
+
+
+def test_global_duplicate_local_profile_is_compact(monkeypatch: pytest.MonkeyPatch) -> None:
+    groups = [
+        _group(1, "Компанія Alpha повідомила про інцидент 17 серпня. " * 80),
+        _group(2, "Нові подробиці інциденту компанії Alpha 17 серпня. " * 80),
+    ]
+    raw = '{"clusters":[{"group_ids":[1,2],"confidence":90,"reason":"same event"}]}'
+    seen: dict[str, object] = {}
+
+    def fake_run_ai(prompt: str, **kwargs):
+        seen.update(kwargs)
+        assert len(str(kwargs["local_prompt"])) <= 3600
+        assert kwargs["local_max_output_tokens"] == 220
+        assert kwargs["local_timeout_seconds"] == 90
+        kwargs["validator"](raw)
+        return SimpleNamespace(text=raw)
+
+    monkeypatch.setattr(global_duplicates, "run_ai", fake_run_ai)
+    result = global_duplicates.find_global_duplicate_clusters(groups)
+    assert result and result[0].group_ids == (1, 2)
