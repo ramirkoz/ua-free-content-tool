@@ -10,6 +10,7 @@ RC6 is a focused live-failure fix for the global duplicate/grouping workflow.
 - Duplicate search skips Codex, uses short cloud request timeouts, short Ollama timeout, and suppresses a provider for the rest of the task after quota/429.
 - If AI cannot finish quickly, local deterministic candidates are shown for manual review instead of hanging or failing the whole operation.
 - Rowboat/editorial-memory synchronization is no longer performed before global duplicate search because the RC6 classifier does not need it.
+- Cancellation remains authoritative if an AI response arrives after the user has already cancelled the operation.
 - Late worker results are ignored by the existing operation-id guard after a UI timeout.
 
 ## Safety
@@ -17,5 +18,6 @@ RC6 is a focused live-failure fix for the global duplicate/grouping workflow.
 - Existing rewrite routing and Ollama fallback remain unchanged.
 
 ## Validation
-- 402 tests passed locally before the Windows build gate.
-- Windows CI/build/Defender/package gate is required before live acceptance.
+- Final source test suite: 403 tests passed.
+- Windows CI: Python 3.11, 3.12 and 3.13 PASS.
+- Windows portable build, GUI startup smoke, Microsoft Defender and ZIP validation are required on the exact RC6 head before live acceptance.
