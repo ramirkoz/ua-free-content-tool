@@ -18,6 +18,8 @@ _MAX_BATCH_PROMPT_CHARS = 8_000
 _NEIGHBORS_PER_GROUP = 4
 _DUPLICATE_OUTPUT_TOKENS = 900
 
+# Lightweight stopword set for the languages that dominate the inbox. The
+# prefilter only proposes candidates; AI still makes the actual merge decision.
 _STOPWORDS = {
     "the", "and", "for", "with", "from", "that", "this", "have", "has", "was", "were", "are", "not", "but", "into", "about", "after", "before", "over", "under", "new", "news",
     "і", "й", "та", "але", "або", "для", "про", "від", "до", "на", "у", "в", "з", "із", "за", "що", "це", "як", "не", "після", "перед", "новий", "нова", "нове", "нові",
@@ -45,7 +47,8 @@ def _plain_group_text(group: NewsGroup, limit: int) -> str:
         text = " ".join(str(article.raw_text or "").split())
         if text:
             parts.append(text)
-    return " ".join(parts)[:limit]
+    value = " ".join(parts)
+    return value[:limit]
 
 
 def _feedback_text(feedback: Iterable[dict[str, object]], limit: int = 12) -> str:
@@ -65,9 +68,16 @@ def _clean_title(value: str, limit: int = 220) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
-def build_global_duplicate_prompt(groups: list[NewsGroup], *, feedback: Iterable[dict[str, object]] = (), graph_memory: str = "", max_chars: int = _MAX_BATCH_PROMPT_CHARS) -> str:
+def build_global_duplicate_prompt(
+    groups: list[NewsGroup],
+    *,
+    feedback: Iterable[dict[str, object]] = (),
+    graph_memory: str = "",
+    max_chars: int = _MAX_BATCH_PROMPT_CHARS,
+) -> str:
     if len(groups) < 2:
         return ""
+
     feedback_block = _feedback_text(feedback)
     memory = ""
     if feedback_block:
@@ -75,7 +85,12 @@ def build_global_duplicate_prompt(groups: list[NewsGroup], *, feedback: Iterable
     if graph_memory:
         compact_graph = " ".join(str(graph_memory).split())[:1200]
         if compact_graph:
-            memory += "\n\nЛОКАЛЬНА РЕДАКЦІЙНА ПАМ'ЯТЬ:\n" + compact_graph + "\nПам'ять є лише прикладом правил редактора, не джерелом фактів про поточні новини."
+            memory += (
+                "\n\nЛОКАЛЬНА РЕДАКЦІЙНА ПАМ'ЯТЬ:\n"
+                + compact_graph
+                + "\nПам'ять є лише прикладом правил редактора, не джерелом фактів про поточні новини."
+            )
+
     header = f"""
 Проаналізуй ВСІ наведені редакційні блоки між собою та знайди групи, які варто об'єднати як дублікати або повідомлення про ту саму конкретну подію.
 
@@ -95,31 +110,62 @@ def build_global_duplicate_prompt(groups: list[NewsGroup], *, feedback: Iterable
 
 БЛОКИ В ЦЬОМУ ПАКЕТІ ({len(groups)}):
 """.strip()
+
     fixed = len(header) + 80 * len(groups) + 1
     available = max(120 * len(groups), max_chars - fixed)
     excerpt_limit = max(100, min(420, available // max(1, len(groups)) - 80))
+
     def records_for(limit: int) -> list[str]:
-        return [" | ".join((f"ID={group.id}", f"ДЖЕРЕЛ={group.source_count}", f"ЧАС={group.last_published_at or group.updated_at or 'невідомо'}", f"ЗАГОЛОВОК={_clean_title(group.canonical_title)}", f"ТЕКСТ={_plain_group_text(group, limit)}")) for group in groups]
+        rows: list[str] = []
+        for group in groups:
+            rows.append(
+                " | ".join(
+                    (
+                        f"ID={group.id}",
+                        f"ДЖЕРЕЛ={group.source_count}",
+                        f"ЧАС={group.last_published_at or group.updated_at or 'невідомо'}",
+                        f"ЗАГОЛОВОК={_clean_title(group.canonical_title)}",
+                        f"ТЕКСТ={_plain_group_text(group, limit)}",
+                    )
+                )
+            )
+        return rows
+
     records = records_for(excerpt_limit)
     prompt = header + "\n" + "\n".join(records)
     if len(prompt) > max_chars:
         overflow = len(prompt) - max_chars
-        excerpt_limit = max(70, excerpt_limit - math.ceil(overflow / max(1, len(groups))) - 16)
-        prompt = header + "\n" + "\n".join(records_for(excerpt_limit))
+        shrink_each = math.ceil(overflow / max(1, len(groups))) + 16
+        excerpt_limit = max(70, excerpt_limit - shrink_each)
+        records = records_for(excerpt_limit)
+        prompt = header + "\n" + "\n".join(records)
     return prompt
 
 
 def build_local_duplicate_prompt(groups: list[NewsGroup], *, max_chars: int = 3600) -> str:
+    """Small emergency prompt for CPU Ollama.
+
+    Candidate generation has already happened locally, so the fallback model only
+    needs compact titles/excerpts and IDs. It does not need graph-memory dumps or
+    8K characters of editorial context just to decide same-event clusters.
+    """
+
     if len(groups) < 2:
         return ""
     rows: list[str] = []
     per_group = max(160, min(300, (max_chars - 900) // max(1, len(groups))))
     for group in groups:
-        rows.append(f"ID={group.id} | ЗАГОЛОВОК={_clean_title(group.canonical_title, 180)} | ТЕКСТ={_plain_group_text(group, per_group)}")
+        rows.append(
+            f"ID={group.id} | ЗАГОЛОВОК={_clean_title(group.canonical_title, 180)} | "
+            f"ТЕКСТ={_plain_group_text(group, per_group)}"
+        )
     prompt = (
-        "Знайди лише дублікати або повідомлення про ТУ САМУ конкретну подію. Одна тема, країна чи організація не означає дублікат. Якщо сумніваєшся — не об'єднуй.\n"
+        "Знайди лише дублікати або повідомлення про ТУ САМУ конкретну подію. "
+        "Одна тема, країна чи організація не означає дублікат. Якщо сумніваєшся — не об'єднуй.\n"
         "Поверни ТІЛЬКИ JSON без пояснень: "
-        '{"clusters":[{"group_ids":[12,18],"confidence":91,"reason":"коротко"}]}\nБЛОКИ:\n' + "\n".join(rows)
+        '{"clusters":[{"group_ids":[12,18],"confidence":91,"reason":"коротко"}]}\n'
+        "БЛОКИ:\n"
+        + "\n".join(rows)
     )
     return prompt[:max_chars]
 
@@ -145,13 +191,15 @@ def _balanced_json_objects(value: str) -> Iterable[str]:
             if current == '"':
                 in_string = True
                 continue
-            if current == "{": depth += 1
+            if current == "{":
+                depth += 1
             elif current == "}":
                 depth -= 1
                 if depth == 0:
-                    yield text[start:index + 1]
+                    yield text[start : index + 1]
                     break
-                if depth < 0: break
+                if depth < 0:
+                    break
 
 
 def _decode_duplicate_payload(raw: str) -> dict[str, object]:
@@ -161,13 +209,16 @@ def _decode_duplicate_payload(raw: str) -> dict[str, object]:
     last_error: json.JSONDecodeError | None = None
     for candidate in candidates:
         value = candidate.strip()
-        if not value or value in seen: continue
+        if not value or value in seen:
+            continue
         seen.add(value)
-        try: payload = json.loads(value)
+        try:
+            payload = json.loads(value)
         except json.JSONDecodeError as exc:
             last_error = exc
             continue
-        if isinstance(payload, dict) and isinstance(payload.get("clusters"), list): return payload
+        if isinstance(payload, dict) and isinstance(payload.get("clusters"), list):
+            return payload
     raise AIRouterError("AI повернув глобальний пошук дублікатів не у валідному JSON.") from last_error
 
 
@@ -176,16 +227,24 @@ def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateClu
     result: list[DuplicateCluster] = []
     used: set[int] = set()
     for row in payload["clusters"]:
-        if not isinstance(row, dict): continue
+        if not isinstance(row, dict):
+            continue
         ids: list[int] = []
         for value in row.get("group_ids", []):
-            try: group_id = int(value)
-            except (TypeError, ValueError): continue
-            if group_id in valid_ids and group_id not in ids and group_id not in used: ids.append(group_id)
-        try: confidence = max(0, min(100, int(row.get("confidence") or 0)))
-        except (TypeError, ValueError): confidence = 0
-        if len(ids) < 2 or confidence < 55: continue
-        cluster = DuplicateCluster(tuple(ids), confidence, " ".join(str(row.get("reason") or "").split())[:500])
+            try:
+                group_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if group_id in valid_ids and group_id not in ids and group_id not in used:
+                ids.append(group_id)
+        try:
+            confidence = max(0, min(100, int(row.get("confidence") or 0)))
+        except (TypeError, ValueError):
+            confidence = 0
+        if len(ids) < 2 or confidence < 55:
+            continue
+        reason = " ".join(str(row.get("reason") or "").split())[:500]
+        cluster = DuplicateCluster(tuple(ids), confidence, reason)
         result.append(cluster)
         used.update(ids)
     return sorted(result, key=lambda item: (-item.confidence, item.group_ids))
@@ -194,8 +253,10 @@ def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateClu
 def _tokens(value: str) -> list[str]:
     result: list[str] = []
     for token in _TOKEN_RE.findall(str(value or "").casefold()):
-        if token in _STOPWORDS: continue
-        if len(token) < 3 and not token.isdigit(): continue
+        if token in _STOPWORDS:
+            continue
+        if len(token) < 3 and not token.isdigit():
+            continue
         result.append(token)
     return result
 
@@ -209,13 +270,17 @@ def _group_vector_text(group: NewsGroup) -> tuple[list[str], set[str], set[str]]
 
 def _parse_time(group: NewsGroup) -> float | None:
     raw = group.last_published_at or group.updated_at or group.created_at
-    if not raw: return None
-    try: return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
-    except (TypeError, ValueError): return None
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def _candidate_edges(groups: list[NewsGroup]) -> list[_CandidateEdge]:
-    if len(groups) < 2: return []
+    if len(groups) < 2:
+        return []
     docs: list[list[str]] = []
     titles: list[set[str]] = []
     numbers: list[set[str]] = []
@@ -223,16 +288,24 @@ def _candidate_edges(groups: list[NewsGroup]) -> list[_CandidateEdge]:
     df: Counter[str] = Counter()
     for group in groups:
         doc, title, nums = _group_vector_text(group)
-        docs.append(doc); titles.append(title); numbers.append(nums); times.append(_parse_time(group)); df.update(set(doc))
+        docs.append(doc)
+        titles.append(title)
+        numbers.append(nums)
+        times.append(_parse_time(group))
+        df.update(set(doc))
+
     n = len(groups)
     vectors: list[dict[str, float]] = []
     norms: list[float] = []
     for doc in docs:
-        counts = Counter(doc); vector: dict[str, float] = {}
+        counts = Counter(doc)
+        vector: dict[str, float] = {}
         for token, count in counts.items():
             idf = math.log((n + 1) / (df[token] + 1)) + 1.0
             vector[token] = (1.0 + math.log(max(1, count))) * idf
-        vectors.append(vector); norms.append(math.sqrt(sum(value * value for value in vector.values())) or 1.0)
+        vectors.append(vector)
+        norms.append(math.sqrt(sum(value * value for value in vector.values())) or 1.0)
+
     all_scores: list[list[tuple[float, int]]] = [[] for _ in groups]
     for left in range(n):
         for right in range(left + 1, n):
@@ -240,72 +313,121 @@ def _candidate_edges(groups: list[NewsGroup]) -> list[_CandidateEdge]:
             dot = sum(value * large.get(token, 0.0) for token, value in small.items())
             cosine = dot / (norms[left] * norms[right])
             union = titles[left] | titles[right]
-            title_jaccard = len(titles[left] & titles[right]) / len(union) if union else 0.0
-            number_bonus = 0.08 if numbers[left] and numbers[left] & numbers[right] else 0.0
+            title_jaccard = (len(titles[left] & titles[right]) / len(union)) if union else 0.0
+            number_bonus = 0.08 if numbers[left] and (numbers[left] & numbers[right]) else 0.0
             time_bonus = 0.0
             if times[left] is not None and times[right] is not None:
                 delta_hours = abs(times[left] - times[right]) / 3600.0
-                if delta_hours <= 24: time_bonus = 0.05
-                elif delta_hours <= 72: time_bonus = 0.025
+                if delta_hours <= 24:
+                    time_bonus = 0.05
+                elif delta_hours <= 72:
+                    time_bonus = 0.025
             shared_tokens = set(docs[left]) & set(docs[right])
             rare_limit = max(4, math.ceil(n * 0.08))
             shared_rare = any(df[token] <= rare_limit for token in shared_tokens)
-            shared_numbers = bool(numbers[left] and numbers[left] & numbers[right])
-            if max(cosine, title_jaccard) < 0.03: time_bonus = 0.0
+            shared_numbers = bool(numbers[left] and (numbers[left] & numbers[right]))
+            lexical_evidence = max(cosine, title_jaccard)
+            if lexical_evidence < 0.03:
+                time_bonus = 0.0
             score = 0.72 * cosine + 0.20 * title_jaccard + number_bonus + time_bonus
             eligible = shared_rare or (shared_numbers and cosine >= 0.08) or (title_jaccard >= 0.40 and cosine >= 0.08)
-            if not eligible: score = 0.0
-            all_scores[left].append((score, right)); all_scores[right].append((score, left))
+            if not eligible:
+                score = 0.0
+            all_scores[left].append((score, right))
+            all_scores[right].append((score, left))
+
     edge_map: dict[tuple[int, int], float] = {}
     for index, candidates in enumerate(all_scores):
         selected = [item for item in sorted(candidates, key=lambda item: item[0], reverse=True) if item[0] >= 0.11]
         for score, other in selected[:_NEIGHBORS_PER_GROUP]:
-            left, right = sorted((index, other)); edge_map[(left, right)] = max(score, edge_map.get((left, right), -1.0))
-    return [_CandidateEdge(left, right, score) for (left, right), score in sorted(edge_map.items(), key=lambda item: item[1], reverse=True)]
+            left, right = sorted((index, other))
+            edge_map[(left, right)] = max(score, edge_map.get((left, right), -1.0))
+    return [
+        _CandidateEdge(left, right, score)
+        for (left, right), score in sorted(edge_map.items(), key=lambda item: item[1], reverse=True)
+    ]
 
 
 def build_global_duplicate_batches(groups: list[NewsGroup]) -> list[list[NewsGroup]]:
-    if len(groups) < 2: return []
+    """Build small candidate-only batches instead of sending unrelated news to AI."""
+    if len(groups) < 2:
+        return []
+
     edges = _candidate_edges(groups)
-    if not edges: return []
+    if not edges:
+        return []
     remaining = {(edge.left, edge.right): edge.score for edge in edges}
     batches: list[list[NewsGroup]] = []
     while remaining:
-        seed = max(remaining, key=remaining.get); nodes: set[int] = set(seed)
+        seed = max(remaining, key=remaining.get)
+        nodes: set[int] = set(seed)
         while len(nodes) < _MAX_BATCH_GROUPS:
-            touching = [(score, left, right) for (left, right), score in remaining.items() if (left in nodes) ^ (right in nodes)]
-            if not touching: break
-            _score, left, right = max(touching); nodes.add(right if left in nodes else left)
-        batches.append([groups[index] for index in sorted(nodes)])
+            touching = [
+                (score, left, right)
+                for (left, right), score in remaining.items()
+                if (left in nodes) ^ (right in nodes)
+            ]
+            if not touching:
+                break
+            _score, left, right = max(touching)
+            nodes.add(right if left in nodes else left)
+        ordered = sorted(nodes)
+        batches.append([groups[index] for index in ordered])
         for edge in list(remaining):
-            if edge[0] in nodes and edge[1] in nodes: remaining.pop(edge, None)
+            if edge[0] in nodes and edge[1] in nodes:
+                remaining.pop(edge, None)
+
     return batches
 
 
 def _select_non_overlapping(clusters: Iterable[DuplicateCluster]) -> list[DuplicateCluster]:
-    result: list[DuplicateCluster] = []; used: set[int] = set()
+    result: list[DuplicateCluster] = []
+    used: set[int] = set()
     for cluster in sorted(clusters, key=lambda item: (-item.confidence, item.group_ids)):
-        if used.intersection(cluster.group_ids): continue
-        result.append(cluster); used.update(cluster.group_ids)
+        if used.intersection(cluster.group_ids):
+            continue
+        result.append(cluster)
+        used.update(cluster.group_ids)
     return result
 
 
 def _run_duplicate_router(prompt: str, local_prompt: str, *, validator):
     try:
-        return run_ai(prompt, validator=validator, max_output_tokens=_DUPLICATE_OUTPUT_TOKENS, local_prompt=local_prompt, local_max_output_tokens=220, local_timeout_seconds=90, local_repair=False)
+        return run_ai(
+            prompt,
+            validator=validator,
+            max_output_tokens=_DUPLICATE_OUTPUT_TOKENS,
+            local_prompt=local_prompt,
+            local_max_output_tokens=220,
+            local_timeout_seconds=90,
+            local_repair=False,
+        )
     except TypeError as exc:
-        if "unexpected keyword argument" not in str(exc): raise
+        if "unexpected keyword argument" not in str(exc):
+            raise
         return run_ai(prompt, validator=validator, max_output_tokens=_DUPLICATE_OUTPUT_TOKENS)
 
 
-def find_global_duplicate_clusters(groups: list[NewsGroup], *, feedback: Iterable[dict[str, object]] = (), graph_memory: str = "") -> list[DuplicateCluster]:
-    if len(groups) < 2: return []
+def find_global_duplicate_clusters(
+    groups: list[NewsGroup],
+    *,
+    feedback: Iterable[dict[str, object]] = (),
+    graph_memory: str = "",
+) -> list[DuplicateCluster]:
+    if len(groups) < 2:
+        return []
+
     batches = build_global_duplicate_batches(groups)
     proposals: list[DuplicateCluster] = []
     for batch in batches:
         prompt = build_global_duplicate_prompt(batch, feedback=feedback, graph_memory=graph_memory)
         valid_ids = {group.id for group in batch}
-        def validate(raw: str, ids: set[int] = valid_ids) -> None: parse_duplicate_clusters(raw, ids)
-        routed = _run_duplicate_router(prompt, build_local_duplicate_prompt(batch), validator=validate)
+
+        def validate(raw: str, ids: set[int] = valid_ids) -> None:
+            parse_duplicate_clusters(raw, ids)
+
+        local_prompt = build_local_duplicate_prompt(batch)
+        routed = _run_duplicate_router(prompt, local_prompt, validator=validate)
         proposals.extend(parse_duplicate_clusters(routed.text, valid_ids))
+
     return _select_non_overlapping(proposals)
