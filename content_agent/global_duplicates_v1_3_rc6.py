@@ -1,14 +1,30 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Iterable
 
-from .ai_router_v1_2_1 import AIRouterError, run_ai
+from .ai_router_v1_2_2 import AIRouterError, run_ai
 from .models import NewsGroup
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_TOKEN_RE = re.compile(r"[^\W_]{2,}", re.UNICODE)
+_MAX_BATCH_GROUPS = 12
+_MAX_BATCH_PROMPT_CHARS = 8_000
+_NEIGHBORS_PER_GROUP = 4
+_DUPLICATE_OUTPUT_TOKENS = 900
+
+# Lightweight stopword set for the languages that dominate the inbox. The
+# prefilter only proposes candidates; AI still makes the actual merge decision.
+_STOPWORDS = {
+    "the", "and", "for", "with", "from", "that", "this", "have", "has", "was", "were", "are", "not", "but", "into", "about", "after", "before", "over", "under", "new", "news",
+    "і", "й", "та", "але", "або", "для", "про", "від", "до", "на", "у", "в", "з", "із", "за", "що", "це", "як", "не", "після", "перед", "новий", "нова", "нове", "нові",
+    "и", "а", "но", "или", "для", "про", "от", "до", "на", "в", "с", "из", "за", "что", "это", "как", "не", "после", "перед", "новый", "новая", "новое", "новые",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +32,13 @@ class DuplicateCluster:
     group_ids: tuple[int, ...]
     confidence: int
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateEdge:
+    left: int
+    right: int
+    score: float
 
 
 def _plain_group_text(group: NewsGroup, limit: int) -> str:
@@ -28,12 +51,12 @@ def _plain_group_text(group: NewsGroup, limit: int) -> str:
     return value[:limit]
 
 
-def _feedback_text(feedback: Iterable[dict[str, object]], limit: int = 60) -> str:
+def _feedback_text(feedback: Iterable[dict[str, object]], limit: int = 12) -> str:
     rows: list[str] = []
     for item in list(feedback)[-limit:]:
         decision = str(item.get("decision") or "").strip()
-        left = " ".join(str(item.get("anchor_text") or "").split())[:260]
-        right = " ".join(str(item.get("candidate_text") or "").split())[:260]
+        left = " ".join(str(item.get("anchor_text") or "").split())[:180]
+        right = " ".join(str(item.get("candidate_text") or "").split())[:180]
         if not decision or not left or not right:
             continue
         label = "ОБ'ЄДНАНО" if decision == "merged" else "НЕ ПОВ'ЯЗАНО"
@@ -41,42 +64,35 @@ def _feedback_text(feedback: Iterable[dict[str, object]], limit: int = 60) -> st
     return "\n".join(rows)
 
 
+def _clean_title(value: str, limit: int = 220) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
 def build_global_duplicate_prompt(
     groups: list[NewsGroup],
     *,
     feedback: Iterable[dict[str, object]] = (),
     graph_memory: str = "",
+    max_chars: int = _MAX_BATCH_PROMPT_CHARS,
 ) -> str:
     if len(groups) < 2:
         return ""
-    # Every new group must be represented. Shrink excerpts as the inbox grows so
-    # one global pass does not silently drop old/new candidates to fit context.
-    excerpt_limit = max(140, min(700, 90_000 // max(1, len(groups))))
-    records: list[str] = []
-    for group in groups:
-        records.append(
-            " | ".join(
-                (
-                    f"ID={group.id}",
-                    f"ДЖЕРЕЛ={group.source_count}",
-                    f"ЧАС={group.last_published_at or group.updated_at or 'невідомо'}",
-                    f"ЗАГОЛОВОК={group.canonical_title}",
-                    f"ТЕКСТ={_plain_group_text(group, excerpt_limit)}",
-                )
-            )
-        )
+
     feedback_block = _feedback_text(feedback)
     memory = ""
     if feedback_block:
         memory += "\n\nПОПЕРЕДНІ РІШЕННЯ РЕДАКТОРА:\n" + feedback_block
     if graph_memory:
-        memory += (
-            "\n\nЛОКАЛЬНА РЕДАКЦІЙНА ПАМ'ЯТЬ:\n"
-            + graph_memory
-            + "\nПам'ять є лише прикладом правил редактора, не джерелом фактів про поточні новини."
-        )
-    return f"""
-Проаналізуй ВСІ наведені нові редакційні блоки між собою та знайди групи, які варто об'єднати як дублікати або повідомлення про ту саму конкретну подію.
+        compact_graph = " ".join(str(graph_memory).split())[:1200]
+        if compact_graph:
+            memory += (
+                "\n\nЛОКАЛЬНА РЕДАКЦІЙНА ПАМ'ЯТЬ:\n"
+                + compact_graph
+                + "\nПам'ять є лише прикладом правил редактора, не джерелом фактів про поточні новини."
+            )
+
+    header = f"""
+Проаналізуй ВСІ наведені редакційні блоки між собою та знайди групи, які варто об'єднати як дублікати або повідомлення про ту саму конкретну подію.
 
 ПРАВИЛА:
 1. Один ID може входити максимум в один запропонований кластер.
@@ -85,25 +101,129 @@ def build_global_duplicate_prompt(
 4. Одна країна, людина, організація, війна, тема чи рубрика НЕ є достатньою підставою для об'єднання.
 5. Різні події, що сталися з тим самим об'єктом у різний час, залишай окремими.
 6. Якщо впевненість нижча за 55%, не пропонуй кластер.
-7. Блок із ДЖЕРЕЛ>1 вже є об'єднаним блоком, але його все одно порівнюй з усіма іншими.
+7. Блок із ДЖЕРЕЛ>1 вже є об'єднаним блоком, але його все одно порівнюй з іншими.
 8. Не вигадуй зв'язків. Краще пропустити сумнівний дублікат, ніж об'єднати різні події.
 
 Поверни РІВНО JSON без markdown і без пояснення до/після:
 {{"clusters":[{{"group_ids":[12,18],"confidence":91,"reason":"коротка конкретна причина"}}]}}
 {memory}
 
-УСІ НОВІ БЛОКИ ({len(groups)}):
-""".strip() + "\n" + "\n".join(records)
+БЛОКИ В ЦЬОМУ ПАКЕТІ ({len(groups)}):
+""".strip()
+
+    fixed = len(header) + 80 * len(groups) + 1
+    available = max(120 * len(groups), max_chars - fixed)
+    excerpt_limit = max(100, min(420, available // max(1, len(groups)) - 80))
+
+    def records_for(limit: int) -> list[str]:
+        rows: list[str] = []
+        for group in groups:
+            rows.append(
+                " | ".join(
+                    (
+                        f"ID={group.id}",
+                        f"ДЖЕРЕЛ={group.source_count}",
+                        f"ЧАС={group.last_published_at or group.updated_at or 'невідомо'}",
+                        f"ЗАГОЛОВОК={_clean_title(group.canonical_title)}",
+                        f"ТЕКСТ={_plain_group_text(group, limit)}",
+                    )
+                )
+            )
+        return rows
+
+    records = records_for(excerpt_limit)
+    prompt = header + "\n" + "\n".join(records)
+    if len(prompt) > max_chars:
+        overflow = len(prompt) - max_chars
+        shrink_each = math.ceil(overflow / max(1, len(groups))) + 16
+        excerpt_limit = max(70, excerpt_limit - shrink_each)
+        records = records_for(excerpt_limit)
+        prompt = header + "\n" + "\n".join(records)
+    return prompt
+
+
+def build_local_duplicate_prompt(groups: list[NewsGroup], *, max_chars: int = 3600) -> str:
+    """Small emergency prompt for CPU Ollama.
+
+    Candidate generation has already happened locally, so the fallback model only
+    needs compact titles/excerpts and IDs. It does not need graph-memory dumps or
+    8K characters of editorial context just to decide same-event clusters.
+    """
+
+    if len(groups) < 2:
+        return ""
+    rows: list[str] = []
+    per_group = max(160, min(300, (max_chars - 900) // max(1, len(groups))))
+    for group in groups:
+        rows.append(
+            f"ID={group.id} | ЗАГОЛОВОК={_clean_title(group.canonical_title, 180)} | "
+            f"ТЕКСТ={_plain_group_text(group, per_group)}"
+        )
+    prompt = (
+        "Знайди лише дублікати або повідомлення про ТУ САМУ конкретну подію. "
+        "Одна тема, країна чи організація не означає дублікат. Якщо сумніваєшся — не об'єднуй.\n"
+        "Поверни ТІЛЬКИ JSON без пояснень: "
+        '{"clusters":[{"group_ids":[12,18],"confidence":91,"reason":"коротко"}]}\n'
+        "БЛОКИ:\n"
+        + "\n".join(rows)
+    )
+    return prompt[:max_chars]
+
+
+def _balanced_json_objects(value: str) -> Iterable[str]:
+    text = str(value or "")
+    for start, char in enumerate(text):
+        if char != "{":
+            continue
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(text)):
+            current = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == '"':
+                    in_string = False
+                continue
+            if current == '"':
+                in_string = True
+                continue
+            if current == "{":
+                depth += 1
+            elif current == "}":
+                depth -= 1
+                if depth == 0:
+                    yield text[start : index + 1]
+                    break
+                if depth < 0:
+                    break
+
+
+def _decode_duplicate_payload(raw: str) -> dict[str, object]:
+    cleaned = _CODE_FENCE.sub("", str(raw or "").strip()).strip()
+    candidates = [cleaned, *_balanced_json_objects(cleaned)]
+    seen: set[str] = set()
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        value = candidate.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("clusters"), list):
+            return payload
+    raise AIRouterError("AI повернув глобальний пошук дублікатів не у валідному JSON.") from last_error
 
 
 def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateCluster]:
-    cleaned = _CODE_FENCE.sub("", str(raw or "").strip()).strip()
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise AIRouterError("AI повернув глобальний пошук дублікатів не у валідному JSON.") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("clusters"), list):
-        raise AIRouterError("AI повернув неправильну структуру глобального пошуку дублікатів.")
+    payload = _decode_duplicate_payload(raw)
     result: list[DuplicateCluster] = []
     used: set[int] = set()
     for row in payload["clusters"]:
@@ -130,6 +250,164 @@ def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateClu
     return sorted(result, key=lambda item: (-item.confidence, item.group_ids))
 
 
+def _tokens(value: str) -> list[str]:
+    result: list[str] = []
+    for token in _TOKEN_RE.findall(str(value or "").casefold()):
+        if token in _STOPWORDS:
+            continue
+        if len(token) < 3 and not token.isdigit():
+            continue
+        result.append(token)
+    return result
+
+
+def _group_vector_text(group: NewsGroup) -> tuple[list[str], set[str], set[str]]:
+    title_tokens = _tokens(_clean_title(group.canonical_title, 300))
+    text_tokens = _tokens(_plain_group_text(group, 1200))
+    numbers = {token for token in title_tokens + text_tokens if token.isdigit() and len(token) >= 2}
+    return title_tokens + text_tokens, set(title_tokens), numbers
+
+
+def _parse_time(group: NewsGroup) -> float | None:
+    raw = group.last_published_at or group.updated_at or group.created_at
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _candidate_edges(groups: list[NewsGroup]) -> list[_CandidateEdge]:
+    if len(groups) < 2:
+        return []
+    docs: list[list[str]] = []
+    titles: list[set[str]] = []
+    numbers: list[set[str]] = []
+    times: list[float | None] = []
+    df: Counter[str] = Counter()
+    for group in groups:
+        doc, title, nums = _group_vector_text(group)
+        docs.append(doc)
+        titles.append(title)
+        numbers.append(nums)
+        times.append(_parse_time(group))
+        df.update(set(doc))
+
+    n = len(groups)
+    vectors: list[dict[str, float]] = []
+    norms: list[float] = []
+    for doc in docs:
+        counts = Counter(doc)
+        vector: dict[str, float] = {}
+        for token, count in counts.items():
+            idf = math.log((n + 1) / (df[token] + 1)) + 1.0
+            vector[token] = (1.0 + math.log(max(1, count))) * idf
+        vectors.append(vector)
+        norms.append(math.sqrt(sum(value * value for value in vector.values())) or 1.0)
+
+    all_scores: list[list[tuple[float, int]]] = [[] for _ in groups]
+    for left in range(n):
+        for right in range(left + 1, n):
+            small, large = (vectors[left], vectors[right]) if len(vectors[left]) <= len(vectors[right]) else (vectors[right], vectors[left])
+            dot = sum(value * large.get(token, 0.0) for token, value in small.items())
+            cosine = dot / (norms[left] * norms[right])
+            union = titles[left] | titles[right]
+            title_jaccard = (len(titles[left] & titles[right]) / len(union)) if union else 0.0
+            number_bonus = 0.08 if numbers[left] and (numbers[left] & numbers[right]) else 0.0
+            time_bonus = 0.0
+            if times[left] is not None and times[right] is not None:
+                delta_hours = abs(times[left] - times[right]) / 3600.0
+                if delta_hours <= 24:
+                    time_bonus = 0.05
+                elif delta_hours <= 72:
+                    time_bonus = 0.025
+            shared_tokens = set(docs[left]) & set(docs[right])
+            rare_limit = max(4, math.ceil(n * 0.08))
+            shared_rare = any(df[token] <= rare_limit for token in shared_tokens)
+            shared_numbers = bool(numbers[left] and (numbers[left] & numbers[right]))
+            lexical_evidence = max(cosine, title_jaccard)
+            if lexical_evidence < 0.03:
+                time_bonus = 0.0
+            score = 0.72 * cosine + 0.20 * title_jaccard + number_bonus + time_bonus
+            eligible = shared_rare or (shared_numbers and cosine >= 0.08) or (title_jaccard >= 0.40 and cosine >= 0.08)
+            if not eligible:
+                score = 0.0
+            all_scores[left].append((score, right))
+            all_scores[right].append((score, left))
+
+    edge_map: dict[tuple[int, int], float] = {}
+    for index, candidates in enumerate(all_scores):
+        selected = [item for item in sorted(candidates, key=lambda item: item[0], reverse=True) if item[0] >= 0.11]
+        for score, other in selected[:_NEIGHBORS_PER_GROUP]:
+            left, right = sorted((index, other))
+            edge_map[(left, right)] = max(score, edge_map.get((left, right), -1.0))
+    return [
+        _CandidateEdge(left, right, score)
+        for (left, right), score in sorted(edge_map.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+
+def build_global_duplicate_batches(groups: list[NewsGroup]) -> list[list[NewsGroup]]:
+    """Build small candidate-only batches instead of sending unrelated news to AI."""
+    if len(groups) < 2:
+        return []
+
+    edges = _candidate_edges(groups)
+    if not edges:
+        return []
+    remaining = {(edge.left, edge.right): edge.score for edge in edges}
+    batches: list[list[NewsGroup]] = []
+    while remaining:
+        seed = max(remaining, key=remaining.get)
+        nodes: set[int] = set(seed)
+        while len(nodes) < _MAX_BATCH_GROUPS:
+            touching = [
+                (score, left, right)
+                for (left, right), score in remaining.items()
+                if (left in nodes) ^ (right in nodes)
+            ]
+            if not touching:
+                break
+            _score, left, right = max(touching)
+            nodes.add(right if left in nodes else left)
+        ordered = sorted(nodes)
+        batches.append([groups[index] for index in ordered])
+        for edge in list(remaining):
+            if edge[0] in nodes and edge[1] in nodes:
+                remaining.pop(edge, None)
+
+    return batches
+
+
+def _select_non_overlapping(clusters: Iterable[DuplicateCluster]) -> list[DuplicateCluster]:
+    result: list[DuplicateCluster] = []
+    used: set[int] = set()
+    for cluster in sorted(clusters, key=lambda item: (-item.confidence, item.group_ids)):
+        if used.intersection(cluster.group_ids):
+            continue
+        result.append(cluster)
+        used.update(cluster.group_ids)
+    return result
+
+
+def _run_duplicate_router(prompt: str, local_prompt: str, *, validator):
+    try:
+        return run_ai(
+            prompt,
+            validator=validator,
+            max_output_tokens=_DUPLICATE_OUTPUT_TOKENS,
+            local_prompt=local_prompt,
+            local_max_output_tokens=220,
+            local_timeout_seconds=90,
+            local_repair=False,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        return run_ai(prompt, validator=validator, max_output_tokens=_DUPLICATE_OUTPUT_TOKENS)
+
+
 def find_global_duplicate_clusters(
     groups: list[NewsGroup],
     *,
@@ -138,11 +416,18 @@ def find_global_duplicate_clusters(
 ) -> list[DuplicateCluster]:
     if len(groups) < 2:
         return []
-    prompt = build_global_duplicate_prompt(groups, feedback=feedback, graph_memory=graph_memory)
-    valid_ids = {group.id for group in groups}
 
-    def validate(raw: str) -> None:
-        parse_duplicate_clusters(raw, valid_ids)
+    batches = build_global_duplicate_batches(groups)
+    proposals: list[DuplicateCluster] = []
+    for batch in batches:
+        prompt = build_global_duplicate_prompt(batch, feedback=feedback, graph_memory=graph_memory)
+        valid_ids = {group.id for group in batch}
 
-    routed = run_ai(prompt, validator=validate)
-    return parse_duplicate_clusters(routed.text, valid_ids)
+        def validate(raw: str, ids: set[int] = valid_ids) -> None:
+            parse_duplicate_clusters(raw, ids)
+
+        local_prompt = build_local_duplicate_prompt(batch)
+        routed = _run_duplicate_router(prompt, local_prompt, validator=validate)
+        proposals.extend(parse_duplicate_clusters(routed.text, valid_ids))
+
+    return _select_non_overlapping(proposals)

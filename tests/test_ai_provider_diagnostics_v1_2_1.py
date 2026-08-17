@@ -47,22 +47,27 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
     assert by_provider["groq"].status == "error"
 
 
-def test_provider_quota_stops_without_hammering_other_models(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_model_quota_continues_to_next_model(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = router.AIProviderSecrets(nvidia_api_key="nv")
     calls: list[str] = []
     monkeypatch.setattr(diagnostics, "load_provider_secrets", lambda: cfg)
     monkeypatch.setattr(diagnostics, "_configured", lambda slot, _cfg: slot.provider == "nvidia")
 
+    nvidia_models = [slot.model for slot in router.MODEL_SLOTS if slot.provider == "nvidia"]
+
     def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str) -> str:
         calls.append(slot.model)
-        raise router.AIModelError("quota", kind="quota")
+        if slot.model == nvidia_models[0]:
+            raise router.AIModelError("model quota", kind="quota")
+        return "UA_FREE_PROVIDER_OK"
 
     monkeypatch.setattr(diagnostics, "_invoke_slot", invoke)
     rows = diagnostics.test_configured_providers()
     by_provider = {row.provider: row for row in rows}
 
-    assert len(calls) == 1
-    assert by_provider["nvidia"].status == "warning"
+    assert calls[:2] == nvidia_models[:2]
+    assert by_provider["nvidia"].status == "ok"
+    assert by_provider["nvidia"].model == nvidia_models[1]
 
 
 def test_unconfigured_provider_is_not_called(monkeypatch: pytest.MonkeyPatch) -> None:

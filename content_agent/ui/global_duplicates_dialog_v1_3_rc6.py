@@ -9,7 +9,7 @@ from ..models import NewsGroup
 
 
 class GlobalDuplicatesDialog(tk.Toplevel):
-    """Review several independent merge proposals from one global Codex pass."""
+    """Review merge proposals produced by AI or the deterministic local fallback."""
 
     def __init__(
         self,
@@ -33,7 +33,7 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         header.pack(fill="x")
         ttk.Label(
             header,
-            text="Codex проаналізував усі нові блоки між собою",
+            text="Знайдено кандидати на об’єднання серед нових матеріалів",
             font="TkHeadingFont",
         ).pack(anchor="w")
         self.summary_var = tk.StringVar()

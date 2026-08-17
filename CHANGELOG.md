@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.2.2 — 2026-08-17
+
+### Added
+
+- Ollama-first local emergency AI runtime that reuses already installed Ollama and local models without reinstalling or downloading them.
+- Hidden `ollama serve` startup on Windows when Ollama is installed but not running.
+- Explicit local AI diagnostics that report the actual engine and model in use.
+- Bounded global duplicate search with cancellation, global deadlines, GUI watchdog protection, and deterministic local fallback.
+- Title-first duplicate candidate generation using rare terms and adjacent title bigrams.
+- Regression coverage for large and noisy Inbox datasets and for the reproduced live duplicate pair among approximately 1000 items.
+
+### Changed
+
+- Production rewrite now uses the bounded AI Router and can reach Ollama in the real rewrite path, not only in diagnostics.
+- Local rewrite and duplicate-classification prompts are compacted for small local models.
+- Duplicate classification accepts the compact `MERGE ...` protocol while retaining compatibility with JSON responses.
+- Strong deterministic duplicate candidates remain available for human review even when AI returns `NONE`, invalid output, quota errors, or times out.
+- AI provider failures are bounded per operation so repeated quota/429 failures do not turn one duplicate scan into a multi-minute provider loop.
+
+### Fixed
+
+- Global duplicate search no longer hangs the Tkinter UI during long provider failover.
+- Duplicate search no longer returns an empty result merely because AI formatting is invalid.
+- Dense candidate posting lists no longer exhaust the internal search deadline before obvious duplicate pairs are surfaced.
+- Late AI callbacks after timeout/cancellation are ignored.
+- Local fallback no longer reports a generic llama.cpp failure when a working Ollama model is available.
+
+### Validation
+
+- Final RC7: 406 automated tests passed.
+- Windows CI passed on Python 3.11, 3.12, and 3.13.
+- Portable runtime build, GUI startup smoke, Microsoft Defender scan, and ZIP CRC/integrity validation passed.
+- Live working-Data acceptance passed for both rewrite and global duplicate grouping.
+
 ## v1.1.4 — 2026-08-06
 
 ### Added

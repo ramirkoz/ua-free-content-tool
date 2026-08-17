@@ -285,7 +285,12 @@ class OllamaClient:
             raise OllamaError("Спочатку оберіть установлену модель Ollama.")
         with _OLLAMA_OPERATION_LOCK:
             self.preload_model(model)
-            context_window = 3072 if len(prompt) <= 7_000 else 4096
+            if len(prompt) <= 3_500:
+                context_window = 1536
+            elif len(prompt) <= 7_000:
+                context_window = 2048
+            else:
+                context_window = 3072
             payload = {
                 "model": model,
                 "prompt": prompt,
@@ -313,7 +318,7 @@ class OllamaClient:
                 raise OllamaError(f"Ollama повернула HTTP {exc.code}.") from exc
             except (URLError, TimeoutError, socket.timeout) as exc:
                 raise OllamaTimeoutError(
-                    f"Ollama не завершила пошук за темою за {self.timeout} секунд."
+                    f"Ollama не завершила локальне AI-завдання за {self.timeout} секунд."
                 ) from exc
             try:
                 result = json.loads(body.decode("utf-8"))
