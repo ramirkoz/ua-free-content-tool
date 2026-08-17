@@ -90,6 +90,22 @@ def test_duplicate_search_can_be_cancelled_before_ai(monkeypatch: pytest.MonkeyP
     assert called is False
 
 
+def test_duplicate_search_cancelled_while_ai_result_is_returning(monkeypatch: pytest.MonkeyPatch) -> None:
+    groups = [
+        _group(1, "Одна подія 123", "Одна подія 123 сталася сьогодні."),
+        _group(2, "Одна подія 123", "Одна подія 123 сталася сьогодні."),
+    ]
+    event = threading.Event()
+
+    def fake_run_ai(*args, **kwargs):
+        event.set()
+        return SimpleNamespace(text="MERGE 1,2 | 95 | та сама подія")
+
+    monkeypatch.setattr(dup, "run_ai", fake_run_ai)
+    with pytest.raises(dup.DuplicateSearchCancelled):
+        dup.find_global_duplicate_clusters(groups, cancel_event=event, deadline_seconds=20)
+
+
 def test_ai_workflow_has_hard_ui_timeout_and_cancel_button() -> None:
     from pathlib import Path
     source = Path("content_agent/ui/ai_workflow_v1_3_rc6.py").read_text(encoding="utf-8")
