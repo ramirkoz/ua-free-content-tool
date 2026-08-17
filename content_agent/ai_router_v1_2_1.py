@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .codex_engine_v1_3 import CodexEngineError, inspect_codex, run_codex
 from .network import NetworkError, fetch_url
 from .paths import data_dir
+from .local_ai_runtime_v1_2_2 import LocalAIRuntimeError, generate_local_text
 
 
 class AIRouterError(RuntimeError):
@@ -103,7 +104,7 @@ MODEL_SLOTS: tuple[AIModelSlot, ...] = (
     AIModelSlot(14, "cloudflare", "@cf/zai-org/glm-4.7-flash", "GLM-4.7 Flash / Cloudflare"),
     AIModelSlot(15, "sambanova", "DeepSeek-V3.1", "DeepSeek V3.1 / SambaNova"),
     AIModelSlot(16, "openrouter", "openrouter/free", "OpenRouter Free Router"),
-    AIModelSlot(17, "local", "local-model", "Локальний AI / llama.cpp", "local"),
+    AIModelSlot(17, "local", "local-model", "Локальний AI · Ollama → llama.cpp", "local"),
 )
 
 _SECRET_HEADER = b"UA_FREE_AI_ROUTER_AESGCM_V1\n"
@@ -407,39 +408,21 @@ def _gemini_call(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str) -> str:
 
 
 def _local_call(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str) -> str:
-    parts = urlsplit(cfg.local_base_url)
-    if parts.scheme != "http" or parts.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise AIModelError("Локальний AI URL має бути loopback HTTP адресою.", kind="configuration")
-    port = parts.port or 80
-    base_path = parts.path.rstrip("/")
-    path = f"{base_path}/chat/completions" if base_path.endswith("/v1") else f"{base_path}/v1/chat/completions"
-    payload = json.dumps(
-        {
-            "model": cfg.local_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.35,
-            "max_tokens": 4096,
-            "stream": False,
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
-    connection = http.client.HTTPConnection(parts.hostname, port, timeout=120)
+    del slot
     try:
-        connection.request("POST", path or "/v1/chat/completions", body=payload, headers={"Content-Type": "application/json"})
-        response = connection.getresponse()
-        body = response.read(4 * 1024 * 1024)
-    except OSError as exc:
-        raise AIModelError("Локальний AI недоступний.", kind="temporary") from exc
-    finally:
-        connection.close()
-    if response.status >= 400:
-        raise AIModelError(f"Локальний AI: HTTP {response.status}.", kind="temporary")
-    try:
-        return _extract_openai_text(json.loads(body.decode("utf-8")))
-    except Exception as exc:
-        if isinstance(exc, AIModelError):
-            raise
-        raise AIModelError("Локальний AI повернув неправильний JSON.", kind="bad_response") from exc
+        text, _target = generate_local_text(
+            preferred_model=cfg.local_model,
+            manual_base_url=cfg.local_base_url,
+            manual_model=cfg.local_model,
+            prompt=prompt,
+            max_output_tokens=4096,
+            temperature=0.05,
+        )
+        return text
+    except LocalAIRuntimeError as exc:
+        lowered = str(exc).casefold()
+        kind = "configuration" if any(token in lowered for token in ("не налаштован", "url має бути", "локальних моделей немає")) else "temporary"
+        raise AIModelError(str(exc), kind=kind) from exc
 
 
 def _invoke_slot(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str) -> str:
@@ -484,7 +467,7 @@ def run_ai(prompt: str, *, validator: Callable[[str], object] | None = None) -> 
     for original in MODEL_SLOTS:
         slot = original
         if slot.provider == "local":
-            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, f"{cfg.local_model or 'Local'} / llama.cpp", slot.family)
+            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, "Локальний AI · авто: Ollama → llama.cpp", slot.family)
         if not _configured(slot, cfg):
             continue
         if _cooldown_active(state, _provider_key(slot.provider), now) or _cooldown_active(state, _slot_key(slot), now):
@@ -498,7 +481,7 @@ def run_ai(prompt: str, *, validator: Callable[[str], object] | None = None) -> 
                 validator(output)
         except AIModelError as exc:
             failures.append(f"{slot.label}: {exc}")
-            key = _provider_key(slot.provider) if exc.kind in {"auth", "quota", "configuration"} else _slot_key(slot)
+            key = _provider_key(slot.provider) if exc.kind in {"auth", "configuration"} else _slot_key(slot)
             _put_cooldown(state, key, _cooldown_seconds(exc), str(exc))
             save_router_state(state)
             continue
@@ -538,7 +521,7 @@ def router_overview() -> list[dict[str, object]]:
         slot = original
         configured = _configured(slot, cfg)
         if slot.provider == "local":
-            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, f"{cfg.local_model or 'Local'} / llama.cpp", slot.family)
+            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, "Локальний AI · авто: Ollama → llama.cpp", slot.family)
         provider_cd = state.cooldowns.get(_provider_key(slot.provider), {})
         model_cd = state.cooldowns.get(_slot_key(slot), {})
         until = max(float(provider_cd.get("until", 0) or 0), float(model_cd.get("until", 0) or 0))

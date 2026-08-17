@@ -163,7 +163,7 @@ class MainWindow(RC9Window):
                     pass
             elif isinstance(widget, ttk.Checkbutton):
                 try:
-                    if str(widget.cget("text")) == "Локальний аварійний AI":
+                    if str(widget.cget("text")).startswith("Локальний аварійний AI"):
                         local_checkbutton = widget
                 except tk.TclError:
                     pass
@@ -179,7 +179,7 @@ class MainWindow(RC9Window):
                 self._provider_indicator_widgets[provider] = items
 
         self._local_diagnostic_checkbutton = local_checkbutton
-        self._local_diagnostic_base_text = "Локальний аварійний AI"
+        self._local_diagnostic_base_text = "Локальний аварійний AI · Ollama автоматично"
 
         if test_button is not None:
             test_button.configure(command=self.test_ai_router_ui)

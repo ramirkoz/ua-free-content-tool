@@ -17,6 +17,7 @@ from ..codex_engine_v1_3 import inspect_codex, install_codex, login_chatgpt
 from ..codex_news_v1_3 import rewrite_group_with_codex, run_topic_prompt_with_codex
 from ..editorial_memory import rank_editorial_examples, rank_topic_candidates
 from ..models import RewriteResult
+from ..local_ai_runtime_v1_2_2 import LocalAIRuntimeError, LocalAITarget, test_local_runtime
 from ..rowboat_bridge_v1_3 import (
     inspect_rowboat,
     install_rowboat,
@@ -70,6 +71,9 @@ class AIEngineV13Mixin:
         self.codex_status_var = tk.StringVar(value="Codex: перевірка не виконувалась")
         self.rowboat_status_var = tk.StringVar(value="Rowboat: перевірка не виконувалась")
         self.memory_graph_status_var = tk.StringVar(value="Редакційна пам’ять: готова до синхронізації")
+        self.ai_local_runtime_status_var = tk.StringVar(
+            value="Локальний резерв: спочатку використовується вже встановлена Ollama та її моделі; нічого автоматично не завантажується."
+        )
 
         ttk.Label(frame, text="AI Router · автоматичний пріоритет", font="TkHeadingFont").grid(row=0, column=0, sticky="w")
         ttk.Label(frame, textvariable=self.ai_router_status_var, foreground="#555").grid(
@@ -131,42 +135,47 @@ class AIEngineV13Mixin:
             row=5, column=3, sticky="ew", padx=(8, 14), pady=2
         )
 
-        ttk.Checkbutton(frame, text="Локальний аварійний AI", variable=self.ai_local_enabled_var).grid(
+        ttk.Checkbutton(frame, text="Локальний аварійний AI · Ollama автоматично", variable=self.ai_local_enabled_var).grid(
             row=6, column=0, sticky="w", pady=(4, 2)
         )
         ttk.Entry(frame, textvariable=self.ai_provider_vars["local_base_url"], width=46).grid(
             row=6, column=1, sticky="ew", padx=(8, 14), pady=2
         )
-        ttk.Label(frame, text="Модель").grid(row=6, column=2, sticky="e", pady=2)
+        ttk.Label(frame, text="Запасна llama.cpp модель").grid(row=6, column=2, sticky="e", pady=2)
         ttk.Entry(frame, textvariable=self.ai_provider_vars["local_model"], width=28).grid(
             row=6, column=3, sticky="ew", padx=(8, 14), pady=2
         )
 
+        ttk.Label(frame, textvariable=self.ai_local_runtime_status_var, foreground="#555", wraplength=1120).grid(
+            row=7, column=0, columnspan=5, sticky="w", pady=(2, 4)
+        )
+
         actions = ttk.Frame(frame)
-        actions.grid(row=7, column=0, columnspan=5, sticky="w", pady=(7, 4))
+        actions.grid(row=8, column=0, columnspan=5, sticky="w", pady=(7, 4))
         ttk.Button(actions, text="Зберегти AI-провайдери", command=self.save_ai_provider_settings).pack(side="left")
         ttk.Button(actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Перевірити локальний AI", command=self.test_local_ai_ui).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(16, 0))
         ttk.Button(actions, text="Увійти через ChatGPT", command=self.login_codex_ui).pack(side="left", padx=(6, 0))
 
         ttk.Label(frame, textvariable=self.codex_status_var, foreground="#555").grid(
-            row=8, column=0, columnspan=5, sticky="w", pady=(2, 5)
+            row=9, column=0, columnspan=5, sticky="w", pady=(2, 5)
         )
-        ttk.Separator(frame, orient="horizontal").grid(row=9, column=0, columnspan=5, sticky="ew", pady=6)
-        ttk.Label(frame, text="Rowboat / локальний граф пам’яті", font="TkHeadingFont").grid(row=10, column=0, sticky="w")
+        ttk.Separator(frame, orient="horizontal").grid(row=10, column=0, columnspan=5, sticky="ew", pady=6)
+        ttk.Label(frame, text="Rowboat / локальний граф пам’яті", font="TkHeadingFont").grid(row=11, column=0, sticky="w")
         ttk.Label(frame, textvariable=self.rowboat_status_var, foreground="#555").grid(
-            row=10, column=1, columnspan=4, sticky="w", padx=(10, 0)
+            row=11, column=1, columnspan=4, sticky="w", padx=(10, 0)
         )
         rowboat_actions = ttk.Frame(frame)
-        rowboat_actions.grid(row=11, column=0, columnspan=5, sticky="w", pady=(5, 2))
+        rowboat_actions.grid(row=12, column=0, columnspan=5, sticky="w", pady=(5, 2))
         ttk.Button(rowboat_actions, text="Знайти Rowboat", command=self.check_rowboat_ui).pack(side="left")
         ttk.Button(rowboat_actions, text="Встановити Rowboat", command=self.install_rowboat_ui).pack(side="left", padx=(6, 0))
         ttk.Button(rowboat_actions, text="Відкрити Rowboat", command=self.open_rowboat_ui).pack(side="left", padx=(6, 0))
         ttk.Button(rowboat_actions, text="Синхронізувати пам’ять", command=self.sync_memory_ui).pack(side="left", padx=(6, 0))
         ttk.Button(rowboat_actions, text="Відкрити папку пам’яті", command=self.open_memory_ui).pack(side="left", padx=(6, 0))
         ttk.Label(frame, textvariable=self.memory_graph_status_var, foreground="#555").grid(
-            row=12, column=0, columnspan=5, sticky="w", pady=(4, 0)
+            row=13, column=0, columnspan=5, sticky="w", pady=(4, 0)
         )
 
     def _provider_secrets_from_ui(self) -> AIProviderSecrets:
@@ -193,6 +202,47 @@ class AIEngineV13Mixin:
             return
         self.refresh_ai_component_status()
         self.set_status("AI-провайдери збережено. Cooldown скинуто.")  # type: ignore[attr-defined]
+
+    def test_local_ai_ui(self) -> None:
+        try:
+            values = self._provider_secrets_from_ui().normalized()
+            save_provider_secrets(values)
+        except Exception as exc:
+            self._show_error(exc)  # type: ignore[attr-defined]
+            return
+        if not values.local_enabled:
+            self.ai_local_runtime_status_var.set("Локальний резерв вимкнено.")
+            self.set_status("Локальний аварійний AI вимкнено.")  # type: ignore[attr-defined]
+            return
+
+        def success(result: object) -> None:
+            if not isinstance(result, LocalAITarget):
+                self.set_status(f"Неправильний результат локальної перевірки: {result}")  # type: ignore[attr-defined]
+                return
+            clear_router_cooldowns()
+            started = " · Ollama була запущена програмою" if result.started_by_app else ""
+            self.ai_local_runtime_status_var.set(
+                f"Локальний резерв готовий: {result.label}{started}. Нові моделі не встановлювалися і не завантажувалися."
+            )
+            self.refresh_ai_component_status()
+            self.set_status(f"Локальний AI працює: {result.label}")  # type: ignore[attr-defined]
+
+        def action() -> object:
+            try:
+                return test_local_runtime(
+                    preferred_model=values.local_model,
+                    manual_base_url=values.local_base_url,
+                    manual_model=values.local_model,
+                )
+            except LocalAIRuntimeError:
+                raise
+
+        self.run_async(  # type: ignore[attr-defined]
+            action,
+            success,
+            label="Перевіряю Ollama / локальний резерв",
+            done_label="Локальний AI перевірено",
+        )
 
     def clear_ai_router_cooldowns_ui(self) -> None:
         clear_router_cooldowns()

@@ -8,6 +8,7 @@ from urllib.parse import quote, urlsplit
 
 from . import ai_router_v1_2_1 as legacy
 from .network import NetworkError, fetch_url
+from .local_ai_runtime_v1_2_2 import LocalAIRuntimeError, generate_local_text
 
 AIRouterError = legacy.AIRouterError
 AIModelError = legacy.AIModelError
@@ -172,41 +173,26 @@ def _local_call_limited(
     *,
     max_output_tokens: int,
 ) -> str:
-    parts = urlsplit(cfg.local_base_url)
-    if parts.scheme != "http" or parts.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise AIModelError("Локальний AI URL має бути loopback HTTP адресою.", kind="configuration")
-    port = parts.port or 80
-    base_path = parts.path.rstrip("/")
-    path = f"{base_path}/chat/completions" if base_path.endswith("/v1") else f"{base_path}/v1/chat/completions"
-    payload = json.dumps(
-        {
-            "model": cfg.local_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.35,
-            "max_tokens": max(128, min(4096, int(max_output_tokens))),
-            "stream": False,
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
-    connection = http.client.HTTPConnection(parts.hostname, port, timeout=120)
+    del slot
     try:
-        connection.request("POST", path or "/v1/chat/completions", body=payload, headers={"Content-Type": "application/json"})
-        response = connection.getresponse()
-        body = response.read(4 * 1024 * 1024)
-    except OSError as exc:
-        raise AIModelError("Локальний AI недоступний.", kind="temporary") from exc
-    finally:
-        connection.close()
-    if response.status == 413:
-        raise AIModelError("Локальний AI: запит завеликий.", kind="request_too_large")
-    if response.status >= 400:
-        raise AIModelError(f"Локальний AI: HTTP {response.status}.", kind="temporary")
-    try:
-        return legacy._extract_openai_text(json.loads(body.decode("utf-8")))
-    except Exception as exc:
-        if isinstance(exc, AIModelError):
-            raise
-        raise AIModelError("Локальний AI повернув неправильний JSON.", kind="bad_response") from exc
+        text, _target = generate_local_text(
+            preferred_model=cfg.local_model,
+            manual_base_url=cfg.local_base_url,
+            manual_model=cfg.local_model,
+            prompt=prompt,
+            max_output_tokens=max_output_tokens,
+            temperature=0.0,
+        )
+        return text
+    except LocalAIRuntimeError as exc:
+        lowered = str(exc).casefold()
+        if "завеликий" in lowered:
+            kind = "request_too_large"
+        elif any(token in lowered for token in ("не налаштован", "url має бути", "локальних моделей немає")):
+            kind = "configuration"
+        else:
+            kind = "temporary"
+        raise AIModelError(str(exc), kind=kind) from exc
 
 
 def _invoke_limited(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str, max_output_tokens: int) -> str:
@@ -241,7 +227,7 @@ def run_ai(
     for original in legacy.MODEL_SLOTS:
         slot = original
         if slot.provider == "local":
-            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, f"{cfg.local_model or 'Local'} / llama.cpp", slot.family)
+            slot = AIModelSlot(slot.priority, slot.provider, cfg.local_model or slot.model, "Локальний AI · авто: Ollama → llama.cpp", slot.family)
         if not legacy._configured(slot, cfg):
             continue
         if legacy._cooldown_active(state, legacy._provider_key(slot.provider), now) or legacy._cooldown_active(state, legacy._slot_key(slot), now):
@@ -259,7 +245,7 @@ def run_ai(
                 # This task was too large for this slot, but the provider itself
                 # is healthy and must remain available for the next small request.
                 continue
-            key_name = legacy._provider_key(slot.provider) if exc.kind in {"auth", "quota", "configuration"} else legacy._slot_key(slot)
+            key_name = legacy._provider_key(slot.provider) if exc.kind in {"auth", "configuration"} else legacy._slot_key(slot)
             legacy._put_cooldown(state, key_name, legacy._cooldown_seconds(exc), str(exc))
             legacy.save_router_state(state)
             continue

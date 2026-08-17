@@ -146,14 +146,60 @@ def build_global_duplicate_prompt(
     return prompt
 
 
-def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateCluster]:
+def _balanced_json_objects(value: str) -> Iterable[str]:
+    text = str(value or "")
+    for start, char in enumerate(text):
+        if char != "{":
+            continue
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(text)):
+            current = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == '"':
+                    in_string = False
+                continue
+            if current == '"':
+                in_string = True
+                continue
+            if current == "{":
+                depth += 1
+            elif current == "}":
+                depth -= 1
+                if depth == 0:
+                    yield text[start : index + 1]
+                    break
+                if depth < 0:
+                    break
+
+
+def _decode_duplicate_payload(raw: str) -> dict[str, object]:
     cleaned = _CODE_FENCE.sub("", str(raw or "").strip()).strip()
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise AIRouterError("AI повернув глобальний пошук дублікатів не у валідному JSON.") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("clusters"), list):
-        raise AIRouterError("AI повернув неправильну структуру глобального пошуку дублікатів.")
+    candidates = [cleaned, *_balanced_json_objects(cleaned)]
+    seen: set[str] = set()
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        value = candidate.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("clusters"), list):
+            return payload
+    raise AIRouterError("AI повернув глобальний пошук дублікатів не у валідному JSON.") from last_error
+
+
+def parse_duplicate_clusters(raw: str, valid_ids: set[int]) -> list[DuplicateCluster]:
+    payload = _decode_duplicate_payload(raw)
     result: list[DuplicateCluster] = []
     used: set[int] = set()
     for row in payload["clusters"]:
