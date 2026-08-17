@@ -1,6 +1,6 @@
 """UA FREE Content Tool."""
 
-__version__ = "1.2.2-rc1"
+__version__ = "1.2.2-rc2"
 APP_NAME = "UA FREE Content Tool"
 
 # Final v1.2.1 production provider policy is applied at package import time so

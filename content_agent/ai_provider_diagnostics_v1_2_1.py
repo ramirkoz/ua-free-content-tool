@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .local_ai_runtime_v1_2_2 import LocalAIRuntimeError, test_local_runtime
 from .ai_router_v1_2_1 import (
     AIModelError,
     AIModelSlot,
@@ -43,7 +44,7 @@ def _runtime_slot(slot: AIModelSlot, cfg: AIProviderSecrets) -> AIModelSlot:
     if slot.provider != "local":
         return slot
     model = cfg.local_model or slot.model
-    return AIModelSlot(slot.priority, slot.provider, model, f"{model or 'Local'} / llama.cpp", slot.family)
+    return AIModelSlot(slot.priority, slot.provider, model, "Локальний AI · авто: Ollama → llama.cpp", slot.family)
 
 
 def _status_for_error(error: AIModelError) -> str:
@@ -67,6 +68,25 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
     for provider, original_slots in _provider_slot_groups():
         slots = [_runtime_slot(slot, cfg) for slot in original_slots]
         label = PROVIDER_LABELS.get(provider, provider)
+
+        if provider == "local":
+            if not cfg.local_enabled:
+                rows.append(ProviderDiagnostic(provider, label, "unconfigured", "вимкнено", cfg.local_model))
+                continue
+            try:
+                target = test_local_runtime(
+                    preferred_model=cfg.local_model,
+                    manual_base_url=cfg.local_base_url,
+                    manual_model=cfg.local_model,
+                )
+            except LocalAIRuntimeError as exc:
+                lowered = str(exc).casefold()
+                status = "error" if any(token in lowered for token in ("не налаштован", "url має бути")) else "warning"
+                rows.append(ProviderDiagnostic(provider, label, status, str(exc)[:300], cfg.local_model))
+            else:
+                started = " · сервер запущено програмою" if target.started_by_app else ""
+                rows.append(ProviderDiagnostic(provider, label, "ok", f"працює · {target.label}{started}", target.model))
+            continue
         if not slots or not any(_configured(slot, cfg) for slot in slots):
             model = slots[0].model if slots else ""
             rows.append(ProviderDiagnostic(provider, label, "unconfigured", "не налаштовано", model))
@@ -91,7 +111,7 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
                     break
                 if exc.kind == "quota":
                     terminal_status = "warning"
-                    break
+                    continue
                 continue
             except Exception as exc:
                 failures.append(f"{slot.model}: тимчасова помилка перевірки: {exc}")
