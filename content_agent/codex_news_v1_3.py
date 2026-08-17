@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Sequence
 
-from .ai_router_v1_2_1 import AIRouterError, run_ai
+from .ai_router_v1_2_2 import AIRouterError, run_ai
 from .codex_engine_v1_3 import CodexEngineError, run_codex as _legacy_run_codex
 from .editorial_memory import EditorialExample, format_examples_for_prompt
 from .models import NewsGroup, RewriteResult
@@ -24,6 +24,110 @@ _FORBIDDEN_LINE = re.compile(
 
 def _clean_json_text(raw: str) -> str:
     return _CODE_FENCE.sub("", str(raw or "").strip()).strip()
+
+
+def _json_object_candidates(raw: str) -> list[str]:
+    """Return balanced JSON-object candidates from model output.
+
+    Small local models often wrap otherwise valid JSON in one sentence or a
+    markdown fence. We accept only syntactically balanced object candidates and
+    still validate their fields afterwards, so this is tolerance, not guessing.
+    """
+
+    text = _clean_json_text(raw)
+    candidates: list[str] = []
+    if text.startswith("{") and text.endswith("}"):
+        candidates.append(text)
+
+    in_string = False
+    escaped = False
+    depth = 0
+    start = -1
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = text[start : index + 1].strip()
+                if candidate and candidate not in candidates:
+                    candidates.append(candidate)
+                start = -1
+    return candidates
+
+
+def _extract_jsonish_string(raw: str, key: str) -> str:
+    """Recover a quoted string field from slightly malformed/truncated JSON."""
+
+    text = _clean_json_text(raw)
+    match = re.search(rf'(?is)["\']{re.escape(key)}["\']\s*:\s*"', text)
+    if not match:
+        return ""
+    chars: list[str] = []
+    escaped = False
+    for char in text[match.end() :]:
+        if escaped:
+            chars.append("\\" + char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            break
+        chars.append(char)
+    value = "".join(chars)
+    encoded = value.replace("\r", "\\r").replace("\n", "\\n")
+    try:
+        return str(json.loads('"' + encoded + '"')).strip()
+    except json.JSONDecodeError:
+        return (
+            value.replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .replace("\\t", "\t")
+            .replace('\\"', '"')
+            .replace("\\\\", "\\")
+            .strip()
+        )
+
+
+def _decode_rewrite_payload(raw: str) -> dict[str, object]:
+    text = _clean_json_text(raw)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        return payload
+
+    for candidate in _json_object_candidates(raw):
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+    headline = _extract_jsonish_string(raw, "headline")
+    fact_card = _extract_jsonish_string(raw, "fact_card")
+    rewrite = _extract_jsonish_string(raw, "rewrite")
+    if headline and rewrite:
+        return {"headline": headline, "fact_card": fact_card, "rewrite": rewrite}
+
+    raise AIRouterError("AI повернув рерайт не у валідному або відновлюваному JSON.")
 
 
 def _source_prose(group: NewsGroup) -> str:
@@ -81,10 +185,7 @@ def build_rewrite_prompt(
 
 
 def _parse_rewrite_json(raw: str) -> dict[str, object]:
-    try:
-        payload = json.loads(_clean_json_text(raw))
-    except json.JSONDecodeError as exc:
-        raise AIRouterError("AI повернув рерайт не у валідному JSON.") from exc
+    payload = _decode_rewrite_payload(raw)
     if not isinstance(payload, dict):
         raise AIRouterError("AI повернув неправильну структуру рерайту.")
     headline = str(payload.get("headline") or "").strip()
@@ -115,7 +216,7 @@ def rewrite_group_with_codex(
         except AIRouterError as exc:
             raise CodexEngineError(str(exc)) from exc
     else:
-        routed = run_ai(prompt, validator=_validate_rewrite_json)
+        routed = run_ai(prompt, validator=_validate_rewrite_json, max_output_tokens=1200)
         payload = _parse_rewrite_json(routed.text)
     headline = str(payload.get("headline") or "").strip()
     fact_card = str(payload.get("fact_card") or "").strip()
@@ -162,7 +263,7 @@ def run_topic_prompt_with_codex(prompt: str, *, graph_memory: str = "") -> dict[
         + "\n\nПоверни тільки рядки у форматі ID|SCORE|same_event/related/other|коротка причина. "
         "Якщо збігів немає, поверни рівно NONE. Не додавай markdown, вступ або підсумок."
     )
-    routed = run_ai(reinforced, validator=_validate_topic_output)
+    routed = run_ai(reinforced, validator=_validate_topic_output, max_output_tokens=900)
     if routed.text.strip().casefold() == "none":
         return {}
     return parse_topic_matches(routed.text)
