@@ -72,6 +72,47 @@ def test_codex_rewrite_accepts_strict_json(monkeypatch: pytest.MonkeyPatch) -> N
     assert group.primary_url not in result.platform_texts["telegram"]
 
 
+def test_rewrite_parser_accepts_json_wrapped_in_commentary() -> None:
+    raw = (
+        'Ось результат:\n```json\n'
+        '{"headline":"Новий простір","fact_card":"Одне джерело","rewrite":"У місті відкрили новий простір."}'
+        '\n```\n'
+    )
+    payload = codex_news_v1_3._parse_rewrite_json(raw)
+    assert payload["headline"] == "Новий простір"
+    assert payload["rewrite"] == "У місті відкрили новий простір."
+
+
+def test_rewrite_parser_recovers_truncated_json_strings() -> None:
+    raw = (
+        '{"headline":"Новий простір","fact_card":"Одне джерело",'
+        '"rewrite":"У місті відкрили новий громадський простір.'
+    )
+    payload = codex_news_v1_3._parse_rewrite_json(raw)
+    assert payload["headline"] == "Новий простір"
+    assert payload["rewrite"] == "У місті відкрили новий громадський простір."
+
+
+def test_production_rewrite_uses_bounded_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    group = _group("У місті відкрили новий громадський простір 14 серпня.")
+    seen: dict[str, object] = {}
+    raw = '{"headline":"Новий простір","fact_card":"Одне джерело","rewrite":"У місті 14 серпня відкрили новий громадський простір."}'
+
+    def fake_run_ai(prompt: str, *, validator=None, max_output_tokens=4096):
+        seen["prompt"] = prompt
+        seen["max_output_tokens"] = max_output_tokens
+        assert validator is not None
+        validator(raw)
+        from types import SimpleNamespace
+        return SimpleNamespace(text=raw)
+
+    monkeypatch.setattr(codex_news_v1_3, "run_ai", fake_run_ai)
+    assert codex_news_v1_3.run_codex is codex_news_v1_3._legacy_run_codex
+    result = rewrite_group_with_codex(group, [])
+    assert result.headline == "Новий простір"
+    assert seen["max_output_tokens"] == 1200
+
+
 def test_codex_rewrite_rejects_invalid_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
     group = _group("У місті відкрили новий громадський простір.")
     monkeypatch.setattr(codex_news_v1_3, "run_codex", lambda _prompt: "ЗАГОЛОВОК: тест\nТЕКСТ: щось")
