@@ -1,4 +1,4 @@
-name: Build Windows v1.2.2 RC6
+name: Build Windows v1.2.2 RC7
 
 on:
   workflow_dispatch:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  windows-v122-rc6:
+  windows-v122-rc7:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact v1.2.2 RC6 commit
+      - name: Checkout exact v1.2.2 RC7 commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -37,8 +37,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python tools/check_entrypoint_imports.py
           if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
-          python -c "from content_agent.ai_router_v1_2_1 import MODEL_SLOTS; from content_agent.ai_router_v1_2_2 import run_ai as bounded_run_ai; from content_agent.global_duplicates_v1_3_rc6 import build_global_duplicate_batches; from content_agent.global_duplicates_v1_2_2_rc6 import find_global_duplicate_clusters, parse_duplicate_clusters; from content_agent.local_ai_runtime_v1_2_2 import resolve_local_target, choose_ollama_model; from content_agent.ui.v1_2_2_rc1_window import MainWindow; providers={s.provider for s in MODEL_SLOTS}; assert len(MODEL_SLOTS)==13; assert providers=={'codex','gemini','nvidia','groq','cloudflare','local'}; assert choose_ollama_model(['nomic-embed-text:latest','qwen3.5:27b'])=='qwen3.5:27b'; assert parse_duplicate_clusters('NONE',{1,2})==[]; print('V122_RC6_SOURCE_GATE_OK')"
-          if ($LASTEXITCODE -ne 0) { throw "v1.2.2 RC6 imports failed" }
+          python -c "from content_agent.ai_router_v1_2_1 import MODEL_SLOTS; from content_agent.ai_router_v1_2_2 import run_ai as bounded_run_ai; from content_agent.global_duplicates_v1_2_2_rc7 import find_global_duplicate_clusters, last_duplicate_search_label; from content_agent.local_ai_runtime_v1_2_2 import resolve_local_target, choose_ollama_model; from content_agent.ui.v1_2_2_rc1_window import MainWindow; providers={s.provider for s in MODEL_SLOTS}; assert len(MODEL_SLOTS)==13; assert providers=={'codex','gemini','nvidia','groq','cloudflare','local'}; assert choose_ollama_model(['nomic-embed-text:latest','qwen3.5:27b'])=='qwen3.5:27b'; print('V122_RC7_SOURCE_GATE_OK')"
+          if ($LASTEXITCODE -ne 0) { throw "v1.2.2 RC7 imports failed" }
 
       - name: Stamp RC version
         shell: pwsh
@@ -78,8 +78,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $root = "Release\UA_FREE_Content_Tool_v1.2.2\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.2.2-rc6_Windows_Portable.zip"
-          $source = "UA_FREE_Content_Tool_v1.2.2-rc6_Source.zip"
+          $zip = "UA_FREE_Content_Tool_v1.2.2-rc7_Windows_Portable.zip"
+          $source = "UA_FREE_Content_Tool_v1.2.2-rc7_Source.zip"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
           git archive --format=zip --output=$source HEAD
           if ($LASTEXITCODE -ne 0) { throw "Source archive failed" }
@@ -94,7 +94,9 @@ jobs:
               "content_agent/local_ai_runtime_v1_2_2.py",
               "content_agent/global_duplicates_v1_3_rc6.py",
               "content_agent/global_duplicates_v1_2_2_rc6.py",
+              "content_agent/global_duplicates_v1_2_2_rc7.py",
               "content_agent/ui/ai_engine_v1_3.py",
+              "content_agent/ui/ai_workflow_v1_3_rc6.py",
               "content_agent/ui/v1_2_rc10_window.py",
               "content_agent/ui/v1_2_2_rc1_window.py",
               "content_agent/main.py",
@@ -109,26 +111,26 @@ jobs:
               assert not missing, sorted(missing)
               forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log"))]
               assert not forbidden, forbidden[:10]
-          print("V122_RC6_ZIP_VALIDATION_OK")
-          '@ | Set-Content validate_v122_rc6_zip.py -Encoding utf8
-          python validate_v122_rc6_zip.py $zip
+          print("V122_RC7_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_v122_rc7_zip.py -Encoding utf8
+          python validate_v122_rc7_zip.py $zip
           if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
-          Remove-Item validate_v122_rc6_zip.py
+          Remove-Item validate_v122_rc7_zip.py
           $portableHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           $sourceHash = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
           @(
             "$portableHash  $zip",
             "$sourceHash  $source"
-          ) | Set-Content "SHA256SUMS_v1.2.2-rc6.txt" -Encoding ascii
+          ) | Set-Content "SHA256SUMS_v1.2.2-rc7.txt" -Encoding ascii
 
       - name: Upload RC build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.2.2_RC6
+          name: UA_FREE_Content_Tool_v1.2.2_RC7
           path: |
-            UA_FREE_Content_Tool_v1.2.2-rc6_Windows_Portable.zip
-            UA_FREE_Content_Tool_v1.2.2-rc6_Source.zip
-            SHA256SUMS_v1.2.2-rc6.txt
+            UA_FREE_Content_Tool_v1.2.2-rc7_Windows_Portable.zip
+            UA_FREE_Content_Tool_v1.2.2-rc7_Source.zip
+            SHA256SUMS_v1.2.2-rc7.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
