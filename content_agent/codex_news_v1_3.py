@@ -12,6 +12,8 @@ from .publication_text import validate_editorial_text
 from .rewriter import platform_texts_from_base
 from .topic_search import parse_topic_matches
 
+# Compatibility hook for older regression tests and recovery tooling that
+# monkeypatches codex_news_v1_3.run_codex directly. Production uses AI Router.
 run_codex = _legacy_run_codex
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -25,10 +27,18 @@ def _clean_json_text(raw: str) -> str:
 
 
 def _json_object_candidates(raw: str) -> list[str]:
+    """Return balanced JSON-object candidates from model output.
+
+    Small local models often wrap otherwise valid JSON in one sentence or a
+    markdown fence. We accept only syntactically balanced object candidates and
+    still validate their fields afterwards, so this is tolerance, not guessing.
+    """
+
     text = _clean_json_text(raw)
     candidates: list[str] = []
     if text.startswith("{") and text.endswith("}"):
         candidates.append(text)
+
     in_string = False
     escaped = False
     depth = 0
@@ -60,6 +70,8 @@ def _json_object_candidates(raw: str) -> list[str]:
 
 
 def _extract_jsonish_string(raw: str, key: str) -> str:
+    """Recover a quoted string field from slightly malformed/truncated JSON."""
+
     text = _clean_json_text(raw)
     match = re.search(rf'(?is)["\']{re.escape(key)}["\']\s*:\s*"', text)
     if not match:
@@ -82,7 +94,14 @@ def _extract_jsonish_string(raw: str, key: str) -> str:
     try:
         return str(json.loads('"' + encoded + '"')).strip()
     except json.JSONDecodeError:
-        return value.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\").strip()
+        return (
+            value.replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .replace("\\t", "\t")
+            .replace('\\"', '"')
+            .replace("\\\\", "\\")
+            .strip()
+        )
 
 
 def _decode_rewrite_payload(raw: str, *, allow_marker_protocol: bool = True) -> dict[str, object]:
@@ -93,6 +112,7 @@ def _decode_rewrite_payload(raw: str, *, allow_marker_protocol: bool = True) -> 
         payload = None
     if isinstance(payload, dict):
         return payload
+
     for candidate in _json_object_candidates(raw):
         try:
             payload = json.loads(candidate)
@@ -100,11 +120,16 @@ def _decode_rewrite_payload(raw: str, *, allow_marker_protocol: bool = True) -> 
             continue
         if isinstance(payload, dict):
             return payload
+
     headline = _extract_jsonish_string(raw, "headline")
     fact_card = _extract_jsonish_string(raw, "fact_card")
     rewrite = _extract_jsonish_string(raw, "rewrite")
     if headline and rewrite:
         return {"headline": headline, "fact_card": fact_card, "rewrite": rewrite}
+
+    # Emergency Ollama uses a deliberately cheap marker protocol. Requiring a
+    # grammar-constrained JSON object from a CPU-only 4B model was the reason a
+    # healthy local model kept timing out after the cloud providers were exhausted.
     marker_headline = re.search(r"(?im)^\s*(?:ЗАГОЛОВОК|HEADLINE)\s*:\s*(.+?)\s*$", text)
     marker_rewrite = re.search(r"(?ims)^\s*(?:ТЕКСТ|РЕРАЙТ|TEXT|ARTICLE)\s*:\s*(.+)\Z", text)
     if allow_marker_protocol and marker_rewrite:
@@ -114,7 +139,12 @@ def _decode_rewrite_payload(raw: str, *, allow_marker_protocol: bool = True) -> 
             first_line = rewrite.splitlines()[0].strip() if rewrite.splitlines() else ""
             headline = first_line[:180].rstrip(" .!?…")
         if headline and rewrite:
-            return {"headline": headline, "fact_card": _fact_card_from_rewrite(rewrite), "rewrite": rewrite}
+            return {
+                "headline": headline,
+                "fact_card": _fact_card_from_rewrite(rewrite),
+                "rewrite": rewrite,
+            }
+
     raise AIRouterError("AI повернув рерайт не у валідному або відновлюваному форматі.")
 
 
@@ -143,6 +173,13 @@ def _fact_card_from_rewrite(text: str, limit: int = 520) -> str:
 
 
 def _local_source_prose(group: NewsGroup, max_chars: int = 4600) -> str:
+    """Compact factual input for the emergency CPU model.
+
+    Cloud models still receive the full editorial prompt and memory. Ollama gets
+    every source title plus the most useful source text, but no URLs, graph dump
+    or approved-example payload that would waste minutes on a 4B CPU model.
+    """
+
     articles = list(group.articles)
     if not articles:
         return ""
@@ -155,13 +192,18 @@ def _local_source_prose(group: NewsGroup, max_chars: int = 4600) -> str:
             f"ЗАГОЛОВОК: {' '.join(str(article.title or '').split())[:260]}\n"
             f"ТЕКСТ: {text[:share]}"
         )
-    return "\n\n---\n\n".join(rows)[:max_chars]
+    compact = "\n\n---\n\n".join(rows)
+    return compact[:max_chars]
 
 
 def build_local_rewrite_prompt(group: NewsGroup) -> str:
     source = _local_source_prose(group)
     plain_length = sum(len(str(item.raw_text or "").strip()) for item in group.articles)
-    length_rule = "Рерайт: 1 коротке речення, максимум 2." if plain_length <= 420 else "Рерайт: 1–4 короткі абзаци, максимум 900 символів."
+    length_rule = (
+        "Рерайт: 1 коротке речення, максимум 2."
+        if plain_length <= 420
+        else "Рерайт: 1–4 короткі абзаци, максимум 900 символів."
+    )
     return f"""
 Зроби точний новинний рерайт українською. Використовуй ТІЛЬКИ факти з матеріалів нижче.
 Не вигадуй причин, оцінок, цитат чи наслідків. {length_rule}
@@ -175,12 +217,18 @@ def build_local_rewrite_prompt(group: NewsGroup) -> str:
 """.strip()
 
 
-def build_rewrite_prompt(group: NewsGroup, examples: Sequence[EditorialExample], *, graph_memory: str = "") -> str:
+def build_rewrite_prompt(
+    group: NewsGroup,
+    examples: Sequence[EditorialExample],
+    *,
+    graph_memory: str = "",
+) -> str:
     source = _source_prose(group)
     plain_length = sum(len(str(item.raw_text or "").strip()) for item in group.articles)
     short_rule = (
         "Це дуже коротка новина. Фінальний rewrite має бути 1 речення, максимум 2, якщо інакше губиться важливий факт. Не роздувай повідомлення."
-        if plain_length <= 420 else "Фінальний rewrite має бути 1–4 короткі абзаци, максимум 900 символів."
+        if plain_length <= 420
+        else "Фінальний rewrite має бути 1–4 короткі абзаци, максимум 900 символів."
     )
     examples_text = format_examples_for_prompt(examples, language="uk")
     memory_parts: list[str] = []
@@ -196,7 +244,7 @@ def build_rewrite_prompt(group: NewsGroup, examples: Sequence[EditorialExample],
 1. Використай факти з УСІХ джерел блока нижче. Не ігноруй уточнення пізніших джерел.
 2. Не вигадуй фактів, причин, оцінок, наслідків або цитат, яких немає у вихідних матеріалах.
 3. Весь публічний текст виключно українською. Імена, бренди, абревіатури та офіційні назви можна лишати в оригіналі, якщо це потрібно.
-4. Максимум фактів, мінімум води.
+4. Максимум фактів, мінімум води. Не додавай вступних міркувань, висновків від себе чи фраз типу «можливо», якщо цього немає у джерелах.
 5. {short_rule}
 6. Не включай URL, донатний блок, назви службових секцій або пояснення моделі в rewrite.
 7. headline має бути коротким нейтральним заголовком.
@@ -242,12 +290,19 @@ def _run_router_with_local_profile(prompt: str, local_prompt: str, *, validator,
             local_repair=False,
         )
     except TypeError as exc:
+        # Compatibility for regression/recovery hooks that monkeypatch the older
+        # run_ai signature. Production always takes the profiled branch above.
         if "unexpected keyword argument" not in str(exc):
             raise
         return run_ai(prompt, validator=validator, max_output_tokens=cloud_tokens)
 
 
-def rewrite_group_with_codex(group: NewsGroup, examples: Sequence[EditorialExample], *, graph_memory: str = "") -> RewriteResult:
+def rewrite_group_with_codex(
+    group: NewsGroup,
+    examples: Sequence[EditorialExample],
+    *,
+    graph_memory: str = "",
+) -> RewriteResult:
     prompt = build_rewrite_prompt(group, examples, graph_memory=graph_memory)
     if run_codex is not _legacy_run_codex:
         try:
@@ -258,7 +313,12 @@ def rewrite_group_with_codex(group: NewsGroup, examples: Sequence[EditorialExamp
     else:
         local_prompt = build_local_rewrite_prompt(group)
         routed = _run_router_with_local_profile(
-            prompt, local_prompt, validator=_validate_rewrite_json, cloud_tokens=1200, local_tokens=320, local_timeout=120
+            prompt,
+            local_prompt,
+            validator=_validate_rewrite_json,
+            cloud_tokens=1200,
+            local_tokens=320,
+            local_timeout=120,
         )
         payload = _parse_rewrite_json(routed.text)
     headline = str(payload.get("headline") or "").strip()
@@ -268,7 +328,11 @@ def rewrite_group_with_codex(group: NewsGroup, examples: Sequence[EditorialExamp
         headline=headline,
         fact_card=fact_card,
         rewrite=rewrite,
-        platform_texts=platform_texts_from_base(rewrite, include_source_link=bool(group.include_source_link), source_url=group.primary_url),
+        platform_texts=platform_texts_from_base(
+            rewrite,
+            include_source_link=bool(group.include_source_link),
+            source_url=group.primary_url,
+        ),
         source_count_used=len(group.articles),
         source_count_total=len(group.articles),
         auto_compacted=False,
@@ -282,7 +346,8 @@ def _validate_topic_output(raw: str) -> None:
     parsed = parse_topic_matches(text)
     if parsed:
         return
-    if text.casefold() in {"none", "немає", "no matches", "no_match", "0"}:
+    lowered = text.casefold()
+    if lowered in {"none", "немає", "no matches", "no_match", "0"}:
         return
     raise AIRouterError("AI повернув пошук схожих у неправильному форматі.")
 
@@ -307,19 +372,32 @@ def _local_topic_prompt(prompt: str, max_chars: int = 4400) -> str:
             break
         kept.append(compact)
         used += len(compact) + 7
-    return (head[:1800].rstrip() + marker + "\n\n---\n\n".join(kept)).strip()
+    local_head = head[:1800].rstrip()
+    return (local_head + marker + "\n\n---\n\n".join(kept)).strip()
 
 
 def run_topic_prompt_with_codex(prompt: str, *, graph_memory: str = "") -> dict[int, object]:
     memory = (
-        "\n\nПОПЕРЕДНІ РЕДАКЦІЙНІ РІШЕННЯ З ЛОКАЛЬНОЇ ПАМ'ЯТІ:\n" + graph_memory
+        "\n\nПОПЕРЕДНІ РЕДАКЦІЙНІ РІШЕННЯ З ЛОКАЛЬНОЇ ПАМ'ЯТІ:\n"
+        + graph_memory
         + "\nВикористовуй їх лише як приклади правил об'єднання, а не як факти поточних кандидатів."
-        if graph_memory else ""
+        if graph_memory
+        else ""
     )
-    reinforced = prompt + memory + "\n\nПоверни тільки рядки у форматі ID|SCORE|same_event/related/other|коротка причина. Якщо збігів немає, поверни рівно NONE. Не додавай markdown, вступ або підсумок."
+    reinforced = (
+        prompt
+        + memory
+        + "\n\nПоверни тільки рядки у форматі ID|SCORE|same_event/related/other|коротка причина. "
+        "Якщо збігів немає, поверни рівно NONE. Не додавай markdown, вступ або підсумок."
+    )
     local_reinforced = _local_topic_prompt(reinforced)
     routed = _run_router_with_local_profile(
-        reinforced, local_reinforced, validator=_validate_topic_output, cloud_tokens=900, local_tokens=260, local_timeout=90
+        reinforced,
+        local_reinforced,
+        validator=_validate_topic_output,
+        cloud_tokens=900,
+        local_tokens=260,
+        local_timeout=90,
     )
     if routed.text.strip().casefold() == "none":
         return {}
