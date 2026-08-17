@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import threading
+
 from ..ai_router_v1_2_1 import last_ai_result_label
 from ..codex_news_v1_3 import rewrite_group_with_codex
 from ..editorial_memory import rank_editorial_examples
-from ..global_duplicates_v1_2_2_rc5 import DuplicateCluster, find_global_duplicate_clusters, last_duplicate_search_label
+from ..global_duplicates_v1_2_2_rc6 import (
+    DuplicateCluster,
+    DuplicateSearchCancelled,
+    find_global_duplicate_clusters,
+    last_duplicate_search_label,
+)
 from ..models import NewsGroup, RewriteResult
 from ..rowboat_bridge_v1_3 import memory_context, sync_editorial_memory
 from .global_duplicates_dialog_v1_3_rc6 import GlobalDuplicatesDialog
@@ -19,8 +26,6 @@ class AIWorkflowRC6Mixin:
         config = self.config  # type: ignore[attr-defined]
 
         def action() -> object:
-            # Every DB read, memory sync, retrieval pass and AI Router call lives
-            # here, not in the Tk event handler. The click must return immediately.
             self.db.set_group_options(group_id, include_source_link=include_source_link)  # type: ignore[attr-defined]
             group = self.db.get_group(group_id)  # type: ignore[attr-defined]
             sync_editorial_memory(self.db)  # type: ignore[attr-defined]
@@ -37,7 +42,6 @@ class AIWorkflowRC6Mixin:
             group, rewrite_result, example_count = result  # type: ignore[misc]
             assert isinstance(group, NewsGroup)
             assert isinstance(rewrite_result, RewriteResult)
-            # The user may have opened another group while AI was working.
             if getattr(self, "current_group_id", None) != group.id:
                 self.set_status(  # type: ignore[attr-defined]
                     f"Рерайт блока #{group.id} готовий і збережений; зараз відкрито інший блок."
@@ -78,34 +82,95 @@ class AIWorkflowRC6Mixin:
             done_label="AI-рерайт завершено",
         )
 
+    def _duplicate_search_button_rc6(self):
+        stack = list(self.root.winfo_children())  # type: ignore[attr-defined]
+        while stack:
+            widget = stack.pop()
+            try:
+                text = str(widget.cget("text"))
+            except Exception:
+                text = ""
+            if text in {"Пошук схожих за темою матеріалів", "Скасувати пошук", "Скасовую…"}:
+                return widget
+            try:
+                stack.extend(widget.winfo_children())
+            except Exception:
+                pass
+        return None
+
     def find_all_by_topic(self) -> None:
-        # RC6 intentionally ignores the current selection. One click analyses all
-        # new editorial blocks, including blocks that already contain 2+ sources.
-        self.topic_search_status_var.set("Готую глобальний аналіз усіх нових матеріалів…")  # type: ignore[attr-defined]
-        language = self.config.ui_language  # type: ignore[attr-defined]
-        learning_enabled = bool(self.config.learning_enabled)  # type: ignore[attr-defined]
+        self.topic_search_status_var.set("Швидкий пошук кандидатів на об'єднання…")  # type: ignore[attr-defined]
+        cancel_event = threading.Event()
+        self._duplicate_search_cancel_event = cancel_event  # type: ignore[attr-defined]
+        button = self._duplicate_search_button_rc6()
+        original_text = "Пошук схожих за темою матеріалів"
+        if button is not None:
+            try:
+                original_text = str(button.cget("text")) or original_text
+            except Exception:
+                pass
+            if button in self.operation_buttons:  # type: ignore[attr-defined]
+                self.operation_buttons.remove(button)  # type: ignore[attr-defined]
+
+        def restore_button() -> None:
+            if getattr(self, "_duplicate_search_cancel_event", None) is cancel_event:
+                self._duplicate_search_cancel_event = None  # type: ignore[attr-defined]
+            if button is not None:
+                try:
+                    button.configure(text=original_text, command=self.find_all_by_topic, state="normal")
+                except Exception:
+                    pass
+                if button not in self.operation_buttons:  # type: ignore[attr-defined]
+                    self.operation_buttons.append(button)  # type: ignore[attr-defined]
+
+        def progress(message: str) -> None:
+            def apply() -> None:
+                if getattr(self, "_duplicate_search_cancel_event", None) is cancel_event:
+                    self.operation_detail_var.set(message)  # type: ignore[attr-defined]
+                    self.topic_search_status_var.set(message)  # type: ignore[attr-defined]
+            try:
+                self.root.after(0, apply)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        def cancel_search() -> None:
+            cancel_event.set()
+            self.topic_search_status_var.set("Скасовую пошук…")  # type: ignore[attr-defined]
+            if button is not None:
+                try:
+                    button.configure(text="Скасовую…", state="disabled")
+                except Exception:
+                    pass
 
         def action() -> object:
-            sync_editorial_memory(self.db)  # type: ignore[attr-defined]
-            groups = self.db.list_groups(status="new", limit=1000)  # type: ignore[attr-defined]
-            if len(groups) < 2:
-                return groups, []
-            feedback = (
-                self.db.list_topic_feedback(language=language)  # type: ignore[attr-defined]
-                if learning_enabled
-                else []
-            )
-            graph = memory_context(
-                "правила об'єднання дублікатів новин одна подія не пов'язано",
-                limit=16,
-            )
-            clusters = find_global_duplicate_clusters(groups, feedback=feedback, graph_memory=graph)
-            return groups, clusters
+            try:
+                groups = self.db.list_groups(status="new", limit=1000)  # type: ignore[attr-defined]
+                if len(groups) < 2:
+                    return "ok", groups, []
+                clusters = find_global_duplicate_clusters(
+                    groups,
+                    cancel_event=cancel_event,
+                    progress=progress,
+                    deadline_seconds=45,
+                )
+                return "ok", groups, clusters
+            except DuplicateSearchCancelled as exc:
+                return "cancelled", [], str(exc)
+            except Exception as exc:
+                return "error", [], exc
 
         def success(result: object) -> None:
-            groups, clusters = result  # type: ignore[misc]
+            restore_button()
+            status, groups, payload = result  # type: ignore[misc]
+            if status == "cancelled":
+                self.topic_search_status_var.set(str(payload))  # type: ignore[attr-defined]
+                self.set_status("Пошук об'єднань скасовано.")  # type: ignore[attr-defined]
+                return
+            if status == "error":
+                self._show_error(payload)  # type: ignore[attr-defined]
+                return
             groups = list(groups)
-            clusters = list(clusters)
+            clusters = list(payload)
             if len(groups) < 2:
                 self.topic_search_status_var.set("Для глобального порівняння потрібно щонайменше 2 нові блоки.")  # type: ignore[attr-defined]
                 return
@@ -126,12 +191,27 @@ class AIWorkflowRC6Mixin:
                 on_apply=lambda selected: self._merge_global_clusters_rc6(selected, by_id),
             )
 
+        def timeout(_message: str) -> None:
+            cancel_event.set()
+            restore_button()
+            self.topic_search_status_var.set(
+                "Пошук зупинено за 55 секунд. Наступний запуск почнеться з чистого стану."
+            )  # type: ignore[attr-defined]
+
         self.run_async(  # type: ignore[attr-defined]
             action,
             success,
-            label="AI Router: порівнюю всі нові матеріали між собою",
+            label="Швидкий пошук об'єднань у фоні",
             done_label="Глобальний пошук дублікатів завершено",
+            timeout_seconds=55,
+            timeout_message="Пошук об'єднань перевищив 55 секунд і був зупинений.",
+            on_timeout=timeout,
         )
+        if button is not None and getattr(self, "operation_running", False):
+            try:
+                button.configure(text="Скасувати пошук", command=cancel_search, state="normal")
+            except Exception:
+                pass
 
     def _merge_global_clusters_rc6(
         self,
@@ -148,7 +228,6 @@ class AIWorkflowRC6Mixin:
                 members = [groups[group_id] for group_id in cluster.group_ids if group_id in groups]
                 if len(members) < 2:
                     continue
-                # Preserve the richer existing block; on ties preserve the older ID.
                 target = max(members, key=lambda item: (item.source_count, -item.id))
                 others = [item for item in members if item.id != target.id]
                 for item in others:
