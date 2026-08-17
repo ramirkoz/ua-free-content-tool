@@ -315,7 +315,10 @@ def find_global_duplicate_clusters(
             skip_providers={"codex"},
             suppress_provider_on_quota=True,
         )
+        _check(cancel_event, deadline)
         ai_clusters = parse_duplicate_clusters(routed.text, valid_ids)
+        # AI reviewed every edge fully contained in the compact batch. Only the
+        # unreviewed remainder falls back to deterministic review candidates.
         remainder_edges = [
             edge for edge in edges
             if not ({groups[edge.left].id, groups[edge.right].id} <= batch_ids)
@@ -323,7 +326,10 @@ def find_global_duplicate_clusters(
         remainder = _fallback_clusters(groups, remainder_edges)
         _LAST_DUPLICATE_SEARCH_MODE = "AI Router + локальні кандидати" if remainder else "AI Router"
         return _select_non_overlapping([*ai_clusters, *remainder])
-    except (AIRouterError, DuplicateSearchCancelled):
+    except DuplicateSearchCancelled:
+        raise
+    except AIRouterError:
+        _check(cancel_event, deadline)
         _LAST_DUPLICATE_SEARCH_MODE = "локальні кандидати без AI"
         if progress:
             progress("AI не вклався у швидкий контур; показую локальні кандидати для ручної перевірки.")
