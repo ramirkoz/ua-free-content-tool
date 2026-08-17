@@ -179,3 +179,30 @@ def test_bounded_router_retries_local_once_after_validation_failure(monkeypatch:
     assert result.model == "qwen3:4b"
     assert result.label == "qwen3:4b / Ollama"
     assert len(calls) == 2
+
+
+def test_generate_local_text_passes_task_specific_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = local.LocalAITarget("ollama", local.OLLAMA_BASE_URL, "qwen3:4b", "qwen3:4b / Ollama")
+    monkeypatch.setattr(local, "resolve_local_target", lambda **kwargs: target)
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, base_url, timeout, load_timeout):
+            seen["timeout"] = timeout
+            seen["load_timeout"] = load_timeout
+        def generate_text(self, model, prompt, *, num_predict, temperature):
+            return "OK"
+
+    monkeypatch.setattr(local, "OllamaClient", FakeClient)
+    text, returned = local.generate_local_text(
+        preferred_model="local-model",
+        manual_base_url=local.DEFAULT_MANUAL_BASE_URL,
+        manual_model=local.DEFAULT_MANUAL_MODEL,
+        prompt="x",
+        max_output_tokens=120,
+        timeout_seconds=75,
+    )
+    assert text == "OK"
+    assert returned.model == "qwen3:4b"
+    assert seen["timeout"] == 75
+    assert seen["load_timeout"] == 75
