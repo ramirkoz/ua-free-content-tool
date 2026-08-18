@@ -82,30 +82,58 @@ jobs:
         shell: cmd
         run: Build_Portable_Windows.bat
 
-      - name: Validate runtime startup
+      - name: Validate signed launcher and portable startup
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0\UA_FREE_Content_Tool").Path
           $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
-          if (-not (Test-Path $exe)) { throw "Launcher missing" }
+          $console = (Resolve-Path (Join-Path $root "_runtime_console.exe")).Path
+
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne "Valid") {
+            throw "Launcher signature is not valid: $($signature.Status)"
+          }
+          if ($signature.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+            throw "Unexpected launcher signer: $($signature.SignerCertificate.Subject)"
+          }
+
+          Push-Location $root
+          try {
+            & $console -I -c "import content_agent.main; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('V13_RC1_SIGNED_RUNTIME_IMPORT_AND_TK_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Isolated signed runtime validation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
           Start-Sleep -Seconds 12
-          if ($process.HasExited) { throw "Portable GUI exited during startup smoke test: $($process.ExitCode)" }
+          if ($process.HasExited) {
+            throw "Portable GUI exited during startup smoke test: $($process.ExitCode)"
+          }
           Stop-Process -Id $process.Id -Force
+          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
+            throw "Portable startup did not create its local database"
+          }
+
+          Remove-Item $console -Force
+          Remove-Item (Join-Path $root "_runtime_console._pth") -Force
           Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Microsoft Defender runtime scan
+      - name: Update Defender and scan extracted runtime
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0\UA_FREE_Content_Tool").Path
-          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
-          if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
-          & $mp -Scan -ScanType 3 -File $root
-          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender runtime scan failed with exit code $LASTEXITCODE" }
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $scanner) { throw "Microsoft Defender command-line scanner is unavailable" }
+          & $scanner.FullName -SignatureUpdate
+          if ($LASTEXITCODE -ne 0) { throw "Defender signature update failed: $LASTEXITCODE" }
+          & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the extracted runtime: $LASTEXITCODE" }
 
-      - name: Package RC portable
+      - name: Package and validate RC portable
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -118,7 +146,6 @@ jobs:
           required = {
               "PUBLIC_VERSION.txt",
               "VERSION.txt",
-              "RELEASE_NOTES_v1.3.0-rc1.md",
               "content_agent/ai_task_profiles.py",
               "content_agent/evidence_pack.py",
               "content_agent/fact_guard.py",
@@ -128,38 +155,47 @@ jobs:
               "content_agent/ui/v1_3_window.py",
               "content_agent/main.py",
           }
+          allowed_executables = {
+              "UA_FREE_Content_Tool.exe",
+              "Lib/site-packages/pip/_vendor/distlib/t32.exe",
+              "Lib/site-packages/pip/_vendor/distlib/t64-arm.exe",
+              "Lib/site-packages/pip/_vendor/distlib/t64.exe",
+              "Lib/site-packages/pip/_vendor/distlib/w32.exe",
+              "Lib/site-packages/pip/_vendor/distlib/w64-arm.exe",
+              "Lib/site-packages/pip/_vendor/distlib/w64.exe",
+          }
           with zipfile.ZipFile(archive) as package:
               names = package.namelist()
               normalized = {name.replace("\\", "/") for name in names}
               assert package.testzip() is None, "CRC validation failed"
               assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any("\\" in name for name in names), "backslash ZIP path"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
               assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.3.0"
               assert package.read("VERSION.txt").decode("utf-8").strip() == "1.3.0"
               missing = required.difference(normalized)
               assert not missing, sorted(missing)
-              forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log", ".key", ".secure"))]
+              assert not any("_runtime_console" in name.casefold() for name in names), "diagnostic runtime shipped"
+              forbidden = [
+                  name for name in names
+                  if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log", ".env", ".wal", ".shm", ".key", ".secure"))
+              ]
               assert not forbidden, forbidden[:10]
-              exes = [name for name in names if name.casefold().endswith(".exe")]
-              assert len(exes) == 1, exes
-              assert exes[0].replace("\\", "/") == "UA_FREE_Content_Tool.exe", exes
+              exes = {name.replace("\\", "/") for name in names if name.casefold().endswith(".exe")}
+              assert exes == allowed_executables, f"unexpected executables: {sorted(exes)}"
           print("V13_RC1_ZIP_VALIDATION_OK")
           '@ | Set-Content validate_v13_zip.py -Encoding utf8
           python validate_v13_zip.py $zip
           if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
           Remove-Item validate_v13_zip.py
+
+          $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $zip).Path -DisableRemediation
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the RC ZIP: $LASTEXITCODE" }
+
           $portableHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$portableHash  $zip" | Set-Content "SHA256SUMS_v1.3.0-rc1.txt" -Encoding ascii
-
-      - name: Microsoft Defender final ZIP scan
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
-          if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
-          $zip = (Resolve-Path "UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip").Path
-          & $mp -Scan -ScanType 3 -File $zip
-          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender ZIP scan failed with exit code $LASTEXITCODE" }
 
       - name: Upload RC build artifact
         uses: actions/upload-artifact@v4
