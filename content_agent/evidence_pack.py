@@ -25,6 +25,8 @@ _PROMO_LINE = re.compile(
     r"(?iu)^(?:підписатися|подписаться|subscribe|реклама|advertis|наш\s+бот|бот\s*:|"
     r"надіслати\s+контент|прислать\s+контент|джерело\s*:|источник\s*:|source\s*:).*$"
 )
+_SEPARATOR = "\n\n---\n\n"
+_TEXT_LABEL = "\nТЕКСТ:\n"
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,13 +76,15 @@ def _score_sentence(index: int, sentence: str) -> float:
 
 def _clip_at_word(value: str, limit: int) -> str:
     text = " ".join(str(value or "").split())
+    if limit <= 0:
+        return ""
     if len(text) <= limit:
         return text
-    if limit <= 1:
+    if limit <= 3:
         return text[:limit]
-    cut = text.rfind(" ", 0, limit)
-    if cut < max(24, limit // 2):
-        cut = limit
+    cut = text.rfind(" ", 0, limit - 1)
+    if cut < max(8, limit // 2):
+        cut = limit - 1
     return text[:cut].rstrip(" ,;:-") + "…"
 
 
@@ -94,8 +98,7 @@ def _select_article_sentences(article: Article, budget: int) -> tuple[str, int, 
     used = 0
 
     # Keep the lead only when it fits. A pathological long lead must not crowd out
-    # later dates, numbers, entities or attribution, which was the failure mode
-    # that motivated the Autopilot evidence pack.
+    # later dates, numbers, entities or attribution.
     if len(sentences[0]) <= budget:
         selected.add(0)
         used = len(sentences[0])
@@ -119,9 +122,19 @@ def _select_article_sentences(article: Article, budget: int) -> tuple[str, int, 
     return body, len(selected), total, len(selected) < total
 
 
-def _source_header(index: int, total: int, article: Article, *, include_urls: bool) -> str:
-    name = " ".join(str(article.source_name or "невідоме джерело").split())[:120]
-    title = " ".join(str(article.title or "без заголовка").split())[:260]
+def _source_header(
+    index: int,
+    total: int,
+    article: Article,
+    *,
+    include_urls: bool,
+    budget: int,
+) -> tuple[str, bool]:
+    """Create a compact metadata header that never consumes another source's share."""
+
+    budget = max(1, int(budget))
+    name = " ".join(str(article.source_name or "невідоме джерело").split())
+    title = " ".join(str(article.title or "без заголовка").split())
     published = str(article.published_at or "не визначено").strip()
     rows = [
         f"ДЖЕРЕЛО {index}/{total}",
@@ -131,7 +144,25 @@ def _source_header(index: int, total: int, article: Article, *, include_urls: bo
     ]
     if include_urls and article.url:
         rows.append(f"URL: {article.url}")
-    return "\n".join(rows)
+
+    selected: list[str] = []
+    used = 0
+    clipped = False
+    for row in rows:
+        addition = len(row) + (1 if selected else 0)
+        if used + addition <= budget:
+            selected.append(row)
+            used += addition
+            continue
+        remaining = budget - used - (1 if selected else 0)
+        if remaining > 8:
+            selected.append(_clip_at_word(row, remaining))
+        clipped = True
+        break
+
+    if not selected:
+        return _clip_at_word(rows[0], budget), True
+    return "\n".join(selected), clipped or len(selected) < len(rows)
 
 
 def build_evidence_pack(
@@ -142,9 +173,9 @@ def build_evidence_pack(
 ) -> EvidencePack:
     """Build a deterministic bounded factual dossier for one merged news group.
 
-    Every source remains represented. Within each source, later high-value
-    sentences can outrank low-information lead copy. The result is intentionally
-    independent from editorial memory: only current-source material enters here.
+    The total character budget is divided between sources before sentence
+    selection. This prevents a long first article or verbose metadata from
+    deleting later sources from the pack. Editorial memory is never included.
     """
 
     articles = list(group.articles)
@@ -153,55 +184,64 @@ def build_evidence_pack(
         return EvidencePack("", 0, 0, 0, False)
 
     max_chars = max(900, int(max_chars))
-    headers = [_source_header(index, total_sources, article, include_urls=include_urls) for index, article in enumerate(articles, start=1)]
-    separators = max(0, total_sources - 1) * len("\n\n---\n\n")
-    fixed = sum(len(header) + len("\nТЕКСТ:\n") for header in headers) + separators
-    remaining = max(total_sources * 120, max_chars - fixed)
-    fair_share = max(120, remaining // total_sources)
+    separator = _SEPARATOR
+    separator_total = len(separator) * max(0, total_sources - 1)
+    if separator_total >= max_chars:
+        separator = "\n"
+        separator_total = max(0, total_sources - 1)
+
+    available = max(1, max_chars - separator_total)
+    base_share, remainder = divmod(available, total_sources)
 
     selected_total = 0
     sentence_total = 0
     truncated = False
     blocks: list[str] = []
-    for header, article in zip(headers, articles):
-        body, selected, count, was_truncated = _select_article_sentences(article, fair_share)
+
+    for offset, article in enumerate(articles):
+        index = offset + 1
+        block_budget = base_share + (1 if offset < remainder else 0)
+        if block_budget <= 0:
+            truncated = True
+            continue
+
+        # In normal groups this keeps a rich title/name/date header. In a very
+        # large merged group it contracts metadata first, preserving room for a
+        # factual sentence from every source.
+        header_budget = min(240, max(24, block_budget // 3))
+        header_budget = min(header_budget, block_budget)
+        header, header_clipped = _source_header(
+            index,
+            total_sources,
+            article,
+            include_urls=include_urls,
+            budget=header_budget,
+        )
+        truncated = truncated or header_clipped
+
+        remaining = max(0, block_budget - len(header))
+        label = _TEXT_LABEL if remaining > len(_TEXT_LABEL) + 8 else ("\n" if remaining > 1 else "")
+        body_budget = max(0, remaining - len(label))
+        body, selected, count, body_truncated = _select_article_sentences(article, body_budget)
         selected_total += selected
         sentence_total += count
-        truncated = truncated or was_truncated
-        blocks.append(f"{header}\nТЕКСТ:\n{body}")
+        truncated = truncated or body_truncated
 
-    text = "\n\n---\n\n".join(blocks)
-    if len(text) > max_chars:
-        overflow = len(text) - max_chars
-        reduced_share = max(70, fair_share - (overflow // total_sources) - 16)
-        blocks = []
-        selected_total = 0
-        sentence_total = 0
-        truncated = True
-        for header, article in zip(headers, articles):
-            body, selected, count, _ = _select_article_sentences(article, reduced_share)
-            selected_total += selected
-            sentence_total += count
-            blocks.append(f"{header}\nТЕКСТ:\n{body}")
-        text = "\n\n---\n\n".join(blocks)
+        block = f"{header}{label}{body}" if body or label else header
+        if len(block) > block_budget:
+            block = _clip_at_word(block, block_budget)
+            truncated = True
+        blocks.append(block)
 
+    text = separator.join(blocks).strip()
     if len(text) > max_chars:
-        tiny_blocks: list[str] = []
-        per_body = max(28, (max_chars - fixed) // total_sources)
-        selected_total = 0
-        sentence_total = 0
-        for header, article in zip(headers, articles):
-            body, selected, count, _ = _select_article_sentences(article, per_body)
-            selected_total += selected
-            sentence_total += count
-            tiny_blocks.append(f"{header}\nТЕКСТ:\n{body}")
-        text = "\n\n---\n\n".join(tiny_blocks)
-        if len(text) > max_chars:
-            text = _clip_at_word(text, max_chars)
+        # Defensive bound only. The per-source allocation above should make this
+        # unreachable for ordinary inputs.
+        text = _clip_at_word(text, max_chars)
         truncated = True
 
     return EvidencePack(
-        text=text.strip(),
+        text=text,
         source_count=total_sources,
         selected_sentences=selected_total,
         total_sentences=sentence_total,
