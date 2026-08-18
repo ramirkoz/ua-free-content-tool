@@ -1,0 +1,31 @@
+name: v1.3 Logic CI
+
+on:
+  pull_request:
+    paths:
+      - "content_agent/**"
+      - "tests/**"
+      - ".github/workflows/ci-v1.3-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  logic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+      - name: Compile
+        run: python -m compileall -q content_agent tests
+      - name: v1.3 deterministic regressions
+        run: python -m pytest -q tests/test_v1_3_evidence_fact_pipeline.py tests/test_v1_3_source_health.py
