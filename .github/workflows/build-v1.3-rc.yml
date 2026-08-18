@@ -71,8 +71,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           $public = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
           $runtime = (Get-Content VERSION.txt -Raw).Trim()
-          if ($public -ne "1.3.0-rc1") { throw "PUBLIC_VERSION mismatch: $public" }
-          if ($runtime -ne "1.3.0-rc1") { throw "VERSION mismatch: $runtime" }
+          if ($public -ne "1.3.0") { throw "PUBLIC_VERSION mismatch: $public" }
+          if ($runtime -ne "1.3.0") { throw "VERSION mismatch: $runtime" }
 
       - name: Build portable runtime
         shell: cmd
@@ -82,7 +82,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0-rc1\UA_FREE_Content_Tool").Path
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0\UA_FREE_Content_Tool").Path
           $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
           if (-not (Test-Path $exe)) { throw "Launcher missing" }
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
@@ -95,7 +95,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0-rc1\UA_FREE_Content_Tool").Path
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0\UA_FREE_Content_Tool").Path
           $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
           if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
           & $mp -Scan -ScanType 3 -File $root
@@ -105,7 +105,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = "Release\UA_FREE_Content_Tool_v1.3.0-rc1\UA_FREE_Content_Tool"
+          $root = "Release\UA_FREE_Content_Tool_v1.3.0\UA_FREE_Content_Tool"
           $zip = "UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
           @'
@@ -130,8 +130,8 @@ jobs:
               assert package.testzip() is None, "CRC validation failed"
               assert len(names) == len(set(names)), "duplicate ZIP paths"
               assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
-              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.3.0-rc1"
-              assert package.read("VERSION.txt").decode("utf-8").strip() == "1.3.0-rc1"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.3.0"
+              assert package.read("VERSION.txt").decode("utf-8").strip() == "1.3.0"
               missing = required.difference(normalized)
               assert not missing, sorted(missing)
               forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log", ".key", ".secure"))]
