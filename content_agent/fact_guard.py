@@ -11,6 +11,13 @@ _GENERIC_LATIN = frozenset({
     "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
     "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
 })
+_METADATA_PREFIXES = (
+    "ДЖЕРЕЛО ",
+    "SOURCE ",
+    "ЧАС:",
+    "TIME:",
+    "URL:",
+)
 
 _HIGH_RISK_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -63,6 +70,26 @@ def _canon_number(token: str) -> str:
     value = value.replace(",", ".")
     value = value.replace("₴", "грн").replace("$", "usd").replace("€", "eur")
     return value
+
+
+def _factual_evidence(value: str) -> str:
+    """Remove Evidence Pack transport metadata before factual comparison.
+
+    Source index, fetch/publication time and URL help the model understand the
+    dossier but they are not evidence that an event happened in that year or
+    that a number belongs in the public rewrite.
+    """
+
+    rows: list[str] = []
+    for raw in str(value or "").splitlines():
+        stripped = raw.strip()
+        upper = stripped.upper()
+        if any(upper.startswith(prefix) for prefix in _METADATA_PREFIXES):
+            continue
+        if stripped == "---":
+            continue
+        rows.append(raw)
+    return "\n".join(rows)
 
 
 def extract_numbers(value: str) -> set[str]:
@@ -135,12 +162,12 @@ def guard_rewrite(
 ) -> FactGuardResult:
     """Reject deterministic factual strengthening unsupported by current sources.
 
-    Editorial memory is deliberately absent from ``evidence``. Therefore a fact
-    copied from an old approved example is treated exactly like any other
-    unsupported model invention.
+    Editorial memory is deliberately absent from ``evidence``. Evidence Pack
+    transport metadata is also excluded from factual matching. Therefore an old
+    memory fact or a source timestamp cannot silently authorize a new claim.
     """
 
-    source = str(evidence or "")
+    source = _factual_evidence(evidence)
     output = f"{headline}\n{rewrite}".strip()
     issues: list[str] = []
 
