@@ -9,48 +9,89 @@ from ..source_health import (
 )
 
 
+_COLUMNS = ("id", "kind", "name", "health", "yield", "last_new", "errors", "checked", "url")
+_WIDTHS = {
+    "id": 55,
+    "kind": 80,
+    "name": 190,
+    "health": 220,
+    "yield": 65,
+    "last_new": 165,
+    "errors": 70,
+    "checked": 165,
+    "url": 400,
+}
+_LABELS = {
+    "uk": {
+        "id": "ID",
+        "kind": "Тип",
+        "name": "Назва",
+        "health": "Стан джерела",
+        "yield": "Нових",
+        "last_new": "Останній новий",
+        "errors": "Помилок",
+        "checked": "Остання перевірка",
+        "url": "Адреса",
+    },
+    "en": {
+        "id": "ID",
+        "kind": "Type",
+        "name": "Name",
+        "health": "Source health",
+        "yield": "New",
+        "last_new": "Last new item",
+        "errors": "Errors",
+        "checked": "Last check",
+        "url": "Address",
+    },
+}
+
+
 class SourceHealthV13Mixin:
     """Add persistent source diagnostics without changing the v1.2.2 DB schema."""
+
+    def _source_health_language(self) -> str:
+        value = str(getattr(getattr(self, "config", None), "ui_language", "uk") or "uk").casefold()
+        return "en" if value.startswith("en") else "uk"
+
+    def _apply_source_health_labels(self) -> None:
+        tree = getattr(self, "sources_tree", None)
+        if tree is None:
+            return
+        labels = _LABELS[self._source_health_language()]
+        for column in _COLUMNS:
+            tree.heading(column, text=labels[column])
 
     def _build_sources_tab(self) -> None:
         ensure_source_health(self.db)  # type: ignore[attr-defined]
         super()._build_sources_tab()  # type: ignore[misc]
         tree = self.sources_tree  # type: ignore[attr-defined]
-        columns = ("id", "kind", "name", "health", "yield", "last_new", "errors", "checked", "url")
-        tree.configure(columns=columns)
-        labels = {
-            "id": "ID",
-            "kind": "Тип",
-            "name": "Назва",
-            "health": "Стан джерела",
-            "yield": "Нових",
-            "last_new": "Останній новий",
-            "errors": "Помилок",
-            "checked": "Остання перевірка",
-            "url": "Адреса",
-        }
-        widths = {
-            "id": 55,
-            "kind": 80,
-            "name": 190,
-            "health": 220,
-            "yield": 65,
-            "last_new": 165,
-            "errors": 70,
-            "checked": 165,
-            "url": 400,
-        }
-        for column in columns:
-            tree.heading(column, text=labels[column])
-            tree.column(column, width=widths[column], anchor="w")
+        tree.configure(columns=_COLUMNS)
+        for column in _COLUMNS:
+            tree.column(column, width=_WIDTHS[column], anchor="w")
+        self._apply_source_health_labels()
 
-    @staticmethod
-    def _health_label(health: object | None) -> str:
+    def _apply_language(self, refresh: bool = True) -> None:
+        super()._apply_language(refresh=refresh)  # type: ignore[misc]
+        self._apply_source_health_labels()
+
+    def _health_label(self, health: object | None) -> str:
+        language = self._source_health_language()
         if health is None:
-            return "— немає даних"
-        state = str(getattr(health, "state", "— немає даних"))
+            return "— no data" if language == "en" else "— немає даних"
+
+        last_error_at = str(getattr(health, "last_error_at", "") or "")
+        last_success_at = str(getattr(health, "last_success_at", "") or "")
+        has_current_error = bool(last_error_at and (not last_success_at or last_error_at >= last_success_at))
+        if has_current_error:
+            state = "🔴 error" if language == "en" else "🔴 помилка"
+        elif last_success_at:
+            state = "🟢 working" if language == "en" else "🟢 працює"
+        else:
+            state = "— no data" if language == "en" else "— немає даних"
+
         error = str(getattr(health, "last_error", "") or "").strip()
-        if state.startswith("🔴") and error:
+        if has_current_error and error:
             compact = " ".join(error.split())
             if len(compact) > 90:
                 compact = compact[:87].rstrip() + "…"
