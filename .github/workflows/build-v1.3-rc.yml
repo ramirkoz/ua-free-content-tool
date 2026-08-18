@@ -5,12 +5,16 @@ on:
   push:
     branches:
       - feature/v1.3-evidence-fact-pipeline
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
   windows-v13-rc:
+    if: github.event_name != 'pull_request' || github.head_ref == 'feature/v1.3-evidence-fact-pipeline'
     runs-on: windows-latest
     timeout-minutes: 70
 
