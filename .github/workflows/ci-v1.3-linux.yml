@@ -28,4 +28,4 @@ jobs:
       - name: Compile
         run: python -m compileall -q content_agent tests
       - name: v1.3 deterministic regressions
-        run: python -m pytest -q tests/test_v1_3_evidence_fact_pipeline.py tests/test_v1_3_source_health.py
+        run: python -m pytest -q tests/test_v1_3_*.py
