@@ -1,0 +1,169 @@
+name: Build Windows v1.3 RC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.3-evidence-fact-pipeline
+
+permissions:
+  contents: read
+
+jobs:
+  windows-v13-rc:
+    runs-on: windows-latest
+    timeout-minutes: 70
+
+    steps:
+      - name: Checkout exact v1.3 RC commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate source and regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
+          python tools/check_entrypoint_imports.py
+          if ($LASTEXITCODE -ne 0) { throw "Entrypoint validation failed" }
+          @'
+          from content_agent import __version__
+          from content_agent.active_ai_providers_v1_2_1 import ACTIVE_AI_PROVIDERS
+          from content_agent.ai_router_v1_2_1 import MODEL_SLOTS
+          from content_agent.ai_task_profiles import REWRITE_PROFILE
+          from content_agent.evidence_pack import build_evidence_pack
+          from content_agent.fact_guard import guard_rewrite
+          from content_agent.rewrite_pipeline_v1_3 import rewrite_group_v13
+          from content_agent.source_health import ensure_source_health
+          from content_agent.ui.v1_3_window import MainWindow
+
+          assert __version__ == "1.3.0-rc1", __version__
+          assert set(ACTIVE_AI_PROVIDERS) == {"codex", "gemini", "nvidia", "groq", "cloudflare", "local"}
+          assert len(MODEL_SLOTS) == 13, len(MODEL_SLOTS)
+          assert {slot.provider for slot in MODEL_SLOTS} == set(ACTIVE_AI_PROVIDERS)
+          assert REWRITE_PROFILE.second_pass_threshold == 84
+          assert callable(build_evidence_pack)
+          assert callable(guard_rewrite)
+          assert callable(rewrite_group_v13)
+          assert callable(ensure_source_health)
+          assert MainWindow.__name__ == "MainWindow"
+          print("V13_RC1_SOURCE_GATE_OK")
+          '@ | Set-Content validate_v13_source.py -Encoding utf8
+          python validate_v13_source.py
+          if ($LASTEXITCODE -ne 0) { throw "v1.3 RC source gate failed" }
+          Remove-Item validate_v13_source.py
+
+      - name: Verify version files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $public = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          $runtime = (Get-Content VERSION.txt -Raw).Trim()
+          if ($public -ne "1.3.0-rc1") { throw "PUBLIC_VERSION mismatch: $public" }
+          if ($runtime -ne "1.3.0-rc1") { throw "VERSION mismatch: $runtime" }
+
+      - name: Build portable runtime
+        shell: cmd
+        run: Build_Portable_Windows.bat
+
+      - name: Validate runtime startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0-rc1\UA_FREE_Content_Tool").Path
+          $exe = (Resolve-Path (Join-Path $root "UA_FREE_Content_Tool.exe")).Path
+          if (-not (Test-Path $exe)) { throw "Launcher missing" }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+          Start-Sleep -Seconds 12
+          if ($process.HasExited) { throw "Portable GUI exited during startup smoke test: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          Remove-Item (Join-Path $root "Data\*") -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Microsoft Defender runtime scan
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path "Release\UA_FREE_Content_Tool_v1.3.0-rc1\UA_FREE_Content_Tool").Path
+          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
+          & $mp -Scan -ScanType 3 -File $root
+          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender runtime scan failed with exit code $LASTEXITCODE" }
+
+      - name: Package RC portable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "Release\UA_FREE_Content_Tool_v1.3.0-rc1\UA_FREE_Content_Tool"
+          $zip = "UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
+          @'
+          import sys, zipfile
+          archive = sys.argv[1]
+          required = {
+              "PUBLIC_VERSION.txt",
+              "VERSION.txt",
+              "RELEASE_NOTES_v1.3.0-rc1.md",
+              "content_agent/ai_task_profiles.py",
+              "content_agent/evidence_pack.py",
+              "content_agent/fact_guard.py",
+              "content_agent/source_health.py",
+              "content_agent/rewrite_pipeline_v1_3.py",
+              "content_agent/ui/source_health_v1_3.py",
+              "content_agent/ui/v1_3_window.py",
+              "content_agent/main.py",
+          }
+          with zipfile.ZipFile(archive) as package:
+              names = package.namelist()
+              normalized = {name.replace("\\", "/") for name in names}
+              assert package.testzip() is None, "CRC validation failed"
+              assert len(names) == len(set(names)), "duplicate ZIP paths"
+              assert not any(name.startswith(("/", "\\")) or "../" in name.replace("\\", "/") for name in names), "unsafe ZIP path"
+              assert package.read("PUBLIC_VERSION.txt").decode("utf-8").strip() == "1.3.0-rc1"
+              assert package.read("VERSION.txt").decode("utf-8").strip() == "1.3.0-rc1"
+              missing = required.difference(normalized)
+              assert not missing, sorted(missing)
+              forbidden = [name for name in names if name.casefold().endswith((".sqlite", ".sqlite3", ".db", ".log", ".key", ".secure"))]
+              assert not forbidden, forbidden[:10]
+              exes = [name for name in names if name.casefold().endswith(".exe")]
+              assert len(exes) == 1, exes
+              assert exes[0].replace("\\", "/") == "UA_FREE_Content_Tool.exe", exes
+          print("V13_RC1_ZIP_VALIDATION_OK")
+          '@ | Set-Content validate_v13_zip.py -Encoding utf8
+          python validate_v13_zip.py $zip
+          if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
+          Remove-Item validate_v13_zip.py
+          $portableHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$portableHash  $zip" | Set-Content "SHA256SUMS_v1.3.0-rc1.txt" -Encoding ascii
+
+      - name: Microsoft Defender final ZIP scan
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) { throw "Microsoft Defender MpCmdRun.exe not found" }
+          $zip = (Resolve-Path "UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip").Path
+          & $mp -Scan -ScanType 3 -File $zip
+          if ($LASTEXITCODE -notin @(0, 2)) { throw "Defender ZIP scan failed with exit code $LASTEXITCODE" }
+
+      - name: Upload RC build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v1.3.0_RC1
+          path: |
+            UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip
+            SHA256SUMS_v1.3.0-rc1.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
