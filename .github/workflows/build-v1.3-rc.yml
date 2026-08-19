@@ -1,4 +1,4 @@
-name: Build Windows v1.3 RC
+name: Build Windows v1.3 Gate
 
 on:
   workflow_dispatch:
@@ -13,13 +13,13 @@ permissions:
   contents: read
 
 jobs:
-  windows-v13-rc:
+  windows-v13-gate:
     if: github.event_name != 'pull_request' || github.head_ref == 'feature/v1.3-evidence-fact-pipeline'
     runs-on: windows-latest
     timeout-minutes: 70
 
     steps:
-      - name: Checkout exact v1.3 RC commit
+      - name: Checkout exact v1.3 commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -53,7 +53,7 @@ jobs:
           from content_agent.source_health import ensure_source_health
           from content_agent.ui.v1_3_window import MainWindow
 
-          assert __version__ == "1.3.0-rc1", __version__
+          assert __version__ == "1.3.0", __version__
           assert set(ACTIVE_AI_PROVIDERS) == {"codex", "gemini", "nvidia", "groq", "cloudflare", "local"}
           assert len(MODEL_SLOTS) == 13, len(MODEL_SLOTS)
           assert {slot.provider for slot in MODEL_SLOTS} == set(ACTIVE_AI_PROVIDERS)
@@ -63,10 +63,10 @@ jobs:
           assert callable(rewrite_group_v13)
           assert callable(ensure_source_health)
           assert MainWindow.__name__ == "MainWindow"
-          print("V13_RC1_SOURCE_GATE_OK")
+          print("V13_SOURCE_GATE_OK")
           '@ | Set-Content validate_v13_source.py -Encoding utf8
           python validate_v13_source.py
-          if ($LASTEXITCODE -ne 0) { throw "v1.3 RC source gate failed" }
+          if ($LASTEXITCODE -ne 0) { throw "v1.3 source gate failed" }
           Remove-Item validate_v13_source.py
 
       - name: Verify version files
@@ -100,7 +100,7 @@ jobs:
 
           Push-Location $root
           try {
-            & $console -I -c "import content_agent.main; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('V13_RC1_SIGNED_RUNTIME_IMPORT_AND_TK_OK')"
+            & $console -I -c "import content_agent.main; import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy(); print('V13_SIGNED_RUNTIME_IMPORT_AND_TK_OK')"
             if ($LASTEXITCODE -ne 0) { throw "Isolated signed runtime validation failed: $LASTEXITCODE" }
           } finally {
             Pop-Location
@@ -133,12 +133,12 @@ jobs:
           & $scanner.FullName -Scan -ScanType 3 -File $root -DisableRemediation
           if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the extracted runtime: $LASTEXITCODE" }
 
-      - name: Package and validate RC portable
+      - name: Package and validate pre-merge portable
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = "Release\UA_FREE_Content_Tool_v1.3.0\UA_FREE_Content_Tool"
-          $zip = "UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip"
+          $zip = "UA_FREE_Content_Tool_v1.3.0_Windows_Portable_PREMERGE.zip"
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
           @'
           import sys, zipfile
@@ -183,7 +183,7 @@ jobs:
               assert not forbidden, forbidden[:10]
               exes = {name.replace("\\", "/") for name in names if name.casefold().endswith(".exe")}
               assert exes == allowed_executables, f"unexpected executables: {sorted(exes)}"
-          print("V13_RC1_ZIP_VALIDATION_OK")
+          print("V13_ZIP_VALIDATION_OK")
           '@ | Set-Content validate_v13_zip.py -Encoding utf8
           python validate_v13_zip.py $zip
           if ($LASTEXITCODE -ne 0) { throw "ZIP validation failed" }
@@ -192,18 +192,18 @@ jobs:
           $scanner = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
           & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path $zip).Path -DisableRemediation
-          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the RC ZIP: $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "Defender detected or could not scan the pre-merge ZIP: $LASTEXITCODE" }
 
           $portableHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$portableHash  $zip" | Set-Content "SHA256SUMS_v1.3.0-rc1.txt" -Encoding ascii
+          "$portableHash  $zip" | Set-Content "SHA256SUMS_v1.3.0_PREMERGE.txt" -Encoding ascii
 
-      - name: Upload RC build artifact
+      - name: Upload pre-merge build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UA_FREE_Content_Tool_v1.3.0_RC1
+          name: UA_FREE_Content_Tool_v1.3.0_PREMERGE
           path: |
-            UA_FREE_Content_Tool_v1.3.0-rc1_Windows_Portable.zip
-            SHA256SUMS_v1.3.0-rc1.txt
+            UA_FREE_Content_Tool_v1.3.0_Windows_Portable_PREMERGE.zip
+            SHA256SUMS_v1.3.0_PREMERGE.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
