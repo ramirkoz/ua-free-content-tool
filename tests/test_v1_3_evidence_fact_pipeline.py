@@ -68,24 +68,25 @@ def test_fact_guard_blocks_unsupported_superlative_but_not_ordinary_first_quarte
     assert good.allowed is True
 
 
-def test_v13_adaptive_rewrite_uses_second_provider_after_fact_guard_reject(monkeypatch) -> None:
+def test_v13_adaptive_rewrite_uses_next_model_after_fact_guard_reject(monkeypatch) -> None:
     calls: list[set[str]] = []
 
     def fake_run_ai(prompt: str, **kwargs):
-        skip = set(kwargs.get("skip_providers") or ())
+        del prompt
+        skip = set(kwargs.get("skip_models") or ())
         calls.append(skip)
-        if skip:
+        if "nvidia-m1" in skip:
             text = '{"headline":"Meta представила Muse Glimmer","fact_card":"","rewrite":"Meta представила Muse Glimmer з 8 млрд параметрів."}'
-            provider = "nvidia"
-            label = "NVIDIA test"
+            model = "nvidia-m2"
+            label = "NVIDIA test 2"
         else:
             text = '{"headline":"Meta представила ModelX","fact_card":"","rewrite":"Meta представила ModelX у 2024 році з 8 млрд параметрів."}'
-            provider = "gemini"
-            label = "Gemini test"
+            model = "nvidia-m1"
+            label = "NVIDIA test 1"
         validator = kwargs.get("validator")
         if validator is not None:
             validator(text)
-        return AIResult(text, provider, "test-model", label, 1, (label,))
+        return AIResult(text, "nvidia", model, label, 1, (label,))
 
     monkeypatch.setattr(pipeline, "run_ai", fake_run_ai)
     group = _group("Meta представила Muse Glimmer з 8 млрд параметрів.")
@@ -93,6 +94,6 @@ def test_v13_adaptive_rewrite_uses_second_provider_after_fact_guard_reject(monke
 
     assert result.headline == "Meta представила Muse Glimmer"
     assert "2024" not in result.rewrite
-    assert calls == [set(), {"gemini"}]
-    assert pipeline.last_rewrite_engine_label() == "NVIDIA test"
+    assert calls == [set(), {"nvidia-m1"}]
+    assert pipeline.last_rewrite_engine_label() == "NVIDIA test 2"
     assert "Fact Guard PASS" in pipeline.last_rewrite_diagnostic()
