@@ -297,6 +297,7 @@ def run_ai(
     cloud_timeout_seconds: int = 120,
     task_timeout_seconds: int | None = None,
     skip_providers: set[str] | frozenset[str] | tuple[str, ...] = (),
+    skip_models: set[str] | frozenset[str] | tuple[str, ...] = (),
     suppress_provider_on_quota: bool = False,
 ) -> AIResult:
     """Run one bounded AI task with a compact, independently budgeted Ollama fallback."""
@@ -312,8 +313,19 @@ def run_ai(
     cloud_timeout = max(3, min(120, int(cloud_timeout_seconds)))
     deadline = (time.monotonic() + max(3, int(task_timeout_seconds))) if task_timeout_seconds is not None else None
     suppressed_providers = {str(value).strip().casefold() for value in skip_providers if str(value).strip()}
+    suppressed_models = {str(value).strip().casefold() for value in skip_models if str(value).strip()}
     cfg = legacy.load_provider_secrets()
     state = legacy.load_router_state()
+    # RC1 could persist article-validation failures as 10-minute model cooldowns.
+    # Remove only that poisoned state; real auth/quota/network cooldowns remain intact.
+    poisoned = [
+        key for key, row in list(state.cooldowns.items())
+        if isinstance(row, dict) and str(row.get("reason", "")).startswith("validation:")
+    ]
+    if poisoned:
+        for key in poisoned:
+            state.cooldowns.pop(key, None)
+        legacy.save_router_state(state)
     now = time.time()
     attempted: list[str] = []
     failures: list[str] = []
@@ -328,7 +340,7 @@ def run_ai(
                 "Локальний AI · авто: Ollama → llama.cpp",
                 slot.family,
             )
-        if slot.provider.casefold() in suppressed_providers:
+        if slot.provider.casefold() in suppressed_providers or slot.model.casefold() in suppressed_models:
             continue
         if not legacy._configured(slot, cfg):
             continue
@@ -420,10 +432,9 @@ def run_ai(
                 legacy.save_router_state(state)
             continue
         except Exception as exc:
+            # Candidate-level validation failures are about THIS answer, not provider health.
+            # Never turn a bad format/Fact Guard/readability candidate into a global model cooldown.
             failures.append(f"{runtime_slot.label}: відповідь не пройшла перевірку ({exc})")
-            if slot.provider != "local":
-                legacy._put_cooldown(state, legacy._slot_key(slot), 10 * 60, f"validation: {exc}")
-                legacy.save_router_state(state)
             continue
 
         state.last_provider = runtime_slot.provider
