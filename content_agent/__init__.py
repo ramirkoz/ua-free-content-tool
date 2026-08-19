@@ -1,6 +1,6 @@
 """UA FREE Content Tool."""
 
-__version__ = "1.3.0-rc1"
+__version__ = "1.3.0"
 APP_NAME = "UA FREE Content Tool"
 
 # Keep the proven v1.2.x production provider registry. v1.3 changes task routing,
