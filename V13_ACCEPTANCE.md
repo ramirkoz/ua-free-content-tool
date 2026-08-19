@@ -1,32 +1,42 @@
 # UA FREE Content Tool 1.3 acceptance
 
-Status: **RC1 / not stable**
+Status: **LIVE ACCEPTED / STABLE PROMOTION AUTHORIZED**
 
 Baseline: live-accepted `v1.2.2`.
+Accepted candidate: `v1.3.0-rc3`.
+Stable target: `v1.3.0`.
+Live acceptance date: 2026-08-19.
 
-## RC1 scope
+## Accepted 1.3 scope
 
 - deterministic Evidence Pack before rewrite;
 - deterministic Fact Guard after rewrite;
-- adaptive second provider only when first candidate is blocked or weak;
 - bounded task-aware rewrite budgets;
-- editorial memory isolated from factual evidence;
+- provider-health diagnostics separated from editorial candidate QA;
+- Router transport/provider availability separated from structural parsing, Fact Guard and readability/editorial validation;
+- rejected candidate does not poison provider/model health or create a validation cooldown;
+- model-level retry can use another model from the same provider;
+- qwen `<think>` cleanup and one bounded local format-repair attempt;
+- editorial/Rowboat memory isolated from factual evidence;
 - persistent Source Health diagnostics without a database schema bump;
-- production entrypoint moved to `ui.v1_3_window` while retaining the accepted v1.2.2 behavior underneath.
+- production entrypoint `ui.v1_3_window` while retaining accepted v1.2.2 behavior underneath.
 
 ## Protected mechanisms
 
-The RC1 work must not change the accepted global duplicate engine, manual merge confirmation, Media Engine, multi-image workflow, platform publishers, publication queue semantics, scheduling, AES-GCM provider secret format, or existing Data contents.
+The 1.3 work does not intentionally change the accepted global duplicate engine, manual merge confirmation, Media Engine, multi-image workflow, platform publishers, publication queue semantics, scheduling, outcome-unknown safety, AES-GCM provider secret format, or existing Data schema 8.
 
-## Promotion gate
+## Acceptance evidence
 
-Stable `1.3.0` is allowed only after:
+- automated v1.3 logic/regression gates: PASS;
+- Windows CI on Python 3.11 / 3.12 / 3.13 during the RC cycle: PASS;
+- signed Windows portable build and GUI smoke during the RC cycle: PASS;
+- Microsoft Defender runtime + ZIP scans during the RC cycle: PASS;
+- ZIP integrity/version/safety gates: PASS;
+- live test used a COPY of the current working Data;
+- live AI Router diagnostics: PASS, including real NVIDIA response handling without literal-echo false failure;
+- live production rewrite after Router/QA separation: PASS;
+- user reported Content Creator working correctly and explicitly authorized full GitHub, Google Drive and release synchronization on 2026-08-19.
 
-- full Windows CI PASS on Python 3.11 / 3.12 / 3.13;
-- deterministic v1.3 logic gate PASS;
-- signed Windows portable build PASS;
-- GUI startup smoke PASS;
-- Microsoft Defender runtime + ZIP scans PASS;
-- ZIP integrity/version/safety gate PASS;
-- live test using a COPY of the current working v1.2.2 `Data`;
-- live rewrite PASS and no reported regression in duplicate grouping, media, queue or publication.
+## Stable promotion rule
+
+No functional changes are permitted between the accepted RC3 code and stable 1.3.0. Stable promotion changes release metadata/version only and is completed only if the repository CI/release workflow remains green.
