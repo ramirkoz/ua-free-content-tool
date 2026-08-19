@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.3.0 — 2026-08-19
+
+### Added
+
+- Deterministic Evidence Pack selection before rewrite, including late facts, numbers, named entities and source-specific details under bounded prompt budgets.
+- Deterministic Fact Guard for years, numbers, named entities/models and unsupported high-risk claims.
+- Persistent Source Health diagnostics without a database schema bump.
+- Regression coverage for provider-health semantics, model-level retry, qwen thinking wrappers and Router/post-AI QA separation.
+
+### Changed
+
+- AI provider diagnostics now treat a provider as healthy when it returns a real non-empty response; diagnostics no longer require a literal control phrase.
+- Production AI Router is responsible for transport/provider execution, while structural parsing, editorial validation and Fact Guard run after the provider response.
+- A candidate rejected by post-AI QA no longer creates a provider/model cooldown.
+- Post-AI retry may skip only the rejected model so another model from the same provider remains available.
+- qwen-style `<think>...</think>` wrappers are removed before parsing.
+- One bounded local format-repair attempt is available after a local response fails post-AI QA.
+- Editorial examples and Rowboat/local memory are explicitly style-only and cannot supply facts to a new story.
+
+### Preserved
+
+- The live-accepted v1.2.2 global duplicate engine and explicit human merge confirmation.
+- Media Engine, multi-image workflow, platform publishers, queue/scheduling, outcome-unknown safety, AES-GCM provider secrets and Data schema 8.
+
+### Validation
+
+- v1.3 RC gates passed deterministic regression, compile/import, signed-runtime, GUI startup, Microsoft Defender and ZIP integrity gates during the RC cycle.
+- Live Windows/Data acceptance passed on `v1.3.0-rc3` on 2026-08-19, including provider diagnostics and real production rewrite after Router/QA separation.
+- Stable v1.3.0 contains no functional change after the accepted RC3 code; only release/version metadata is promoted.
+
 ## v1.2.2 — 2026-08-17
 
 ### Added
