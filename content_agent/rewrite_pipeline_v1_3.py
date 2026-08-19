@@ -52,7 +52,9 @@ def _set_last(candidate: RewriteCandidate, evidence: EvidencePack, *, second_pas
 
 
 def _clean_json_text(raw: str) -> str:
-    return _CODE_FENCE.sub("", str(raw or "").strip()).strip()
+    value = str(raw or "").strip()
+    value = re.sub(r"(?is)<think>.*?</think>", "", value).strip()
+    return _CODE_FENCE.sub("", value).strip()
 
 
 def _decode_payload(raw: str) -> dict[str, object]:
@@ -62,6 +64,14 @@ def _decode_payload(raw: str) -> dict[str, object]:
     except json.JSONDecodeError:
         payload = None
     if isinstance(payload, dict):
+        # Accept common provider aliases while keeping one canonical internal shape.
+        if not payload.get("headline"):
+            payload["headline"] = payload.get("title") or payload.get("heading") or ""
+        if not payload.get("rewrite"):
+            payload["rewrite"] = (
+                payload.get("text") or payload.get("body") or payload.get("article")
+                or payload.get("telegram_post") or payload.get("content") or ""
+            )
         return payload
 
     start = text.find("{")
@@ -72,6 +82,10 @@ def _decode_payload(raw: str) -> dict[str, object]:
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
+            if not payload.get("headline"):
+                payload["headline"] = payload.get("title") or payload.get("heading") or ""
+            if not payload.get("rewrite"):
+                payload["rewrite"] = (payload.get("text") or payload.get("body") or payload.get("article") or payload.get("telegram_post") or payload.get("content") or "")
             return payload
 
     headline_match = re.search(r"(?im)^\s*(?:ЗАГОЛОВОК|HEADLINE)\s*:\s*(.+?)\s*$", text)
@@ -83,6 +97,16 @@ def _decode_payload(raw: str) -> dict[str, object]:
             headline = rewrite.splitlines()[0][:180].rstrip(" .!?…")
         if headline and rewrite:
             return {"headline": headline, "fact_card": "", "rewrite": rewrite}
+
+    # Last-resort recovery: some otherwise useful models ignore wrapper labels and
+    # return only the public body. Accept that only when it contains no service sections.
+    plain = text.strip()
+    if plain and not _FORBIDDEN_LINE.search(plain) and not plain.startswith(("{", "[")):
+        compact = " ".join(plain.split())
+        if len(compact) >= 60:
+            first_sentence = re.split(r"(?<=[.!?…])\s+", compact, maxsplit=1)[0]
+            headline = first_sentence[:180].rstrip(" .!?…")
+            return {"headline": headline, "fact_card": "", "rewrite": plain}
 
     raise AIRouterError("AI повернув рерайт не у валідному або відновлюваному форматі.")
 
@@ -214,12 +238,14 @@ def _router_call(
     local_prompt: str,
     *,
     skip_providers: set[str] | frozenset[str] = frozenset(),
+    skip_models: set[str] | frozenset[str] = frozenset(),
 ) -> AIResult:
+    """Transport-only Router call. Candidate QA happens after this function returns."""
     profile = REWRITE_PROFILE
     try:
         return run_ai(
             prompt,
-            validator=_validate_structural,
+            validator=None,
             max_output_tokens=profile.cloud_output_tokens,
             local_prompt=local_prompt,
             local_max_output_tokens=profile.local_output_tokens,
@@ -227,13 +253,100 @@ def _router_call(
             cloud_timeout_seconds=profile.cloud_timeout_seconds,
             task_timeout_seconds=profile.task_timeout_seconds,
             skip_providers=skip_providers,
+            skip_models=skip_models,
             local_repair=False,
         )
     except TypeError as exc:
         if "unexpected keyword argument" not in str(exc):
             raise
-        return run_ai(prompt, validator=_validate_structural, max_output_tokens=profile.cloud_output_tokens)
+        return run_ai(prompt, validator=None, max_output_tokens=profile.cloud_output_tokens)
 
+
+
+def _candidate_after_router(
+    prompt: str,
+    local_prompt: str,
+    evidence: EvidencePack,
+    *,
+    language: str,
+    skip_providers: set[str] | None = None,
+    max_candidates: int = 8,
+) -> RewriteCandidate:
+    """Get a provider response first, then apply structural/editorial/Fact Guard QA.
+
+    A candidate rejected by post-AI QA never changes provider health or cooldown.
+    We skip only the rejected model where possible, preserving other models from
+    the same provider for the same news item.
+    """
+    provider_skip = set(skip_providers or set())
+    model_skip: set[str] = set()
+    failures: list[str] = []
+    local_repair_done = False
+
+    for _ in range(max(1, int(max_candidates))):
+        try:
+            route = _router_call(
+                prompt,
+                local_prompt,
+                skip_providers=provider_skip,
+                skip_models=model_skip,
+            )
+        except AIRouterError as exc:
+            detail = " | ".join(failures[-5:])
+            if detail:
+                raise AIRouterError(
+                    "AI-провайдери відповіли, але post-AI QA відхилив кандидати. "
+                    + detail
+                    + f" | Router: {exc}"
+                ) from exc
+            raise
+
+        try:
+            candidate = _candidate(route, evidence, language=language)
+            if candidate.guard.allowed:
+                return candidate
+            failures.append(
+                f"{route.label}: Fact Guard: " + "; ".join(candidate.guard.issues[:4])
+            )
+        except Exception as exc:
+            failures.append(f"{route.label}: {exc}")
+
+            if route.provider == "local" and not local_repair_done:
+                local_repair_done = True
+                repair_prompt = (
+                    local_prompt
+                    + "\n\nPOST-AI FORMAT REPAIR. Попередня відповідь була отримана, але не пройшла post-AI QA: "
+                    + str(exc)[:500]
+                    + "\nНе додавай нових фактів. Виправ лише формат, мову, завершеність і довжину. "
+                    + "Поверни рівно ЗАГОЛОВОК і ТЕКСТ у форматі, який вимагався вище.\n\nПОПЕРЕДНЯ ВІДПОВІДЬ:\n"
+                    + str(route.text)[:2600]
+                )
+                try:
+                    repaired_route = _router_call(
+                        repair_prompt,
+                        repair_prompt,
+                        skip_providers={"codex", "gemini", "nvidia", "sambanova", "cerebras", "groq", "openrouter", "cloudflare"},
+                    )
+                    repaired = _candidate(repaired_route, evidence, language=language)
+                    if repaired.guard.allowed:
+                        return repaired
+                    failures.append(
+                        "local repair Fact Guard: " + "; ".join(repaired.guard.issues[:4])
+                    )
+                except Exception as repair_exc:
+                    failures.append(f"local repair: {repair_exc}")
+
+        if route.provider == "local":
+            provider_skip.add("local")
+        elif route.model:
+            model_skip.add(str(route.model).casefold())
+        elif route.provider:
+            provider_skip.add(str(route.provider).casefold())
+
+    raise AIRouterError(
+        "AI-провайдери відповіли, але post-AI QA відхилив усі кандидати. "
+        + " | ".join(failures[-6:])
+    )
 
 def _candidate(route: AIResult, evidence: EvidencePack, *, language: str) -> RewriteCandidate:
     payload = _parse_structural(route.text)
@@ -288,14 +401,16 @@ def rewrite_group_v13(
 
     prompt = _cloud_prompt(group, cloud_evidence, examples, graph_memory, language=language)
     local_prompt = _local_prompt(local_evidence, language=language)
-    first_route = _router_call(prompt, local_prompt)
-    first = _candidate(first_route, cloud_evidence, language=language)
+    first = _candidate_after_router(
+        prompt,
+        local_prompt,
+        cloud_evidence,
+        language=language,
+    )
 
-    candidates: list[RewriteCandidate] = []
-    if first.guard.allowed:
-        candidates.append(first)
+    candidates: list[RewriteCandidate] = [first]
 
-    second_needed = (not first.guard.allowed) or first.guard.score < REWRITE_PROFILE.second_pass_threshold
+    second_needed = first.guard.score < REWRITE_PROFILE.second_pass_threshold
     second_attempted = False
     second_error = ""
     if second_needed:
@@ -307,15 +422,16 @@ def rewrite_group_v13(
             + ". Do not copy the previous answer. Re-read CURRENT SOURCE EVIDENCE PACK and produce a cleaner candidate."
         )
         try:
-            second_route = _router_call(
+            second = _candidate_after_router(
                 reinforced,
                 local_prompt,
+                cloud_evidence,
+                language=language,
                 skip_providers={first.route.provider},
+                max_candidates=6,
             )
             second_attempted = True
-            second = _candidate(second_route, cloud_evidence, language=language)
-            if second.guard.allowed:
-                candidates.append(second)
+            candidates.append(second)
         except AIRouterError as exc:
             second_error = str(exc)
 
