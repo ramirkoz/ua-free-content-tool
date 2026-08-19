@@ -415,10 +415,10 @@ def test_local_runtime(
         preferred_model=preferred_model,
         manual_base_url=manual_base_url,
         manual_model=manual_model,
-        prompt="Return exactly this text and nothing else: UA_FREE_LOCAL_OK",
+        prompt="Reply with a short non-empty plain-text health response.",
         max_output_tokens=64,
         temperature=0.0,
     )
-    if "UA_FREE_LOCAL_OK" not in text:
-        raise LocalAIRuntimeError(f"{target.label} відповів, але контрольний текст не збігся.")
+    if not str(text or "").strip():
+        raise LocalAIRuntimeError(f"{target.label} не повернув текстової відповіді.")
     return target

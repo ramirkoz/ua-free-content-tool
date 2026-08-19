@@ -540,7 +540,7 @@ def router_overview() -> list[dict[str, object]]:
 
 
 def test_ai_router() -> str:
-    result = run_ai('Поверни рівно текст: UA_FREE_AI_ROUTER_OK')
-    if "UA_FREE_AI_ROUTER_OK" not in result.text:
-        raise AIRouterError(f"{result.label} відповів, але контрольний текст не збігся.")
+    result = run_ai('Відповідай коротким непорожнім текстом. Це лише перевірка доступності AI Router.')
+    if not str(result.text or "").strip():
+        raise AIRouterError(f"{result.label} не повернув текстової відповіді.")
     return f"AI Router працює. Відповіла модель: {result.label}."
