@@ -41,4 +41,4 @@ UA FREE Content Tool 1.3.0 is the stable promotion of the live-accepted 1.3 RC3 
 
 The GitHub release workflow must pass the complete Windows release gate before publishing or refreshing v1.3.0: full pytest, Python 3.12 source validation, signed runtime check, GUI startup smoke, Microsoft Defender scans of the extracted runtime and final ZIP, ZIP safety/integrity checks, source archive creation and SHA-256 generation.
 
-The exact Windows Portable ZIP, Source ZIP and `SHA256SUMS.txt` produced by that final release gate are also archived by the same workflow for byte-identical synchronization to the Google Drive Project Vault.
+The exact Windows Portable ZIP, Source ZIP and `SHA256SUMS.txt` produced by that final release gate are also archived by the same workflow for byte-identical synchronization to the Google Drive Project Vault. The workflow publishes a `release-sync` commit status containing its run ID so the exact artifact can be retrieved without rebuilding or repackaging it.
