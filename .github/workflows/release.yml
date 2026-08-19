@@ -239,6 +239,18 @@ jobs:
           "source_zip=$sourceZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "checksums=$checksums" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Archive exact release assets for synchronization
+        uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v${{ env.RELEASE_VERSION }}_RELEASE_ASSETS
+          path: |
+            ${{ steps.assets.outputs.portable_zip }}
+            ${{ steps.assets.outputs.source_zip }}
+            ${{ steps.assets.outputs.checksums }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
       - name: Publish or refresh GitHub Release
         shell: pwsh
         env:
