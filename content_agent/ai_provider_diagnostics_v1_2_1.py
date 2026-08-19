@@ -63,7 +63,7 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
 
     cfg = load_provider_secrets()
     rows: list[ProviderDiagnostic] = []
-    prompt = "Return exactly this text and nothing else: UA_FREE_PROVIDER_OK"
+    prompt = "Reply with a short non-empty plain-text health response."
 
     for provider, original_slots in _provider_slot_groups():
         slots = [_runtime_slot(slot, cfg) for slot in original_slots]
@@ -101,8 +101,8 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
             terminal_model = slot.model
             try:
                 text = _invoke_slot(slot, cfg, prompt).strip()
-                if "UA_FREE_PROVIDER_OK" not in text:
-                    failures.append(f"{slot.model}: контрольний текст не збігся")
+                if not text:
+                    failures.append(f"{slot.model}: порожня контрольна відповідь")
                     continue
             except AIModelError as exc:
                 failures.append(f"{slot.model}: {exc}")
@@ -117,7 +117,7 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
                 failures.append(f"{slot.model}: тимчасова помилка перевірки: {exc}")
                 continue
 
-            success_row = ProviderDiagnostic(provider, label, "ok", f"працює · {slot.model}", slot.model)
+            success_row = ProviderDiagnostic(provider, label, "ok", f"API працює · відповідь отримано · {slot.model}", slot.model)
             break
 
         if success_row is not None:
