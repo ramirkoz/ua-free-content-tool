@@ -2,28 +2,28 @@
 
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
-> **Public release:** `v1.2.2`
+> **Public release:** `v1.3.0`
 > **Platform:** Windows 10/11, portable
 > **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
 
 UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
 
-## What is new in v1.2.2
+## What is new in v1.3.0
 
-v1.2.2 focuses on resilient AI execution and duplicate grouping.
+v1.3.0 focuses on evidence-first rewriting and a cleaner separation between AI availability and editorial quality control.
 
-- One production AI Router handles cloud models and local emergency fallback.
-- Existing Ollama is detected automatically and reused; it is not reinstalled and models are not downloaded automatically.
-- If Ollama is installed but stopped, the application can start `ollama serve` hidden on Windows.
-- Real rewrite execution can reach Ollama, not only the diagnostic test button.
-- Global duplicate search is bounded, cancellable, non-blocking for the Tkinter interface, and protected by an operation deadline and watchdog.
-- Duplicate classification accepts a compact `MERGE ...` protocol and tolerant JSON instead of failing on one formatting defect.
-- Strong deterministic duplicate candidates remain available for human review when AI is unavailable, returns `NONE`, or times out.
-- Title-first candidate generation uses rare title terms and adjacent bigrams so obvious pairs remain discoverable even in large noisy Inbox datasets.
-- No candidate is merged automatically. The editor confirms every merge.
+- A deterministic Evidence Pack selects source facts before the rewrite instead of blindly truncating long material.
+- Fact Guard checks numbers, years, named entities/models and unsupported high-risk claims after generation.
+- Provider health checks now test endpoint/auth/model responsiveness only. A model is healthy when it returns a real non-empty response; it is no longer marked unhealthy for not echoing a magic phrase.
+- AI Router handles transport and provider availability, while structural parsing, factual validation, readability and other editorial QA run after the model responds.
+- A candidate rejected by editorial QA does not poison provider/model health or create a validation cooldown. The pipeline can try another model, including another model from the same provider.
+- Local qwen/Ollama output can recover from `<think>...</think>` wrappers and gets one bounded format-repair attempt when appropriate.
+- Editorial/Rowboat memory is explicitly style-only and is never allowed to introduce facts into a new story.
+- Persistent Source Health diagnostics show source liveness and recent collection results without changing the working Data schema.
+- The live-accepted v1.2.2 duplicate engine, manual merge confirmation, media workflows, queue/publishers and Data schema 8 remain intact.
 
-See [RELEASE_NOTES_v1.2.2.md](RELEASE_NOTES_v1.2.2.md) and [CHANGELOG.md](CHANGELOG.md).
+See [RELEASE_NOTES_v1.3.0.md](RELEASE_NOTES_v1.3.0.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Core workflow
 
@@ -141,7 +141,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Download `UA_FREE_Content_Tool_v1.2.2_Windows_Portable.zip`.
+2. Download `UA_FREE_Content_Tool_v1.3.0_Windows_Portable.zip`.
 3. Verify SHA-256 against `SHA256SUMS.txt`.
 4. Extract the full ZIP into a new folder.
 5. Copy your existing `Data` folder if updating.
@@ -172,22 +172,11 @@ Build_Portable_Windows.bat
 
 The release workflow validates source, tests the application, builds the signed portable runtime, performs GUI startup checks, runs Microsoft Defender, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
 
-Final v1.2.2 RC7 acceptance before promotion:
-
-- **406 automated tests PASS**;
-- Windows CI Python 3.11 PASS;
-- Windows CI Python 3.12 PASS;
-- Windows CI Python 3.13 PASS;
-- portable build PASS;
-- GUI startup smoke PASS;
-- Microsoft Defender PASS;
-- ZIP CRC/integrity validation PASS;
-- live working-Data rewrite PASS;
-- live working-Data global duplicate grouping PASS.
+Stable v1.3.0 promotion follows the live-accepted RC3 code. During the 1.3 RC cycle, Windows CI on Python 3.11/3.12/3.13, deterministic v1.3 regression gates, the signed portable build, GUI startup smoke, Microsoft Defender scans and ZIP integrity checks passed. Live Windows/Data testing on 2026-08-19 confirmed provider diagnostics and a real production rewrite after the Router/post-AI QA separation. The stable release workflow repeats the full release gate before publishing v1.3.0.
 
 ## Documentation
 
-- [RELEASE_NOTES_v1.2.2.md](RELEASE_NOTES_v1.2.2.md) — current release notes.
+- [RELEASE_NOTES_v1.3.0.md](RELEASE_NOTES_v1.3.0.md) — current release notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
