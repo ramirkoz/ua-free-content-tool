@@ -13,9 +13,9 @@ from .v1_2_2_rc1_window import MainWindow as StableV122Window
 
 
 class MainWindow(SourceHealthV13Mixin, StableV122Window):
-    """Content Tool 1.3 RC1 on top of the live-accepted v1.2.2 behavior."""
+    """Content Tool 1.3.1 RC1 queue-safety hotfix on the live-accepted 1.3.0 behavior."""
 
-    VERSION_LABEL = "1.3.0 RC1"
+    VERSION_LABEL = "1.3.1 RC1"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
@@ -23,7 +23,7 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
 
     def _apply_v13_labels(self) -> None:
         self.root.title(
-            "UA FREE Content Tool — v1.3.0 RC1 · Evidence Pack + Fact Guard + AI Router"
+            "UA FREE Content Tool — v1.3.1 RC1 · Queue Safety Hotfix"
         )
         button = getattr(self, "rewrite_button", None)
         if button is not None:
