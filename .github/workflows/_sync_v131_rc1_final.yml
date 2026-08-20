@@ -1,0 +1,231 @@
+name: Finalize v1.3.1-rc1 source sync
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply final RC1 source deltas
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          db_path = Path('content_agent/database.py')
+          db = db_path.read_text(encoding='utf-8')
+          if '    def recover_abandoned_batches(' not in db:
+              marker = '    def claim_due_batch(self, owner: str | None = None, lease_seconds: int = 120) -> PublicationBatch | None:\n'
+              if marker not in db:
+                  raise SystemExit('database marker not found')
+              block = '''    def recover_abandoned_batches(self, max_automatic_attempts: int = 3) -> list[int]:
+        """Fail closed on packages left in_progress by a previous process.
+
+        A restarted desktop app cannot know whether the old process died before
+        or after a platform accepted a post. Pausing is therefore safer than an
+        automatic retry that could duplicate a publication. Pending packages
+        already beyond the automatic-attempt cap are paused as well.
+        """
+        limit = max(1, int(max_automatic_attempts))
+        now = _iso()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute(
+                    "SELECT id FROM publication_batches WHERE status='in_progress' OR (status='pending' AND attempts>=?)",
+                    (limit,),
+                ).fetchall()
+                ids = [int(row["id"]) for row in rows]
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    db.execute(
+                        f"UPDATE publication_batches SET status='paused',lease_owner=NULL,lease_until=NULL,updated_at=? "
+                        f"WHERE id IN ({placeholders})",
+                        [now, *ids],
+                    )
+                    db.execute(
+                        f"UPDATE publication_targets SET last_error=COALESCE(last_error, ?),updated_at=? "
+                        f"WHERE batch_id IN ({placeholders}) AND status!='sent'",
+                        [
+                            "Попередню публікацію перервано або вичерпано ліміт автоматичних спроб. Перевірте платформи перед ручним відновленням.",
+                            now,
+                            *ids,
+                        ],
+                    )
+                db.execute("COMMIT")
+                return ids
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def pause_exhausted_batches(self, max_automatic_attempts: int = 3) -> list[int]:
+        limit = max(1, int(max_automatic_attempts))
+        now = _iso()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id FROM publication_batches WHERE status='pending' AND attempts>=?",
+                (limit,),
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                db.execute(
+                    f"UPDATE publication_batches SET status='paused',lease_owner=NULL,lease_until=NULL,updated_at=? "
+                    f"WHERE id IN ({placeholders})",
+                    [now, *ids],
+                )
+        return ids
+
+    def mark_unsent_targets_failed(self, batch_id: int, error: object) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE publication_targets SET status='failed',last_error=?,updated_at=? "
+                "WHERE batch_id=? AND status!='sent'",
+                (redact_secrets(error)[:1000], _iso(), int(batch_id)),
+            )
+
+    def cancel_claimed_batch(self, batch_id: int, owner: str) -> None:
+        """Cancel a batch only while the caller still owns its publication lease."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute(
+                    "SELECT a.group_id FROM publication_batches b JOIN articles a ON a.id=b.article_id "
+                    "WHERE b.id=? AND b.status='in_progress' AND b.lease_owner=?",
+                    (int(batch_id), owner),
+                ).fetchone()
+                if not row:
+                    raise LeaseLost("Publication lease was lost before cancellation.")
+                group_id = int(row["group_id"])
+                now = _iso()
+                db.execute(
+                    "UPDATE publication_batches SET status='cancelled',lease_owner=NULL,lease_until=NULL,"
+                    "cleanup_error=NULL,updated_at=? WHERE id=? AND lease_owner=?",
+                    (now, int(batch_id), owner),
+                )
+                sent_count = int(
+                    db.execute(
+                        "SELECT COUNT(*) FROM publication_targets WHERE batch_id=? AND status='sent'",
+                        (int(batch_id),),
+                    ).fetchone()[0]
+                    or 0
+                )
+                next_status = "approved" if sent_count else "draft"
+                db.execute("UPDATE news_groups SET status=?,updated_at=? WHERE id=?", (next_status, now, group_id))
+                db.execute("UPDATE articles SET status=? WHERE group_id=?", (next_status, group_id))
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def fail_claimed_batch(
+        self,
+        batch_id: int,
+        owner: str,
+        error: object,
+        *,
+        max_automatic_attempts: int = 3,
+    ) -> None:
+        """Apply bounded retry/backoff to failures outside the target loop."""
+        self.assert_lease(batch_id, owner)
+        self.mark_unsent_targets_failed(batch_id, error)
+        self.finish_batch(
+            batch_id,
+            owner,
+            max_automatic_attempts=max_automatic_attempts,
+        )
+
+'''
+              db = db.replace(marker, block + marker, 1)
+              db_path.write_text(db, encoding='utf-8')
+
+          ui_path = Path('content_agent/ui/main_window.py')
+          ui = ui_path.read_text(encoding='utf-8')
+          if 'recovered_batches = self.db.recover_abandoned_batches' not in ui:
+              old = '''        ttk.Label(root, textvariable=self.status_var, anchor="w").pack(fill="x", padx=10, pady=(2, 8))
+        self.db.archive_stale_groups()
+        self.refresh_sources()
+        self.refresh_groups()
+        self.refresh_queue()
+        self.refresh_history()
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+'''
+              new = '''        ttk.Label(root, textvariable=self.status_var, anchor="w").pack(fill="x", padx=10, pady=(2, 8))
+        recovered_batches = self.db.recover_abandoned_batches(max_automatic_attempts=3)
+        self.db.archive_stale_groups()
+        self.refresh_sources()
+        self.refresh_groups()
+        self.refresh_queue()
+        self.refresh_history()
+        if recovered_batches:
+            self.status_var.set(
+                "Безпечно призупинено перервані/виснажені пакети: "
+                + ", ".join(f"#{item}" for item in recovered_batches[:12])
+            )
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+'''
+              if old not in ui:
+                  raise SystemExit('startup marker not found')
+              ui = ui.replace(old, new, 1)
+
+          if 'self.worker.request_cancel(batch.id)' not in ui:
+              old = '''        try:
+            cancelled = self.db.cancel_batches(batch_ids)
+        except Exception as exc:
+'''
+              new = '''        try:
+            batches = [self.db.get_batch(batch_id) for batch_id in batch_ids]
+            active = [batch for batch in batches if batch.status == "in_progress"]
+            if active:
+                if len(batch_ids) != 1:
+                    raise ValueError(
+                        "Пакет, що публікується, зупиняйте окремо. Інші вибрані пакети не змінено."
+                    )
+                batch = active[0]
+                if not self.worker.request_cancel(batch.id):
+                    raise ValueError(
+                        f"Пакет #{batch.id} позначений як «публікується», але не належить поточному worker. "
+                        "Оновіть чергу; після перезапуску 1.3.1 RC1 такий пакет буде безпечно призупинено."
+                    )
+                self.set_status(
+                    f"Пакет #{batch.id}: зупинку запрошено. Нові платформи не запускатимуться."
+                )
+                self.msg.showinfo(
+                    "Зупинка публікації",
+                    f"Пакет #{batch.id}: запит на зупинку прийнято.\n\n"
+                    "Якщо мережевий запит уже відправлено платформі, програма дочекається його завершення, "
+                    "щоб не створити дубль. Нові платформи після цього не запускатимуться.",
+                    parent=self.root,
+                )
+                self.worker.wake()
+                return
+            cancelled = self.db.cancel_batches(batch_ids)
+        except Exception as exc:
+'''
+              if old not in ui:
+                  raise SystemExit('cancel marker not found')
+              ui = ui.replace(old, new, 1)
+
+          ui_path.write_text(ui, encoding='utf-8')
+          PY
+
+      - name: Commit synchronized files to main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- content_agent/database.py content_agent/ui/main_window.py
+          git rm -- .github/workflows/_sync_v131_rc1_final.yml
+          git commit -m "v1.3.1-rc1: complete queue safety source sync"
+          git push origin HEAD:main
