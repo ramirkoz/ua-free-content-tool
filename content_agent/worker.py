@@ -17,6 +17,10 @@ from .security import redact_secrets
 logger = logging.getLogger("content_agent.worker")
 
 
+class PublicationCancelRequested(RuntimeError):
+    """Cooperative stop requested before another external platform write."""
+
+
 @dataclass(slots=True)
 class WorkerResult:
     claimed: bool
@@ -52,6 +56,7 @@ class PublicationWorker:
         max_automatic_attempts: int = 3,
         target_timeout_seconds: float = 120.0,
         media_target_timeout_seconds: float = 240.0,
+        media_preflight_timeout_seconds: float = 60.0,
         progress_callback: Callable[[str], None] | None = None,
         result_callback: Callable[[WorkerResult], None] | None = None,
     ):
@@ -62,6 +67,7 @@ class PublicationWorker:
         self.max_automatic_attempts = max(1, int(max_automatic_attempts))
         self.target_timeout_seconds = max(0.05, float(target_timeout_seconds))
         self.media_target_timeout_seconds = max(0.1, float(media_target_timeout_seconds))
+        self.media_preflight_timeout_seconds = max(1.0, float(media_preflight_timeout_seconds))
         self.progress_callback = progress_callback
         self.result_callback = result_callback
         self._wake_event = threading.Event()
@@ -70,6 +76,46 @@ class PublicationWorker:
         self._auth_blocks: dict[str, str] = {}
         self._inflight_lock = threading.Lock()
         self._inflight_targets: set[int] = set()
+        self._cancel_lock = threading.Lock()
+        self._cancel_requested_batches: set[int] = set()
+        self._active_batch_id: int | None = None
+
+    def active_batch_id(self) -> int | None:
+        with self._cancel_lock:
+            return self._active_batch_id
+
+    def request_cancel(self, batch_id: int) -> bool:
+        """Request a cooperative stop for the batch owned by this worker.
+
+        A platform HTTP write cannot be killed safely. If one is already in
+        flight, it is allowed to finish and no next target is started. Media
+        preflight is read-only and can be abandoned immediately.
+        """
+        batch_id = int(batch_id)
+        with self._cancel_lock:
+            if self._active_batch_id != batch_id:
+                return False
+            self._cancel_requested_batches.add(batch_id)
+        self.wake()
+        return True
+
+    def _set_active_batch(self, batch_id: int | None) -> None:
+        with self._cancel_lock:
+            self._active_batch_id = batch_id
+
+    def _cancel_requested(self, batch_id: int) -> bool:
+        with self._cancel_lock:
+            return int(batch_id) in self._cancel_requested_batches
+
+    def _clear_cancel_request(self, batch_id: int) -> None:
+        with self._cancel_lock:
+            self._cancel_requested_batches.discard(int(batch_id))
+            if self._active_batch_id == int(batch_id):
+                self._active_batch_id = None
+
+    def _raise_if_cancel_requested(self, batch_id: int) -> None:
+        if self._cancel_requested(batch_id):
+            raise PublicationCancelRequested(f"Зупинку пакета #{batch_id} запрошено користувачем.")
 
     def wake(self) -> None:
         """Wake the background loop after the editor creates or changes a package."""
@@ -162,6 +208,51 @@ class PublicationWorker:
             info,
         )
 
+    def _load_media_cancellable(
+        self, *, batch_id: int, batch_article_id: int, owner: str
+    ) -> tuple[MediaPayload | None, GoogleDriveClient | None, int, DriveMediaInfo | None]:
+        """Run Drive preflight outside SQLite locks with a cancellable hard bound.
+
+        Drive reads have no publication side effects, so a timed-out/background
+        read can safely be abandoned without risking a duplicate social post.
+        """
+        done = threading.Event()
+        result_holder: list[tuple[MediaPayload | None, GoogleDriveClient | None, int, DriveMediaInfo | None]] = []
+        error_holder: list[BaseException] = []
+
+        def runner() -> None:
+            try:
+                result_holder.append(self._load_media(batch_article_id))
+            except BaseException as exc:
+                error_holder.append(exc)
+            finally:
+                done.set()
+
+        threading.Thread(
+            target=runner,
+            name=f"drive-preflight-{batch_id}",
+            daemon=True,
+        ).start()
+        deadline = time.monotonic() + self.media_preflight_timeout_seconds
+        next_renew = time.monotonic() + min(20.0, max(5.0, self.media_preflight_timeout_seconds / 3.0))
+        while not done.wait(0.2):
+            self._raise_if_cancel_requested(batch_id)
+            now = time.monotonic()
+            if now >= deadline:
+                raise GoogleDriveError(
+                    f"Google Drive не завершив підготовку медіа за {int(self.media_preflight_timeout_seconds)} секунд."
+                )
+            if now >= next_renew:
+                self.database.assert_lease(batch_id, owner)
+                self.database.renew_lease(batch_id, owner, self.lease_seconds)
+                next_renew = now + 20.0
+        self._raise_if_cancel_requested(batch_id)
+        if error_holder:
+            raise error_holder[0]
+        if not result_holder:
+            raise GoogleDriveError("Google Drive завершив підготовку медіа без результату.")
+        return result_holder[0]
+
     def _facebook_order(self) -> dict[str, int]:
         config = self.factory.config
         order: dict[str, int] = {}
@@ -229,6 +320,7 @@ class PublicationWorker:
         self.database.assert_lease(batch_id, owner)
         self.database.renew_lease(batch_id, owner, self.lease_seconds)
         while remaining > 0:
+            self._raise_if_cancel_requested(batch_id)
             shown = max(1, int(remaining + 0.999))
             self._notify(f"Пауза перед наступною платформою: {shown} с · далі {next_platform}")
             step = min(1.0, remaining)
@@ -351,9 +443,11 @@ class PublicationWorker:
         # methods take short locks of their own; keeping the global lock across a
         # network request was the direct cause of the frozen interface in FIX25.
         owner = str(uuid.uuid4())
+        self.database.pause_exhausted_batches(self.max_automatic_attempts)
         batch = self.database.claim_due_batch(owner=owner, lease_seconds=self.lease_seconds)
         if not batch:
             return WorkerResult(claimed=False)
+        self._set_active_batch(batch.id)
         result = WorkerResult(claimed=True, batch_id=batch.id)
         media: MediaPayload | None = None
         drive_client: GoogleDriveClient | None = None
@@ -370,8 +464,35 @@ class PublicationWorker:
                 (target for target in batch.targets if target.status != "sent"),
                 key=self._target_sort_key,
             )
+            self._raise_if_cancel_requested(batch.id)
             if active_targets:
-                media, drive_client, group_id, media_info = self._load_media(batch.article_id)
+                try:
+                    media, drive_client, group_id, media_info = self._load_media_cancellable(
+                        batch_id=batch.id, batch_article_id=batch.article_id, owner=owner
+                    )
+                except PublicationCancelRequested:
+                    self.database.cancel_claimed_batch(batch.id, owner)
+                    self._notify(f"Пакет #{batch.id}: скасовано до початку публікації.")
+                    return result
+                except Exception as exc:
+                    safe_error = "Google Drive / медіа: " + redact_secrets(exc)[:900]
+                    logger.warning("Publication preflight failed batch=%s: %s", batch.id, safe_error)
+                    self.database.mark_unsent_targets_failed(batch.id, safe_error)
+                    result.failed_targets += len(active_targets)
+                    for item in active_targets:
+                        result.failed_platforms[item.platform] = safe_error
+                    result.completed = self.database.finish_batch(
+                        batch.id, owner, max_automatic_attempts=self.max_automatic_attempts
+                    )
+                    final_batch = self.database.get_batch(batch.id)
+                    result.paused = final_batch.status == "paused"
+                    if result.paused:
+                        result.pause_reason = (
+                            f"Google Drive недоступний. Автоматичні спроби зупинено після {final_batch.attempts} запусків."
+                        )
+                    self._notify(f"Пакет #{batch.id}: {safe_error}")
+                    return result
+            self._raise_if_cancel_requested(batch.id)
             if (
                 media is not None
                 and drive_client is not None
@@ -383,6 +504,10 @@ class PublicationWorker:
             attempted = 0
             total = len(active_targets)
             for target in active_targets:
+                if self._cancel_requested(batch.id):
+                    self.database.cancel_claimed_batch(batch.id, owner)
+                    self._notify(f"Пакет #{batch.id}: зупинено перед наступною платформою.")
+                    return result
                 blocked_reason = self.auth_block_reason(target.platform)
                 if blocked_reason:
                     attempted += 1
@@ -440,6 +565,12 @@ class PublicationWorker:
                     self._notify(
                         f"Пакет #{batch.id}, ціль #{target.id}: опубліковано: {target.platform}"
                     )
+                    if self._cancel_requested(batch.id):
+                        self.database.cancel_claimed_batch(batch.id, owner)
+                        self._notify(
+                            f"Пакет #{batch.id}: поточний запит завершився; решту платформ скасовано."
+                        )
+                        return result
                 except LeaseLost:
                     raise
                 except Exception as exc:
@@ -486,7 +617,13 @@ class PublicationWorker:
                         raise
                     except Exception as exc:
                         logger.warning("Media cleanup deferred for batch %s: %s", batch.id, exc)
-                        self.database.defer_cleanup(batch.id, owner, exc)
+                        self.database.defer_cleanup(
+                            batch.id, owner, exc, max_automatic_attempts=self.max_automatic_attempts
+                        )
+                        final_batch = self.database.get_batch(batch.id)
+                        result.paused = final_batch.status == "paused"
+                        if result.paused:
+                            result.pause_reason = "Google Drive cleanup призупинено після ліміту спроб."
                         return result
             result.completed = self.database.finish_batch(
                 batch.id,
@@ -505,13 +642,27 @@ class PublicationWorker:
                             f"Автоматичні спроби зупинено після {final_batch.attempts} невдалих запусків."
                         )
             return result
+        except PublicationCancelRequested:
+            try:
+                self.database.cancel_claimed_batch(batch.id, owner)
+            except LeaseLost:
+                pass
+            self._notify(f"Пакет #{batch.id}: зупинено користувачем.")
+            return result
         except LeaseLost:
             logger.warning("Publication lease lost; stopping batch %s before another write.", batch.id)
             return result
-        except Exception:
-            self.database.release_lost_batch(batch.id, owner)
+        except Exception as exc:
+            safe_error = "Внутрішня помилка публікації: " + redact_secrets(exc)[:900]
+            try:
+                self.database.fail_claimed_batch(
+                    batch.id, owner, safe_error, max_automatic_attempts=self.max_automatic_attempts
+                )
+            except LeaseLost:
+                pass
             raise
         finally:
+            self._clear_cancel_request(batch.id)
             if temporary_permission_id and not media_deleted and drive_client and media:
                 for attempt in range(3):
                     try:
