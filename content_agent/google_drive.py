@@ -340,7 +340,7 @@ class GoogleDriveClient:
             headers={"Authorization": f"Bearer {self._token()}", "Accept": "application/json"},
             max_bytes=2 * 1024 * 1024,
             allowed_content_types={"application/json"},
-            timeout=45,
+            timeout=20,
             max_redirects=0,
             allow_http_errors=True,
         )
@@ -453,7 +453,7 @@ class GoogleDriveClient:
             f"https://www.googleapis.com/drive/v3/files/{quote(info.file_id)}?alt=media&supportsAllDrives=true",
             headers={"Authorization": f"Bearer {self._token()}", "Accept": info.mime_type},
             max_bytes=min(_MAX_MEDIA_BYTES, max(info.size + 1024, 2 * 1024 * 1024)),
-            timeout=180,
+            timeout=45,
             max_redirects=2,
         )
         if not response.body:
