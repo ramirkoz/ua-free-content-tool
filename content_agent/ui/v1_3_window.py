@@ -8,11 +8,12 @@ from ..rewrite_pipeline_v1_3 import (
     rewrite_group_v13,
 )
 from ..rowboat_bridge_v1_3 import memory_context, sync_editorial_memory
+from .queue_safety_v1_3_1_rc1 import QueueSafetyRC1Mixin
 from .source_health_v1_3 import SourceHealthV13Mixin
 from .v1_2_2_rc1_window import MainWindow as StableV122Window
 
 
-class MainWindow(SourceHealthV13Mixin, StableV122Window):
+class MainWindow(QueueSafetyRC1Mixin, SourceHealthV13Mixin, StableV122Window):
     """Content Tool 1.3.1 RC1 queue-safety hotfix on the live-accepted 1.3.0 behavior."""
 
     VERSION_LABEL = "1.3.1 RC1"
