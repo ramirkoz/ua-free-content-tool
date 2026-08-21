@@ -128,10 +128,7 @@ class AIWorkflowRC6Mixin:
                 if getattr(self, "_duplicate_search_cancel_event", None) is cancel_event:
                     self.operation_detail_var.set(message)  # type: ignore[attr-defined]
                     self.topic_search_status_var.set(message)  # type: ignore[attr-defined]
-            try:
-                self.root.after(0, apply)  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            self._post_ui(apply)  # type: ignore[attr-defined]
 
         def cancel_search() -> None:
             cancel_event.set()
@@ -144,24 +141,28 @@ class AIWorkflowRC6Mixin:
 
         def action() -> object:
             try:
-                groups = self.db.list_groups(status="new", limit=1000)  # type: ignore[attr-defined]
-                if len(groups) < 2:
-                    return "ok", groups, []
+                groups = self.db.list_groups_with_preview_articles(status="new", limit=20000)  # type: ignore[attr-defined]
+                total_groups = len(groups)
+                if total_groups < 2:
+                    return "ok", total_groups, groups, []
                 clusters = find_global_duplicate_clusters(
                     groups,
                     cancel_event=cancel_event,
                     progress=progress,
-                    deadline_seconds=45,
+                    deadline_seconds=72,
+                    hydrate_groups=self.db.hydrate_groups_by_ids,  # type: ignore[attr-defined]
                 )
-                return "ok", groups, clusters
+                candidate_ids = sorted({group_id for cluster in clusters for group_id in cluster.group_ids})
+                full_groups = self.db.hydrate_groups_by_ids(candidate_ids) if candidate_ids else []  # type: ignore[attr-defined]
+                return "ok", total_groups, full_groups, clusters
             except DuplicateSearchCancelled as exc:
-                return "cancelled", [], str(exc)
+                return "cancelled", 0, [], str(exc)
             except Exception as exc:
-                return "error", [], exc
+                return "error", 0, [], exc
 
         def success(result: object) -> None:
             restore_button()
-            status, groups, payload = result  # type: ignore[misc]
+            status, total_groups, groups, payload = result  # type: ignore[misc]
             if status == "cancelled":
                 self.topic_search_status_var.set(str(payload))  # type: ignore[attr-defined]
                 self.set_status("Пошук об'єднань скасовано.")  # type: ignore[attr-defined]
@@ -171,17 +172,17 @@ class AIWorkflowRC6Mixin:
                 return
             groups = list(groups)
             clusters = list(payload)
-            if len(groups) < 2:
+            if int(total_groups) < 2:
                 self.topic_search_status_var.set("Для глобального порівняння потрібно щонайменше 2 нові блоки.")  # type: ignore[attr-defined]
                 return
             engine = last_duplicate_search_label()
             if not clusters:
                 self.topic_search_status_var.set(  # type: ignore[attr-defined]
-                    f"{engine}: перевірено {len(groups)} нових блоків. Дублікатів для об'єднання не запропоновано."
+                    f"{engine}: перевірено {int(total_groups)} нових блоків. Дублікатів для об'єднання не запропоновано."
                 )
                 return
             self.topic_search_status_var.set(  # type: ignore[attr-defined]
-                f"{engine}: перевірено {len(groups)} нових блоків і запропоновано {len(clusters)} об'єднань."
+                f"{engine}: перевірено {int(total_groups)} нових блоків і запропоновано {len(clusters)} об'єднань."
             )
             by_id = {group.id: group for group in groups}
             GlobalDuplicatesDialog(
@@ -195,7 +196,7 @@ class AIWorkflowRC6Mixin:
             cancel_event.set()
             restore_button()
             self.topic_search_status_var.set(
-                "Пошук зупинено за 55 секунд. Наступний запуск почнеться з чистого стану."
+                "Пошук зупинено за аварійним лімітом. Фоновий worker отримав команду завершення."
             )  # type: ignore[attr-defined]
 
         self.run_async(  # type: ignore[attr-defined]
@@ -203,9 +204,12 @@ class AIWorkflowRC6Mixin:
             success,
             label="Швидкий пошук об'єднань у фоні",
             done_label="Глобальний пошук дублікатів завершено",
-            timeout_seconds=55,
-            timeout_message="Пошук об'єднань перевищив 55 секунд і був зупинений.",
+            timeout_seconds=90,
+            timeout_message="Пошук об'єднань перевищив аварійний ліміт 90 секунд і був зупинений.",
             on_timeout=timeout,
+            modal_errors=False,
+            modal_timeout=False,
+            timeout_is_error=False,
         )
         if button is not None and getattr(self, "operation_running", False):
             try:
