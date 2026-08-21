@@ -18,14 +18,14 @@ class AITaskProfile:
 
 REWRITE_PROFILE = AITaskProfile(
     name="rewrite",
-    cloud_evidence_chars=7600,
-    local_evidence_chars=4300,
-    cloud_output_tokens=1200,
-    local_output_tokens=320,
-    cloud_timeout_seconds=90,
-    local_timeout_seconds=120,
-    task_timeout_seconds=150,
-    second_pass_threshold=84,
+    cloud_evidence_chars=6800,
+    local_evidence_chars=4000,
+    cloud_output_tokens=950,
+    local_output_tokens=340,
+    cloud_timeout_seconds=28,
+    local_timeout_seconds=45,
+    task_timeout_seconds=70,
+    second_pass_threshold=74,
 )
 
 TOPIC_PROFILE = AITaskProfile(
