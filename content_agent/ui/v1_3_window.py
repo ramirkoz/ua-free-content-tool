@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from ..editorial_memory import rank_editorial_examples
 from ..models import RewriteResult
 from ..rewrite_pipeline_v1_3 import (
@@ -8,24 +10,21 @@ from ..rewrite_pipeline_v1_3 import (
     rewrite_group_v13,
 )
 from ..rowboat_bridge_v1_3 import memory_context, sync_editorial_memory
-from .queue_safety_v1_3_1_rc1 import QueueSafetyRC1Mixin
 from .source_health_v1_3 import SourceHealthV13Mixin
 from .v1_2_2_rc1_window import MainWindow as StableV122Window
 
 
-class MainWindow(QueueSafetyRC1Mixin, SourceHealthV13Mixin, StableV122Window):
-    """Content Tool 1.3.1 RC1 queue-safety hotfix on the live-accepted 1.3.0 behavior."""
+class MainWindow(SourceHealthV13Mixin, StableV122Window):
+    """UA FREE Content Tool v1.3.1-rc7."""
 
-    VERSION_LABEL = "1.3.1 RC1"
+    VERSION_LABEL = "1.3.1-rc7"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._apply_v13_labels()
 
     def _apply_v13_labels(self) -> None:
-        self.root.title(
-            "UA FREE Content Tool — v1.3.1 RC1 · Queue Safety Hotfix"
-        )
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
         button = getattr(self, "rewrite_button", None)
         if button is not None:
             if getattr(self.config, "ui_language", "uk") == "en":
@@ -36,6 +35,15 @@ class MainWindow(QueueSafetyRC1Mixin, SourceHealthV13Mixin, StableV122Window):
     def _apply_language(self, refresh: bool = True) -> None:
         super()._apply_language(refresh=refresh)
         self._apply_v13_labels()
+
+    def close(self) -> None:
+        event = getattr(self, "_rewrite_cancel_event", None)
+        if event is not None:
+            try:
+                event.set()
+            except Exception:
+                pass
+        super().close()
 
     def rewrite_current(self) -> None:
         if self.current_group_id is None:
@@ -48,6 +56,8 @@ class MainWindow(QueueSafetyRC1Mixin, SourceHealthV13Mixin, StableV122Window):
         )
         group = self.db.get_group(self.current_group_id)
         config = self.config
+        cancel_event = threading.Event()
+        self._rewrite_cancel_event = cancel_event
 
         def action() -> object:
             sync_editorial_memory(self.db)
@@ -62,6 +72,7 @@ class MainWindow(QueueSafetyRC1Mixin, SourceHealthV13Mixin, StableV122Window):
                 examples,
                 graph_memory=graph,
                 language=config.ui_language,
+                cancel_event=cancel_event,
             )
             return result, len(examples)
 
@@ -107,6 +118,10 @@ class MainWindow(QueueSafetyRC1Mixin, SourceHealthV13Mixin, StableV122Window):
             success,
             label=f"AI Router + Fact Guard: рерайт {group.source_count} джерел",
             done_label="AI-рерайт 1.3 завершено",
-            timeout_seconds=180,
-            timeout_message="Рерайт 1.3 не завершився за 180 секунд. Поточний текст не змінено.",
+            timeout_seconds=105,
+            timeout_message="Рерайт не завершився за 105 секунд. Поточний текст не змінено; фонові AI-виклики отримали команду завершення.",
+            on_timeout=lambda _message: cancel_event.set(),
+            modal_errors=False,
+            modal_timeout=False,
+            timeout_is_error=False,
         )
