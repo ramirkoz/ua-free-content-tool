@@ -139,3 +139,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Remove RC7 synchronization bootstrap'
           git push origin HEAD:main
+
+# trigger: 2026-08-21 exact RC7 sync
