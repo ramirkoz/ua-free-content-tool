@@ -1,0 +1,73 @@
+name: Finalize exact RC7 sync branch
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.pull_request.head.ref == 'trigger/rc7-finalize-execute'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out synchronization branch
+        uses: actions/checkout@v4
+        with:
+          ref: sync/v1.3.1-rc7-final
+          fetch-depth: 0
+
+      - name: Decode exact compact transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .sync/rc7.patch.xz.b64 | xz -d > /tmp/rc7.patch
+          echo 'b1ab964f248620151add2e27ccf2ff70dcf4283570f028336756c24a61517704  /tmp/rc7.patch' | sha256sum -c -
+
+      - name: Apply RC7 delta with three-way merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --3way --whitespace=nowarn -p2 /tmp/rc7.patch
+
+      - name: Verify every transported file is exact RC7
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          patch = Path('/tmp/rc7.patch').read_text(encoding='utf-8')
+          failures = []
+          checked = 0
+          for raw in patch.split('diff --git ')[1:]:
+              section = 'diff --git ' + raw
+              first = raw.splitlines()[0]
+              path = first.split()[1].removeprefix('tmp/cc7src/')
+              m = re.search(r'^index [0-9a-f]+\.\.([0-9a-f]+)', section, re.M)
+              if not m:
+                  raise SystemExit(f'Missing target hash for {path}')
+              expected = m.group(1)
+              current = subprocess.check_output(['git', 'hash-object', path], text=True).strip()
+              checked += 1
+              if not current.startswith(expected):
+                  failures.append(f'{path}: expected {expected}, got {current}')
+          if failures:
+              raise SystemExit('Exact RC7 verification failed:\n' + '\n'.join(failures))
+          print(f'Exact RC7 transport verification PASS: {checked} files')
+          PY
+          python -m compileall -q content_agent
+
+      - name: Commit exact synchronized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          find content_agent -type d -name __pycache__ -prune -exec rm -rf {} + || true
+          rm -f .sync/rc7.patch.xz.b64
+          rmdir .sync 2>/dev/null || true
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Synchronize exact v1.3.1-rc7 source'
+          git push origin HEAD:sync/v1.3.1-rc7-final
