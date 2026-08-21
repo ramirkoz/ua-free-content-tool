@@ -5,12 +5,15 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/bootstrap-sync-rc7.yml'
+  issues:
+    types: [opened]
 
 permissions:
   contents: write
 
 jobs:
   sync:
+    if: github.event_name == 'push' || github.event.issue.title == 'RUN EXACT RC7 SYNC 2026-08-21'
     runs-on: ubuntu-latest
     steps:
       - name: Check out RC7 synchronization branch
