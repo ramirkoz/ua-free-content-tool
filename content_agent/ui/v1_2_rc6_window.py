@@ -12,7 +12,7 @@ class MainWindow(AIWorkflowRC6Mixin, SocialConnectionsRC6Mixin, RC5Window):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
-        self.root.title("UA FREE Content Tool — v1.2.0-dev RC6 · Codex + Rowboat")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
         self._register_global_search_button_rc6(self.root)
         if hasattr(self, "topic_search_status_var"):
             self.topic_search_status_var.set(
