@@ -1,0 +1,59 @@
+name: Monitor rc7 sync on maintenance issue
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+
+jobs:
+  monitor:
+    if: github.event.issue.title == '[automation] monitor Content Tool rc7 sync'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for latest rc7 sync run and report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          set -u
+          run_id=""
+          for _ in $(seq 1 36); do
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow sync-content-rc7.yml --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+            [ -n "$run_id" ] && break
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'RC7_SYNC_MONITOR: no sync workflow run found.'
+            exit 1
+          fi
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --interval 5 --exit-status
+          watch_rc=$?
+          data=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json databaseId,status,conclusion,url,headSha --jq '"RC7_SYNC_MONITOR: run=" + (.databaseId|tostring) + " status=" + .status + " conclusion=" + (.conclusion // "") + " head=" + .headSha + " url=" + .url')
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$data"
+          exit $watch_rc
+
+      - name: Remove one-time monitor
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/monitor-rc7-sync-on-issue.yml
+          git commit -m "Remove rc7 sync monitor"
+          git push origin HEAD:main
+
+      - name: Close maintenance issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue close "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --reason completed
