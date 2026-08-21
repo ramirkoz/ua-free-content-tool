@@ -4,7 +4,8 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..ai_provider_diagnostics_v1_2_1 import ProviderDiagnostic, test_configured_providers
-from ..ai_router_v1_2_1 import save_provider_secrets, test_ai_router
+from ..ai_router_v1_2_1 import save_provider_secrets
+from ..ai_router_v1_2_2 import test_ai_router
 from .v1_2_rc9_window import MainWindow as RC9Window
 
 
@@ -15,11 +16,7 @@ _PROVIDER_LABEL_TEXTS: dict[str, tuple[str, ...]] = {
     "cloudflare": ("Cloudflare Account ID", "Cloudflare API Token"),
 }
 
-_REMOVED_PROVIDER_LABELS = (
-    "SambaNova API Key",
-    "Cerebras API Key",
-    "OpenRouter API Key",
-)
+_REMOVED_PROVIDER_LABELS: tuple[str, ...] = ()
 
 _STATUS_MARKS: dict[str, tuple[str, str]] = {
     "ok": ("✓", "#1a7f37"),
@@ -39,7 +36,7 @@ class MainWindow(RC9Window):
         super().__init__(*args, **kwargs)
         self._compact_ai_provider_panel()
         self._install_provider_diagnostics_ui()
-        self.root.title("UA FREE Content Tool — v1.2.1 · AI Router + Rowboat")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
 
     def _find_ai_router_frame(self) -> ttk.LabelFrame | None:
         notebook = getattr(self, "notebook", None)
@@ -187,13 +184,7 @@ class MainWindow(RC9Window):
         self._reset_provider_indicators()
 
     def _provider_secrets_from_ui(self):
-        values = super()._provider_secrets_from_ui()
-        # Removed providers stay readable for migration compatibility but are cleared
-        # on the next settings save/test and never enter the production model chain.
-        values.sambanova_api_key = ""
-        values.cerebras_api_key = ""
-        values.openrouter_api_key = ""
-        return values
+        return super()._provider_secrets_from_ui()
 
     def _provider_is_configured_in_ui(self, provider: str) -> bool:
         try:
