@@ -42,7 +42,7 @@ class MainWindow(StrictMediaPreviewMixin, EditorialMemoryMainWindow):
             name="publication-worker",
             daemon=True,
         )
-        self.root.title("UA FREE Content Tool — v1.2.0-dev")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
 
     def load_group(self, group_id: int) -> None:
         super().load_group(group_id)
