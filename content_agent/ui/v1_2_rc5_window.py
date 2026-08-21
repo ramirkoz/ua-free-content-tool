@@ -17,7 +17,7 @@ class MainWindow(AIEngineV13Mixin, RC4FinalWindow):
         super().__init__(*args, **kwargs)
         if hasattr(self, "rewrite_button"):
             self.rewrite_button.configure(text="Рерайт через Codex / ChatGPT")
-        self.root.title("UA FREE Content Tool — v1.2.0-dev RC5 · Codex + Rowboat")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
 
     def scan_ollama_models(self, show_errors: bool = True) -> None:
         del show_errors
@@ -47,7 +47,7 @@ class MainWindow(AIEngineV13Mixin, RC4FinalWindow):
                 self.memory_graph_status_var.set(f"Пам’ять: {rowboat.memory_root}")
 
             try:
-                self.root.after(0, apply)
+                self._post_ui(apply)
             except Exception:
                 self._ai_status_running = False
 
