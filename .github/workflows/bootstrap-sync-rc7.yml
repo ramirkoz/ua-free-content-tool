@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           base64 -d .sync/rc7.patch.xz.b64 | xz -d > /tmp/rc7.patch
-          echo '29cf14742ff34b4a7260ada6a158435d5d59635acab9472587982f06a2d90e7f  /tmp/rc7.patch' | sha256sum -c -
+          echo 'b1ab964f248620151add2e27ccf2ff70dcf4283570f028336756c24a61517704  /tmp/rc7.patch' | sha256sum -c -
 
       - name: Normalize files and select only missing RC7 diffs
         shell: bash
@@ -140,4 +140,4 @@ jobs:
           git commit -m 'Remove RC7 synchronization bootstrap'
           git push origin HEAD:main
 
-# trigger: 2026-08-21 exact RC7 sync
+# trigger: compact exact RC7 sync
