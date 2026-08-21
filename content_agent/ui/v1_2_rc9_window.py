@@ -9,7 +9,7 @@ class MainWindow(RC8Window):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._ensure_codex_rewrite_label()
-        self.root.title("UA FREE Content Tool — v1.2.1 · AI Router + Rowboat")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
 
     def _ensure_codex_rewrite_label(self) -> None:
         button = getattr(self, "rewrite_button", None)
