@@ -1,0 +1,20 @@
+name: Trigger existing exact RC7 sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/trigger-existing-rc7-sync.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch existing exact RC7 synchronization
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run sync-content-rc7.yml --ref main

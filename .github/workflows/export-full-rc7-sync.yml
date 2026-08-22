@@ -1,0 +1,34 @@
+name: Export full RC7 sync snapshot
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.event.pull_request.head.ref == 'trigger/rc7-export-full'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out synchronization branch
+        uses: actions/checkout@v4
+        with:
+          ref: sync/v1.3.1-rc7-final
+          fetch-depth: 1
+      - name: Archive exact tracked synchronization tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --output=rc7-sync-full.zip HEAD
+          sha256sum rc7-sync-full.zip > rc7-sync-full.zip.sha256
+      - name: Upload full snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc7-full-sync-snapshot
+          path: |
+            rc7-sync-full.zip
+            rc7-sync-full.zip.sha256
+          if-no-files-found: error
+          retention-days: 1
