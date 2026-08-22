@@ -1,1 +1,1 @@
-execute exact RC7 finalization
+execute exact RC7 finalization retry 2
