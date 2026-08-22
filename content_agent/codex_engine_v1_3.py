@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,54 @@ CODEX_PACKAGE = "openai-codex==0.144.4"
 
 class CodexEngineError(RuntimeError):
     pass
+
+
+_CODEX_PROCESS_LOCK = threading.RLock()
+_CODEX_PROCESSES: set[object] = set()
+_CODEX_STATUS_CACHE_LOCK = threading.RLock()
+_CODEX_STATUS_CACHE: tuple[float, "CodexStatus"] | None = None
+
+
+def _register_codex_process(process: object) -> None:
+    with _CODEX_PROCESS_LOCK:
+        _CODEX_PROCESSES.add(process)
+
+
+def terminate_active_codex_processes() -> int:
+    """Terminate only Codex SDK child app-server processes that are still alive."""
+    stopped = 0
+    with _CODEX_PROCESS_LOCK:
+        processes = list(_CODEX_PROCESSES)
+    for process in processes:
+        try:
+            poll = getattr(process, "poll", None)
+            if callable(poll) and poll() is not None:
+                with _CODEX_PROCESS_LOCK:
+                    _CODEX_PROCESSES.discard(process)
+                continue
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+            wait = getattr(process, "wait", None)
+            if callable(wait):
+                try:
+                    wait(timeout=1.5)
+                except Exception:
+                    kill = getattr(process, "kill", None)
+                    if callable(kill):
+                        kill()
+            stopped += 1
+        except Exception:
+            continue
+        finally:
+            with _CODEX_PROCESS_LOCK:
+                try:
+                    poll = getattr(process, "poll", None)
+                    if not callable(poll) or poll() is not None:
+                        _CODEX_PROCESSES.discard(process)
+                except Exception:
+                    pass
+    return stopped
 
 
 class _HiddenSubprocessProxy:
@@ -39,7 +89,9 @@ class _HiddenSubprocessProxy:
                 info.dwFlags |= int(getattr(subprocess, "STARTF_USESHOWWINDOW", 0) or 0)
                 info.wShowWindow = int(getattr(subprocess, "SW_HIDE", 0) or 0)
                 kwargs["startupinfo"] = info
-        return subprocess.Popen(*args, **kwargs)
+        process = subprocess.Popen(*args, **kwargs)
+        _register_codex_process(process)
+        return process
 
 
 def _patch_codex_sdk_subprocess() -> None:
@@ -145,6 +197,33 @@ def inspect_codex() -> CodexStatus:
         return CodexStatus(installed=True, version=version, authenticated=False, detail=f"Codex: {text}")
 
 
+def inspect_codex_cached(*, max_age_seconds: float = 20.0, force: bool = False) -> CodexStatus:
+    global _CODEX_STATUS_CACHE
+    now = time.monotonic()
+    with _CODEX_STATUS_CACHE_LOCK:
+        cached = _CODEX_STATUS_CACHE
+        if not force and cached is not None and now - cached[0] <= max(1.0, float(max_age_seconds)):
+            return cached[1]
+    status = inspect_codex()
+    with _CODEX_STATUS_CACHE_LOCK:
+        _CODEX_STATUS_CACHE = (time.monotonic(), status)
+    return status
+
+
+def clear_codex_status_cache() -> None:
+    global _CODEX_STATUS_CACHE
+    with _CODEX_STATUS_CACHE_LOCK:
+        _CODEX_STATUS_CACHE = None
+
+
+def peek_codex_status_cache() -> CodexStatus | None:
+    with _CODEX_STATUS_CACHE_LOCK:
+        cached = _CODEX_STATUS_CACHE
+        return cached[1] if cached is not None else None
+
+
+
+
 def install_codex() -> str:
     target = codex_extension_dir()
     command = [
@@ -176,6 +255,7 @@ def install_codex() -> str:
         raise CodexEngineError("Не вдалося встановити Codex.\n" + tail)
     importlib.invalidate_caches()
     _activate_extension_dir()
+    clear_codex_status_cache()
     return completed.stdout.strip()
 
 
@@ -196,6 +276,7 @@ def login_chatgpt() -> str:
         raise
     except Exception as exc:
         raise CodexEngineError(f"Не вдалося виконати вхід через ChatGPT: {exc}") from exc
+    clear_codex_status_cache()
     return auth_url
 
 

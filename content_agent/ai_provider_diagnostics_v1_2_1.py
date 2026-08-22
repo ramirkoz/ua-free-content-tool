@@ -9,9 +9,9 @@ from .ai_router_v1_2_1 import (
     AIProviderSecrets,
     MODEL_SLOTS,
     _configured,
-    _invoke_slot,
     load_provider_secrets,
 )
+from .ai_router_v1_2_2 import _invoke_limited
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +100,7 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
         for slot in slots:
             terminal_model = slot.model
             try:
-                text = _invoke_slot(slot, cfg, prompt).strip()
+                text = _invoke_limited(slot, cfg, prompt, 128, timeout_seconds=12).strip()
                 if not text:
                     failures.append(f"{slot.model}: порожня контрольна відповідь")
                     continue

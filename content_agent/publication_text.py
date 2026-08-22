@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from .editorial_memory import split_threads_chain
 
@@ -83,10 +84,30 @@ def telegram_split(text: str, limit: int = 4096) -> list[str]:
     return chunks or [""]
 
 
+_LETTER_RE = re.compile(r"[A-Za-zА-Яа-яІіЇїЄєҐґ]")
+_WORD_RE = re.compile(r"[A-Za-zА-Яа-яІіЇїЄєҐґ0-9][A-Za-zА-Яа-яІіЇїЄєҐґ0-9’'\-]*")
+_PLACEHOLDER_VALUES = {"...", "…", "..", "-", "—", "n/a", "null", "none"}
+
+
+def _meaningful_text(value: str, *, min_letters: int, min_words: int) -> bool:
+    normalized = " ".join(str(value or "").strip().split())
+    if not normalized or normalized.casefold() in _PLACEHOLDER_VALUES:
+        return False
+    return len(_LETTER_RE.findall(normalized)) >= min_letters and len(_WORD_RE.findall(normalized)) >= min_words
+
+
+def validate_editorial_headline(text: str) -> None:
+    value = str(text or "").strip()
+    if not _meaningful_text(value, min_letters=8, min_words=2):
+        raise TextLimitError("AI повернув порожній або службовий заголовок замість новини.")
+    if len(value) > 220:
+        raise TextLimitError("AI повернув надто довгий заголовок.")
+
+
 def validate_editorial_text(text: str) -> None:
     value = str(text or "").strip()
-    if not value:
-        raise TextLimitError("Текст публікації порожній.")
+    if not _meaningful_text(value, min_letters=20, min_words=4):
+        raise TextLimitError("AI повернув порожній, службовий або placeholder-текст замість рерайту.")
     if len(value) > EDITORIAL_TEXT_LIMIT:
         raise TextLimitError(
             f"Текст публікації має {len(value)} символів при ліміті {EDITORIAL_TEXT_LIMIT}. "

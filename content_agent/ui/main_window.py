@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -242,6 +243,11 @@ class MainWindow:
         self.queue_refresh_after_id: str | None = None
         self.connection_diagnostics_after_id: str | None = None
         self.connection_diagnostics_running = False
+        self.connection_diagnostics_generation = 0
+        self.connection_diagnostics_poll_after_id: str | None = None
+        self.connection_diagnostics_result_queue: queue.Queue[tuple[int, str, object]] = queue.Queue()
+        self._ui_event_queue: queue.Queue[Callable[[], None]] = queue.Queue()
+        self._ui_dispatch_after_id: str | None = None
         self.threads_token_maintenance_after_id: str | None = None
         self.last_connection_warning_signature: tuple[tuple[str, str, str], ...] = ()
         self.ollama_prewarm_model = ""
@@ -267,7 +273,7 @@ class MainWindow:
             daemon=True,
         )
 
-        root.title("UA FREE Content Tool — v1.1.2")
+        root.title("UA FREE Content Tool — v1.3.1-rc7")
         self._apply_ui_font_size(config.ui_font_size)
         root.geometry("1440x920")
         root.minsize(900, 650)
@@ -307,15 +313,54 @@ class MainWindow:
         self._apply_language(refresh=False)
 
         ttk.Label(root, textvariable=self.status_var, anchor="w").pack(fill="x", padx=10, pady=(2, 8))
+        recovered_batches = self.db.recover_abandoned_batches(max_automatic_attempts=3)
         self.db.archive_stale_groups()
         self.refresh_sources()
         self.refresh_groups()
         self.refresh_queue()
         self.refresh_history()
+        if recovered_batches:
+            self.status_var.set(
+                "Безпечно призупинено перервані/виснажені пакети: "
+                + ", ".join(f"#{item}" for item in recovered_batches[:12])
+            )
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self._ui_dispatch_after_id = self.root.after(50, self._drain_ui_events)
         # FIX28 fails closed: the publication worker is not started until the
         # one-time 900-character migration has either completed or proved unnecessary.
         self.root.after(250, self._startup_queue_migration_gate)
+
+    def _post_ui(self, callback: Callable[[], None]) -> None:
+        """Queue a UI callback from any thread without calling Tk off-thread."""
+        if getattr(self, "_closing", False):
+            return
+        try:
+            self._ui_event_queue.put_nowait(callback)
+        except Exception:
+            return
+
+    def _drain_ui_events(self) -> None:
+        """Run queued UI work on the Tk main thread."""
+        self._ui_dispatch_after_id = None
+        if getattr(self, "_closing", False):
+            return
+        processed = 0
+        while processed < 200:
+            try:
+                callback = self._ui_event_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception:
+                # UI reporting must never kill the Tk event pump or a worker cycle.
+                pass
+            processed += 1
+        if not getattr(self, "_closing", False):
+            try:
+                self._ui_dispatch_after_id = self.root.after(50, self._drain_ui_events)
+            except tk.TclError:
+                self._ui_dispatch_after_id = None
 
     def _start_background_services(self) -> None:
         if self.background_services_started or self.stop_event.is_set():
@@ -384,6 +429,8 @@ class MainWindow:
         self.root.destroy()
 
     def close(self) -> None:
+        if getattr(self, "_closing", False):
+            return
         if self.settings_dirty:
             answer = self.msg.askyesnocancel(
                 "Незбережені налаштування",
@@ -394,6 +441,7 @@ class MainWindow:
                 return
             if answer and not self.save_settings(show_confirmation=False):
                 return
+        self._closing = True
         self.stop_event.set()
         if self.background_services_started:
             self.worker.wake()
@@ -415,6 +463,12 @@ class MainWindow:
             except tk.TclError:
                 pass
             self.connection_diagnostics_after_id = None
+        if self.connection_diagnostics_poll_after_id is not None:
+            try:
+                self.root.after_cancel(self.connection_diagnostics_poll_after_id)
+            except tk.TclError:
+                pass
+            self.connection_diagnostics_poll_after_id = None
         if self.threads_token_maintenance_after_id is not None:
             try:
                 self.root.after_cancel(self.threads_token_maintenance_after_id)
@@ -427,6 +481,17 @@ class MainWindow:
             except tk.TclError:
                 pass
             self.operation_tick_after_id = None
+        if self._ui_dispatch_after_id is not None:
+            try:
+                self.root.after_cancel(self._ui_dispatch_after_id)
+            except tk.TclError:
+                pass
+            self._ui_dispatch_after_id = None
+        try:
+            while True:
+                self._ui_event_queue.get_nowait()
+        except queue.Empty:
+            pass
         self.root.destroy()
 
     def set_status(self, text: str) -> None:
@@ -445,10 +510,7 @@ class MainWindow:
                 self.operation_var.set("Поточна операція: фонове публікування")
                 self.operation_progress.start(12)
 
-        try:
-            self.root.after(0, apply)
-        except tk.TclError:
-            pass
+        self._post_ui(apply)
 
     def _publication_result_from_worker(self, result: WorkerResult) -> None:
         """Refresh queue and show a persistent non-modal background result."""
@@ -484,10 +546,7 @@ class MainWindow:
                 if hasattr(self, "queue_alert_var"):
                     self.queue_alert_var.set(state)
 
-        try:
-            self.root.after(0, apply)
-        except tk.TclError:
-            pass
+        self._post_ui(apply)
 
     def _apply_ui_font_size(self, size: int) -> None:
         value = max(9, min(24, int(size)))
@@ -624,10 +683,14 @@ class MainWindow:
     def _operation_is_active(self, operation_id: int) -> bool:
         return self.operation_running and self.active_operation_id == operation_id
 
-    def _async_error_for_operation(self, operation_id: int, error: Exception) -> None:
+    def _async_error_for_operation(self, operation_id: int, error: Exception, *, modal: bool = True) -> None:
         if not self._operation_is_active(operation_id):
             return
-        self._show_error(error)
+        if modal:
+            self._show_error(error)
+            return
+        self.set_status("Помилка")
+        self._finish_operation(str(error), error=True)
 
     def _async_success_for_operation(
         self,
@@ -645,6 +708,9 @@ class MainWindow:
         operation_id: int,
         timeout_message: str,
         on_timeout: Callable[[str], None] | None,
+        *,
+        modal: bool = True,
+        is_error: bool = True,
     ) -> None:
         if not self._operation_is_active(operation_id):
             return
@@ -654,9 +720,10 @@ class MainWindow:
                 on_timeout(timeout_message)
             except Exception:
                 pass
-        self.set_status("Помилка")
-        self._finish_operation(timeout_message, error=True)
-        self.msg.showerror("UA FREE Content Tool", timeout_message, parent=self.root)
+        self.set_status("Помилка" if is_error else "Зупинено")
+        self._finish_operation(timeout_message, error=is_error)
+        if modal:
+            self.msg.showerror("UA FREE Content Tool", timeout_message, parent=self.root)
 
     def run_async(
         self,
@@ -668,6 +735,9 @@ class MainWindow:
         timeout_seconds: float | None = None,
         timeout_message: str = "Операція не завершилася в установлений час.",
         on_timeout: Callable[[str], None] | None = None,
+        modal_errors: bool = True,
+        modal_timeout: bool = True,
+        timeout_is_error: bool = True,
     ) -> None:
         operation_id = self._start_operation(label)
         if operation_id is None:
@@ -677,20 +747,25 @@ class MainWindow:
             milliseconds = max(1, int(timeout_seconds * 1000))
             self.operation_timeout_after_id = self.root.after(
                 milliseconds,
-                lambda: self._operation_timeout(operation_id, timeout_message, on_timeout),
+                lambda: self._operation_timeout(
+                    operation_id, timeout_message, on_timeout, modal=modal_timeout, is_error=timeout_is_error
+                ),
             )
 
         def runner() -> None:
             try:
                 result = action()
             except Exception as exc:
-                self.root.after(0, lambda error=exc: self._async_error_for_operation(operation_id, error))
+                if getattr(self, "_closing", False):
+                    return
+                self._post_ui(
+                    lambda error=exc: self._async_error_for_operation(operation_id, error, modal=modal_errors)
+                )
                 return
-            self.root.after(
-                0,
-                lambda value=result: self._async_success_for_operation(
-                    operation_id, value, success, done_label
-                ),
+            if getattr(self, "_closing", False):
+                return
+            self._post_ui(
+                lambda value=result: self._async_success_for_operation(operation_id, value, success, done_label)
             )
 
         threading.Thread(target=runner, daemon=True).start()
@@ -725,7 +800,7 @@ class MainWindow:
             else self.config.ui_language
         )
         self.config.ui_language = language
-        self.root.title("UA FREE Content Tool — v1.1.2")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
         localize_widget_tree(self.root, language)
         for variable in (getattr(self, 'status_var', None), getattr(self, 'operation_var', None), getattr(self, 'operation_detail_var', None)):
             if variable is not None:
@@ -881,9 +956,9 @@ class MainWindow:
             try:
                 result = self._collect(None)
             except Exception as exc:
-                self.root.after(0, lambda: self._after_auto_collect_error(exc))
+                self._post_ui(lambda error=exc: self._after_auto_collect_error(error))
                 return
-            self.root.after(0, lambda: self._after_auto_collect(result))
+            self._post_ui(lambda value=result: self._after_auto_collect(value))
 
         threading.Thread(target=runner, name="automatic-news-collector", daemon=True).start()
 
@@ -2595,6 +2670,31 @@ class MainWindow:
             return
 
         try:
+            batches = [self.db.get_batch(batch_id) for batch_id in batch_ids]
+            active = [batch for batch in batches if batch.status == "in_progress"]
+            if active:
+                if len(batch_ids) != 1:
+                    raise ValueError(
+                        "Пакет, що публікується, зупиняйте окремо. Інші вибрані пакети не змінено."
+                    )
+                batch = active[0]
+                if not self.worker.request_cancel(batch.id):
+                    raise ValueError(
+                        f"Пакет #{batch.id} позначений як «публікується», але не належить поточному worker. "
+                        "Оновіть чергу; після перезапуску програми такий пакет буде безпечно призупинено."
+                    )
+                self.set_status(
+                    f"Пакет #{batch.id}: зупинку запрошено. Нові платформи не запускатимуться."
+                )
+                self.msg.showinfo(
+                    "Зупинка публікації",
+                    f"Пакет #{batch.id}: запит на зупинку прийнято.\n\n"
+                    "Якщо мережевий запит уже відправлено платформі, програма дочекається його завершення, "
+                    "щоб не створити дубль. Нові платформи після цього не запускатимуться.",
+                    parent=self.root,
+                )
+                self.worker.wake()
+                return
             cancelled = self.db.cancel_batches(batch_ids)
         except Exception as exc:
             self._show_error(exc)
@@ -2972,7 +3072,7 @@ class MainWindow:
                 f"помилок {summary.errors} · пропущено {summary.skipped}"
             )
             try:
-                self.root.after(0, lambda value=text: self.operation_detail_var.set(self.t(value)))
+                self._post_ui(lambda value=text: self.operation_detail_var.set(self.t(value)))
             except tk.TclError:
                 pass
 
@@ -3548,6 +3648,8 @@ class MainWindow:
                 pass
             self.connection_diagnostics_after_id = None
         self.connection_diagnostics_running = True
+        self.connection_diagnostics_generation += 1
+        generation = self.connection_diagnostics_generation
         snapshot = self._diagnostics_config_snapshot()
         if hasattr(self, "connection_diagnostics_button"):
             self.connection_diagnostics_button.configure(state="disabled")
@@ -3556,28 +3658,56 @@ class MainWindow:
                 "Перевіряю Facebook, Threads, LinkedIn, Telegram і Google Drive…"
             )
 
+        # Tkinter may only be touched from its main thread. The previous implementation
+        # called root.after() from this worker, which can hang indefinitely on Windows.
+        # The worker now only writes to a thread-safe queue; the main Tk loop polls it.
         def task() -> None:
             try:
                 report = diagnose_connections(snapshot)
             except Exception as exc:
-                try:
-                    self.root.after(0, lambda: self._connection_diagnostics_failed(exc, automatic))
-                except tk.TclError:
-                    pass
+                self.connection_diagnostics_result_queue.put((generation, "error", exc))
                 return
-            try:
-                self.root.after(
-                    0,
-                    lambda: self._connection_diagnostics_completed(report, snapshot, automatic),
-                )
-            except tk.TclError:
-                pass
+            self.connection_diagnostics_result_queue.put((generation, "ok", report))
 
         threading.Thread(
             target=task,
             name="connection-diagnostics",
             daemon=True,
         ).start()
+        self._poll_connection_diagnostics(generation, snapshot, automatic)
+
+    def _poll_connection_diagnostics(
+        self,
+        generation: int,
+        snapshot: AppConfig,
+        automatic: bool,
+    ) -> None:
+        if self.stop_event.is_set() or generation != self.connection_diagnostics_generation:
+            return
+        try:
+            result_generation, kind, payload = self.connection_diagnostics_result_queue.get_nowait()
+        except queue.Empty:
+            self.connection_diagnostics_poll_after_id = self.root.after(
+                100,
+                lambda: self._poll_connection_diagnostics(generation, snapshot, automatic),
+            )
+            return
+
+        if result_generation != generation:
+            # Ignore a stale result from an older diagnostics run and keep polling the
+            # current generation. This also makes a late network response harmless.
+            self.connection_diagnostics_poll_after_id = self.root.after(
+                50,
+                lambda: self._poll_connection_diagnostics(generation, snapshot, automatic),
+            )
+            return
+
+        self.connection_diagnostics_poll_after_id = None
+        if kind == "ok" and isinstance(payload, ConnectionDiagnosticsReport):
+            self._connection_diagnostics_completed(payload, snapshot, automatic)
+            return
+        error = payload if isinstance(payload, Exception) else RuntimeError(str(payload))
+        self._connection_diagnostics_failed(error, automatic)
 
     def _connection_diagnostics_failed(self, error: Exception, automatic: bool) -> None:
         self.connection_diagnostics_running = False
@@ -3699,6 +3829,10 @@ class MainWindow:
         if threads_item is not None and threads_item.status == STATUS_OK:
             if hasattr(self, "worker"):
                 self.worker.clear_auth_blocks("threads")
+        drive_item = by_key.get("google_drive")
+        if drive_item is not None and drive_item.status == STATUS_OK:
+            if hasattr(self, "worker"):
+                self.worker.clear_auth_blocks("google_drive")
 
         action_items = report.action_items
         temporary_items = report.temporary_items
@@ -3795,7 +3929,7 @@ class MainWindow:
             except Exception as exc:
                 message = "Threads-токен не вдалося автоматично оновити: " + str(exc)
                 try:
-                    self.root.after(0, lambda: self.threads_status_var.set(message))
+                    self._post_ui(lambda value=message: self.threads_status_var.set(value))
                 except tk.TclError:
                     pass
                 return
@@ -3818,7 +3952,7 @@ class MainWindow:
                 self.worker.wake()
 
             try:
-                self.root.after(0, apply)
+                self._post_ui(apply)
             except tk.TclError:
                 pass
 
@@ -3857,7 +3991,7 @@ class MainWindow:
                     self.ollama_status_var.set(f"Модель {selected} готова до швидкого рерайту")
 
             try:
-                self.root.after(0, finish)
+                self._post_ui(finish)
             except tk.TclError:
                 pass
 
@@ -3882,9 +4016,9 @@ class MainWindow:
             try:
                 result = action()
             except Exception:
-                self.root.after(0, lambda: self.ollama_status_var.set("Ollama не знайдено. Запустіть Ollama і натисніть кнопку."))
+                self._post_ui(lambda: self.ollama_status_var.set("Ollama не знайдено. Запустіть Ollama і натисніть кнопку."))
                 return
-            self.root.after(0, lambda: success(result))
+            self._post_ui(lambda value=result: success(value))
 
         threading.Thread(target=runner, daemon=True).start()
 

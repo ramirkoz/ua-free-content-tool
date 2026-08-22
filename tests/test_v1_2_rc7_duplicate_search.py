@@ -77,9 +77,9 @@ def test_rc7_ai_none_does_not_erase_manual_review_candidate(monkeypatch: pytest.
 
     def fake_run_ai(prompt: str, **kwargs):
         kwargs["validator"]("NONE")
-        return SimpleNamespace(text="NONE")
+        return SimpleNamespace(text="NONE", provider="nvidia", model="test-model")
 
     monkeypatch.setattr(dup, "run_ai", fake_run_ai)
     result = dup.find_global_duplicate_clusters(groups, deadline_seconds=10)
     assert any({1, 2} <= set(cluster.group_ids) for cluster in result)
-    assert "локальні кандидати" in dup.last_duplicate_search_label()
+    assert "локальний prefilter" in dup.last_duplicate_search_label()

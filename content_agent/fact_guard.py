@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_NUMBER_RE = re.compile(r"(?<![\w])\d+(?:[.,]\d+)?(?:\s?%|\s?(?:млн|млрд|тис\.?|km|км|m|м|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|usd|eur|грн|₴|\$|€))?", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"(?<![\w])(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?)(?:\s?%|\s?(?:млн|млрд|тис\.?|km|км|m|м|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|usd|eur|грн|₴|\$|€))?", re.IGNORECASE)
 _LATIN_ENTITY_RE = re.compile(
     r"\b(?:[A-Z][A-Za-z0-9]*(?:[._+\-/][A-Za-z0-9]+)*|[A-Z]{2,}[A-Z0-9._+\-/]*|[A-Za-z]+\d+[A-Za-z0-9._+\-/]*)\b"
 )
@@ -66,10 +66,20 @@ class FactGuardResult:
 
 
 def _canon_number(token: str) -> str:
-    value = " ".join(str(token or "").strip().lower().split())
-    value = value.replace(",", ".")
+    value = str(token or "").strip().lower().replace("\u00a0", " ").replace("\u202f", " ")
     value = value.replace("₴", "грн").replace("$", "usd").replace("€", "eur")
-    return value
+    match = re.match(r"^(.*?\d(?:[\d ,.]*\d|\d)?)(.*)$", value)
+    if not match:
+        return " ".join(value.split())
+    numeric = match.group(1).strip()
+    suffix = " ".join(match.group(2).split())
+    numeric = numeric.replace(" ", "")
+    # Comma-separated 3-digit groups are thousands unless the integer part is zero.
+    if re.fullmatch(r"[1-9]\d{0,2}(?:,\d{3})+", numeric):
+        numeric = numeric.replace(",", "")
+    elif "," in numeric and "." not in numeric:
+        numeric = numeric.replace(",", ".")
+    return (numeric + (" " + suffix if suffix else "")).strip()
 
 
 def _factual_evidence(value: str) -> str:

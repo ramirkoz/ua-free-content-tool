@@ -12,7 +12,7 @@ from urllib.parse import quote, urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .codex_engine_v1_3 import CodexEngineError, inspect_codex, run_codex
+from .codex_engine_v1_3 import CodexEngineError, inspect_codex_cached, run_codex
 from .network import NetworkError, fetch_url
 from .paths import data_dir
 from .local_ai_runtime_v1_2_2 import LocalAIRuntimeError, generate_local_text
@@ -33,10 +33,7 @@ class AIModelError(RuntimeError):
 class AIProviderSecrets:
     gemini_api_key: str = ""
     nvidia_api_key: str = ""
-    sambanova_api_key: str = ""
-    cerebras_api_key: str = ""
     groq_api_key: str = ""
-    openrouter_api_key: str = ""
     cloudflare_account_id: str = ""
     cloudflare_api_token: str = ""
     local_enabled: bool = False
@@ -47,10 +44,7 @@ class AIProviderSecrets:
         return AIProviderSecrets(
             gemini_api_key=self.gemini_api_key.strip(),
             nvidia_api_key=self.nvidia_api_key.strip(),
-            sambanova_api_key=self.sambanova_api_key.strip(),
-            cerebras_api_key=self.cerebras_api_key.strip(),
             groq_api_key=self.groq_api_key.strip(),
-            openrouter_api_key=self.openrouter_api_key.strip(),
             cloudflare_account_id=self.cloudflare_account_id.strip(),
             cloudflare_api_token=self.cloudflare_api_token.strip(),
             local_enabled=bool(self.local_enabled),
@@ -85,26 +79,19 @@ class AIRouterState:
     last_model: str = ""
     last_label: str = ""
     last_success_at: float = 0.0
+    model_health: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 MODEL_SLOTS: tuple[AIModelSlot, ...] = (
     AIModelSlot(1, "codex", "codex-chatgpt", "Codex / ChatGPT", "codex"),
     AIModelSlot(2, "gemini", "gemini-3.5-flash", "Gemini 3.5 Flash / Google", "gemini"),
-    AIModelSlot(3, "nvidia", "deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro / NVIDIA"),
-    AIModelSlot(4, "nvidia", "nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra 550B / NVIDIA"),
-    AIModelSlot(5, "nvidia", "z-ai/glm-5.2", "GLM-5.2 / NVIDIA"),
-    AIModelSlot(6, "nvidia", "qwen/qwen3.5-397b-a17b", "Qwen 3.5 397B / NVIDIA"),
-    AIModelSlot(7, "nvidia", "deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash / NVIDIA"),
-    AIModelSlot(8, "nvidia", "nvidia/nemotron-3-super-120b-a12b", "Nemotron 3 Super 120B / NVIDIA"),
-    AIModelSlot(9, "sambanova", "DeepSeek-V3.2", "DeepSeek V3.2 / SambaNova"),
-    AIModelSlot(10, "cerebras", "gpt-oss-120b", "GPT-OSS 120B / Cerebras"),
-    AIModelSlot(11, "groq", "openai/gpt-oss-120b", "GPT-OSS 120B / Groq"),
-    AIModelSlot(12, "groq", "qwen/qwen3.6-27b", "Qwen 3.6 27B / Groq"),
-    AIModelSlot(13, "cloudflare", "@cf/nvidia/nemotron-3-120b-a12b", "Nemotron 3 120B / Cloudflare"),
-    AIModelSlot(14, "cloudflare", "@cf/zai-org/glm-4.7-flash", "GLM-4.7 Flash / Cloudflare"),
-    AIModelSlot(15, "sambanova", "DeepSeek-V3.1", "DeepSeek V3.1 / SambaNova"),
-    AIModelSlot(16, "openrouter", "openrouter/free", "OpenRouter Free Router"),
-    AIModelSlot(17, "local", "local-model", "Локальний AI · Ollama → llama.cpp", "local"),
+    AIModelSlot(3, "nvidia", "nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra 550B / NVIDIA"),
+    AIModelSlot(4, "nvidia", "nvidia/nemotron-3-super-120b-a12b", "Nemotron 3 Super 120B / NVIDIA"),
+    AIModelSlot(5, "groq", "openai/gpt-oss-120b", "GPT-OSS 120B / Groq"),
+    AIModelSlot(6, "groq", "qwen/qwen3.6-27b", "Qwen 3.6 27B / Groq"),
+    AIModelSlot(7, "cloudflare", "@cf/nvidia/nemotron-3-120b-a12b", "Nemotron 3 120B / Cloudflare"),
+    AIModelSlot(8, "cloudflare", "@cf/zai-org/glm-4.7-flash", "GLM-4.7 Flash / Cloudflare"),
+    AIModelSlot(9, "local", "local-model", "Локальний AI · Ollama → llama.cpp", "local"),
 )
 
 _SECRET_HEADER = b"UA_FREE_AI_ROUTER_AESGCM_V1\n"
@@ -189,12 +176,33 @@ def load_router_state() -> AIRouterState:
         return AIRouterState()
     if not isinstance(raw, dict):
         return AIRouterState()
+    cooldowns = raw.get("cooldowns", {}) if isinstance(raw.get("cooldowns"), dict) else {}
+    active_providers = {slot.provider for slot in MODEL_SLOTS}
+    active_model_keys = {f"model:{slot.provider}:{slot.model}" for slot in MODEL_SLOTS if slot.provider != "local"}
+    cleaned_cooldowns = {
+        key: value for key, value in cooldowns.items()
+        if (
+            key in active_model_keys
+            or (key.startswith("provider:") and key.split(":", 1)[1] in active_providers)
+            or key.startswith("model:local:")
+        )
+    }
+    last_provider = str(raw.get("last_provider", ""))
+    if last_provider and last_provider not in active_providers:
+        last_provider = ""
+    raw_health = raw.get("model_health", {}) if isinstance(raw.get("model_health"), dict) else {}
+    active_health_keys = set(active_model_keys) | {f"model:local:{str(raw.get('last_model', '') or 'local-model')}"}
+    cleaned_health = {
+        str(key): value for key, value in raw_health.items()
+        if isinstance(value, dict) and (str(key) in active_health_keys or str(key).startswith("model:local:"))
+    }
     return AIRouterState(
-        cooldowns=raw.get("cooldowns", {}) if isinstance(raw.get("cooldowns"), dict) else {},
-        last_provider=str(raw.get("last_provider", "")),
-        last_model=str(raw.get("last_model", "")),
-        last_label=str(raw.get("last_label", "")),
-        last_success_at=float(raw.get("last_success_at", 0.0) or 0.0),
+        cooldowns=cleaned_cooldowns,
+        last_provider=last_provider,
+        last_model=str(raw.get("last_model", "")) if last_provider else "",
+        last_label=str(raw.get("last_label", "")) if last_provider else "",
+        last_success_at=float(raw.get("last_success_at", 0.0) or 0.0) if last_provider else 0.0,
+        model_health=cleaned_health,
     )
 
 
@@ -244,20 +252,14 @@ def _retry_after(headers: dict[str, str]) -> int | None:
 
 def _configured(slot: AIModelSlot, cfg: AIProviderSecrets) -> bool:
     if slot.provider == "codex":
-        status = inspect_codex()
+        status = inspect_codex_cached(max_age_seconds=20.0)
         return bool(status.installed and status.authenticated)
     if slot.provider == "gemini":
         return bool(cfg.gemini_api_key)
     if slot.provider == "nvidia":
         return bool(cfg.nvidia_api_key)
-    if slot.provider == "sambanova":
-        return bool(cfg.sambanova_api_key)
-    if slot.provider == "cerebras":
-        return bool(cfg.cerebras_api_key)
     if slot.provider == "groq":
         return bool(cfg.groq_api_key)
-    if slot.provider == "openrouter":
-        return bool(cfg.openrouter_api_key)
     if slot.provider == "cloudflare":
         return bool(cfg.cloudflare_account_id and cfg.cloudflare_api_token)
     if slot.provider == "local":
@@ -268,14 +270,8 @@ def _configured(slot: AIModelSlot, cfg: AIProviderSecrets) -> bool:
 def _openai_endpoint(slot: AIModelSlot, cfg: AIProviderSecrets) -> tuple[str, str]:
     if slot.provider == "nvidia":
         return "https://integrate.api.nvidia.com/v1/chat/completions", cfg.nvidia_api_key
-    if slot.provider == "sambanova":
-        return "https://api.sambanova.ai/v1/chat/completions", cfg.sambanova_api_key
-    if slot.provider == "cerebras":
-        return "https://api.cerebras.ai/v1/chat/completions", cfg.cerebras_api_key
     if slot.provider == "groq":
         return "https://api.groq.com/openai/v1/chat/completions", cfg.groq_api_key
-    if slot.provider == "openrouter":
-        return "https://openrouter.ai/api/v1/chat/completions", cfg.openrouter_api_key
     if slot.provider == "cloudflare":
         account = quote(cfg.cloudflare_account_id, safe="")
         return f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions", cfg.cloudflare_api_token
@@ -330,9 +326,6 @@ def _openai_call(slot: AIModelSlot, cfg: AIProviderSecrets, prompt: str) -> str:
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    if slot.provider == "openrouter":
-        headers["HTTP-Referer"] = "https://github.com/ramirkoz/ua-free-content-tool"
-        headers["X-Title"] = "UA FREE Content Tool"
     try:
         response = fetch_url(
             url,

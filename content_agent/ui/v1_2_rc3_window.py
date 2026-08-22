@@ -72,4 +72,4 @@ class MainWindow(RC2MainWindow):
             name="publication-worker",
             daemon=True,
         )
-        self.root.title("UA FREE Content Tool — v1.2.0-dev RC3")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")

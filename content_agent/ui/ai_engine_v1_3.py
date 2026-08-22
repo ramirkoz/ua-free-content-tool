@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import datetime
 from tkinter import ttk
 
 from ..ai_router_v1_2_1 import (
@@ -9,11 +10,11 @@ from ..ai_router_v1_2_1 import (
     clear_router_cooldowns,
     last_ai_result_label,
     load_provider_secrets,
-    router_overview,
     save_provider_secrets,
     test_ai_router,
 )
-from ..codex_engine_v1_3 import inspect_codex, install_codex, login_chatgpt
+from ..codex_engine_v1_3 import clear_codex_status_cache, inspect_codex_cached, install_codex, login_chatgpt
+from ..ai_router_v1_2_2 import codex_router_status, router_overview_cached
 from ..codex_news_v1_3 import rewrite_group_with_codex, run_topic_prompt_with_codex
 from ..editorial_memory import rank_editorial_examples, rank_topic_candidates
 from ..models import RewriteResult
@@ -96,10 +97,7 @@ class AIEngineV13Mixin:
         self.ai_provider_vars = {
             "nvidia_api_key": tk.StringVar(value=secrets.nvidia_api_key),
             "gemini_api_key": tk.StringVar(value=secrets.gemini_api_key),
-            "sambanova_api_key": tk.StringVar(value=secrets.sambanova_api_key),
-            "cerebras_api_key": tk.StringVar(value=secrets.cerebras_api_key),
             "groq_api_key": tk.StringVar(value=secrets.groq_api_key),
-            "openrouter_api_key": tk.StringVar(value=secrets.openrouter_api_key),
             "cloudflare_account_id": tk.StringVar(value=secrets.cloudflare_account_id),
             "cloudflare_api_token": tk.StringVar(value=secrets.cloudflare_api_token),
             "local_base_url": tk.StringVar(value=secrets.local_base_url),
@@ -110,10 +108,7 @@ class AIEngineV13Mixin:
         rows = [
             ("NVIDIA NIM API Key", "nvidia_api_key", True),
             ("Google Gemini API Key", "gemini_api_key", True),
-            ("SambaNova API Key", "sambanova_api_key", True),
-            ("Cerebras API Key", "cerebras_api_key", True),
             ("Groq API Key", "groq_api_key", True),
-            ("OpenRouter API Key", "openrouter_api_key", True),
         ]
         for index, (label, key, secret) in enumerate(rows, start=2):
             column = 0 if index < 5 else 2
@@ -156,10 +151,11 @@ class AIEngineV13Mixin:
         ttk.Button(actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Перевірити локальний AI", command=self.test_local_ai_ui).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(16, 0))
+        ttk.Button(actions, text="Перевірити Codex", command=self.check_codex_ui).pack(side="left", padx=(16, 0))
+        ttk.Button(actions, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Увійти через ChatGPT", command=self.login_codex_ui).pack(side="left", padx=(6, 0))
 
-        ttk.Label(frame, textvariable=self.codex_status_var, foreground="#555").grid(
+        ttk.Label(frame, textvariable=self.codex_status_var, foreground="#155724", wraplength=1180).grid(
             row=9, column=0, columnspan=5, sticky="w", pady=(2, 5)
         )
         ttk.Separator(frame, orient="horizontal").grid(row=10, column=0, columnspan=5, sticky="ew", pady=6)
@@ -183,10 +179,7 @@ class AIEngineV13Mixin:
         return AIProviderSecrets(
             gemini_api_key=values["gemini_api_key"].get(),
             nvidia_api_key=values["nvidia_api_key"].get(),
-            sambanova_api_key=values["sambanova_api_key"].get(),
-            cerebras_api_key=values["cerebras_api_key"].get(),
             groq_api_key=values["groq_api_key"].get(),
-            openrouter_api_key=values["openrouter_api_key"].get(),
             cloudflare_account_id=values["cloudflare_account_id"].get(),
             cloudflare_api_token=values["cloudflare_api_token"].get(),
             local_enabled=self.ai_local_enabled_var.get(),
@@ -252,16 +245,43 @@ class AIEngineV13Mixin:
     def refresh_ai_component_status(self) -> None:
         if not hasattr(self, "ai_router_status_var"):
             return
-        codex = inspect_codex()
-        if not codex.installed:
-            self.codex_status_var.set("Codex: не встановлено")
-        elif codex.authenticated:
-            suffix = f" · {codex.account_label}" if codex.account_label else ""
-            self.codex_status_var.set(f"Codex {codex.version}: готовий{suffix}")
+        codex = codex_router_status(live_probe=False)
+        version = str(codex.get("version") or "")
+        account = str(codex.get("account_label") or "")
+        cooldown = int(codex.get("cooldown_seconds") or 0)
+        reason = str(codex.get("cooldown_reason") or "").strip()
+        outcome = str(codex.get("last_outcome") or "").strip()
+        elapsed = float(codex.get("last_elapsed") or 0.0)
+        last_attempt = float(codex.get("last_attempt_at") or 0.0)
+        if not codex.get("checked"):
+            self.codex_status_var.set("⚪ CODEX · статус сесії ще не перевірено · натисніть «Перевірити Codex»")
+        elif not codex.get("installed"):
+            self.codex_status_var.set("🔴 CODEX · не встановлено")
+        elif not codex.get("authenticated"):
+            self.codex_status_var.set(f"🟠 CODEX {version} · встановлено · потрібен вхід через ChatGPT")
         else:
-            self.codex_status_var.set(f"Codex {codex.version}: потрібен вхід через ChatGPT")
+            account_part = f" · {account}" if account else ""
+            if cooldown > 0:
+                minutes, seconds = divmod(cooldown, 60)
+                route_part = f"Router: cooldown {minutes:02d}:{seconds:02d}"
+                if reason:
+                    route_part += f" · {reason[:180]}"
+                icon = "🟠"
+            else:
+                route_part = "Router: доступний · PRIMARY"
+                icon = "🟢"
+            last_part = ""
+            if last_attempt:
+                stamp = datetime.fromtimestamp(last_attempt).strftime("%H:%M:%S")
+                readable = "OK" if outcome == "ok" else (outcome or "спроба")
+                last_part = f" · останній: {readable} {stamp}"
+                if elapsed > 0:
+                    last_part += f" · {elapsed:.1f} с"
+            self.codex_status_var.set(
+                f"{icon} CODEX {version} · авторизований{account_part} · {route_part}{last_part}"
+            )
         try:
-            rows = router_overview()
+            rows = router_overview_cached()
             configured = [row for row in rows if row["configured"]]
             healthy = [row for row in configured if not row["cooldown_seconds"]]
             cooldown = len(configured) - len(healthy)
@@ -293,8 +313,27 @@ class AIEngineV13Mixin:
         )
 
     def check_codex_ui(self) -> None:
-        self.refresh_ai_component_status()
-        self.set_status(self.codex_status_var.get())  # type: ignore[attr-defined]
+        clear_codex_status_cache()
+        self.codex_status_var.set("… CODEX · перевіряю сесію ChatGPT…")
+
+        def action() -> object:
+            return inspect_codex_cached(max_age_seconds=1.0, force=True)
+
+        def success(_result: object) -> None:
+            self.refresh_ai_component_status()
+            self.set_status(self.codex_status_var.get())  # type: ignore[attr-defined]
+
+        self.run_async(  # type: ignore[attr-defined]
+            action,
+            success,
+            label="Перевіряю Codex / ChatGPT",
+            done_label="Codex перевірено",
+            timeout_seconds=20,
+            timeout_message="Перевірка Codex не завершилася за 20 секунд.",
+            modal_errors=False,
+            modal_timeout=False,
+            timeout_is_error=False,
+        )
 
     def install_codex_ui(self) -> None:
         def success(_result: object) -> None:

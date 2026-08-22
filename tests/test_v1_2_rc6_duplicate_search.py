@@ -109,6 +109,6 @@ def test_duplicate_search_cancelled_while_ai_result_is_returning(monkeypatch: py
 def test_ai_workflow_has_hard_ui_timeout_and_cancel_button() -> None:
     from pathlib import Path
     source = Path("content_agent/ui/ai_workflow_v1_3_rc6.py").read_text(encoding="utf-8")
-    assert "timeout_seconds=55" in source
+    assert "timeout_seconds=90" in source
     assert 'text="Скасувати пошук"' in source
-    assert "deadline_seconds=45" in source
+    assert "deadline_seconds=72" in source

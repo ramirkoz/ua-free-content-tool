@@ -42,7 +42,7 @@ class MainWindow(RC1MainWindow):
             name="publication-worker",
             daemon=True,
         )
-        self.root.title("UA FREE Content Tool — v1.2.0-dev RC2")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
 
     @staticmethod
     def _prioritize(candidates: list[MediaCandidate]) -> list[MediaCandidate]:

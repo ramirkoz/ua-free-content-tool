@@ -56,8 +56,9 @@ def test_model_quota_falls_to_next_model_before_next_provider(monkeypatch: pytes
     monkeypatch.setattr(router, "_invoke_slot", invoke)
     result = router.run_ai("test")
     assert result.provider == "nvidia"
-    assert calls[0] == "DeepSeek V4 Pro / NVIDIA"
-    assert any("Nemotron 3 Ultra" in value for value in calls)
+    nvidia_labels = [slot.label for slot in router.MODEL_SLOTS if slot.provider == "nvidia"]
+    assert calls[0] == nvidia_labels[0]
+    assert any(value == nvidia_labels[1] for value in calls)
     assert not any("Groq" in value for value in calls)
     assert "provider:nvidia" not in state.cooldowns
     assert any(key.startswith("model:nvidia:") for key in state.cooldowns)
@@ -87,8 +88,8 @@ def test_invalid_model_output_falls_to_next_model(monkeypatch: pytest.MonkeyPatc
     result = router.run_ai("test", validator=validator)
     assert result.text == "VALID"
     assert len(calls) == 2
-    assert calls[0] == "DeepSeek V4 Pro / NVIDIA"
-    assert calls[1] == "Nemotron 3 Ultra 550B / NVIDIA"
+    nvidia_labels = [slot.label for slot in router.MODEL_SLOTS if slot.provider == "nvidia"]
+    assert calls[:2] == nvidia_labels[:2]
 
 
 def test_registry_prioritizes_quality_and_keeps_only_production_providers() -> None:
@@ -96,10 +97,10 @@ def test_registry_prioritizes_quality_and_keeps_only_production_providers() -> N
     assert labels[:6] == [
         "Codex / ChatGPT",
         "Gemini 3.5 Flash / Google",
-        "DeepSeek V4 Pro / NVIDIA",
         "Nemotron 3 Ultra 550B / NVIDIA",
-        "GLM-5.2 / NVIDIA",
-        "Qwen 3.5 397B / NVIDIA",
+        "Nemotron 3 Super 120B / NVIDIA",
+        "GPT-OSS 120B / Groq",
+        "Qwen 3.6 27B / Groq",
     ]
     assert {slot.provider for slot in router.MODEL_SLOTS} == {
         "codex",
@@ -109,6 +110,6 @@ def test_registry_prioritizes_quality_and_keeps_only_production_providers() -> N
         "cloudflare",
         "local",
     }
-    assert len(router.MODEL_SLOTS) == 13
+    assert len(router.MODEL_SLOTS) == 9
     assert router.MODEL_SLOTS[-1].provider == "local"
     assert [slot.priority for slot in router.MODEL_SLOTS] == list(range(1, len(router.MODEL_SLOTS) + 1))

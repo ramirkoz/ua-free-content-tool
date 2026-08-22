@@ -157,7 +157,7 @@ def test_queue_time_is_displayed_in_kyiv_and_overdue_is_human_readable() -> None
 
 def test_fix13_ui_contract_has_periodic_queue_refresh_and_worker_wake() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
+    assert 'root.title("UA FREE Content Tool — v1.3.1-rc7")' in source
     assert "self._schedule_queue_refresh()" in source
     assert "self.worker.wake()" in source
     assert 'status_text = f"прострочено на' in source

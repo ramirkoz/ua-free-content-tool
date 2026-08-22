@@ -135,12 +135,10 @@ def _source_header(
     budget = max(1, int(budget))
     name = " ".join(str(article.source_name or "невідоме джерело").split())
     title = " ".join(str(article.title or "без заголовка").split())
-    published = str(article.published_at or "не визначено").strip()
     rows = [
-        f"ДЖЕРЕЛО {index}/{total}",
+        f"ДЖЕРЕЛО {index}",
         f"НАЗВА: {name}",
         f"ЗАГОЛОВОК: {title}",
-        f"ЧАС: {published}",
     ]
     if include_urls and article.url:
         rows.append(f"URL: {article.url}")
@@ -165,6 +163,130 @@ def _source_header(
     return "\n".join(selected), clipped or len(selected) < len(rows)
 
 
+
+_LARGE_GROUP_THRESHOLD = 12
+_WORD_TOKEN_RE = re.compile(r"(?iu)[a-zа-яіїєґ0-9][a-zа-яіїєґ0-9'’\-]{1,}")
+
+
+def _numeric_signature(value: str) -> tuple[str, ...]:
+    return tuple(match.group(0).casefold().replace(" ", "") for match in _NUMBER_RE.finditer(value))
+
+
+def _word_tokens(value: str) -> frozenset[str]:
+    return frozenset(token.casefold() for token in _WORD_TOKEN_RE.findall(value) if len(token) >= 3)
+
+
+def _near_duplicate(left: str, right: str) -> bool:
+    # Never collapse statements carrying different numbers. That is how conflicting
+    # versions survive the condenser instead of being averaged into fiction.
+    if _numeric_signature(left) != _numeric_signature(right):
+        return False
+    a = _word_tokens(left)
+    b = _word_tokens(right)
+    if not a or not b:
+        return False
+    overlap = len(a & b) / max(1, len(a | b))
+    return overlap >= 0.82
+
+
+def _build_large_group_pack(
+    articles: list[Article],
+    *,
+    max_chars: int,
+) -> EvidencePack:
+    """Condense a very large merged event into unique factual sentences.
+
+    Large groups are usually dozens of near-identical reports. Dividing the prompt
+    budget by source leaves only headers and starves the model of facts. Here we
+    collapse repeated wording first, keep conflicting numeric variants separate,
+    then spend the budget on the highest-value unique facts.
+    """
+
+    candidates: list[tuple[float, int, int, str]] = []
+    total_sentences = 0
+    for article_index, article in enumerate(articles):
+        sentences = _sentences(article.raw_text)
+        total_sentences += len(sentences)
+        if not sentences:
+            title = _clean_text(article.title)
+            if title:
+                candidates.append((_score_sentence(0, title), article_index, 0, title))
+            continue
+        # A single syndicated article can itself be enormous. Twelve sentences per
+        # source is enough for evidence ranking without turning condensation into a
+        # quadratic punishment for merging many sources.
+        for sentence_index, sentence in enumerate(sentences[:12]):
+            candidates.append((_score_sentence(sentence_index, sentence), article_index, sentence_index, sentence))
+
+    if not candidates:
+        return EvidencePack("", len(articles), 0, total_sentences, False)
+
+    # Highest-value wording becomes the representative of a duplicate cluster.
+    representatives: list[dict[str, object]] = []
+    for score, article_index, sentence_index, sentence in sorted(candidates, key=lambda row: (-row[0], row[1], row[2])):
+        exact_key = " ".join(_WORD_TOKEN_RE.findall(sentence.casefold()))
+        matched = None
+        for item in representatives:
+            if exact_key == item["key"] or _near_duplicate(sentence, str(item["text"])):
+                matched = item
+                break
+        if matched is not None:
+            matched["support"] = int(matched["support"]) + 1
+            continue
+        representatives.append(
+            {
+                "text": sentence,
+                "key": exact_key,
+                "score": float(score),
+                "support": 1,
+                "article": article_index,
+                "sentence": sentence_index,
+            }
+        )
+
+    ranked = sorted(
+        representatives,
+        key=lambda item: (
+            -(float(item["score"]) + min(28.0, 4.0 * (int(item["support"]) - 1))),
+            int(item["article"]),
+            int(item["sentence"]),
+        ),
+    )
+
+    prefix = "УНІКАЛЬНІ ФАКТИ ЗІ ЗВЕДЕНОЇ ГРУПИ:\n"
+    budget = max(900, int(max_chars))
+    used = len(prefix)
+    chosen: list[dict[str, object]] = []
+    for item in ranked:
+        text = " ".join(str(item["text"]).split())
+        row = f"• {text}"
+        addition = len(row) + (1 if chosen else 0)
+        if used + addition > budget:
+            continue
+        chosen.append(item)
+        used += addition
+
+    if not chosen:
+        best = " ".join(str(ranked[0]["text"]).split())
+        body = _clip_at_word(best, max(80, budget - len(prefix) - 2))
+        chosen = [ranked[0]] if body else []
+        text = prefix + ("• " + body if body else "")
+    else:
+        # Restore narrative/source order after importance-based selection. The model
+        # gets a readable dossier rather than a score-sorted bag of sentences.
+        chosen.sort(key=lambda item: (int(item["article"]), int(item["sentence"])))
+        text = prefix + "\n".join(f"• {' '.join(str(item['text']).split())}" for item in chosen)
+
+    text = text[:budget].rstrip()
+    return EvidencePack(
+        text=text,
+        source_count=len(articles),
+        selected_sentences=len(chosen),
+        total_sentences=total_sentences,
+        truncated=len(chosen) < len(representatives),
+    )
+
+
 def build_evidence_pack(
     group: NewsGroup,
     *,
@@ -184,6 +306,8 @@ def build_evidence_pack(
         return EvidencePack("", 0, 0, 0, False)
 
     max_chars = max(900, int(max_chars))
+    if total_sources > _LARGE_GROUP_THRESHOLD:
+        return _build_large_group_pack(articles, max_chars=max_chars)
     separator = _SEPARATOR
     separator_total = len(separator) * max(0, total_sources - 1)
     if separator_total >= max_chars:

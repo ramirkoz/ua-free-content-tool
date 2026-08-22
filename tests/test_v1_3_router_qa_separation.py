@@ -14,7 +14,7 @@ def test_provider_health_accepts_non_literal_nonempty_response(monkeypatch):
     monkeypatch.setattr(diagnostics, "_provider_slot_groups", lambda: [("nvidia", [slot])])
     monkeypatch.setattr(diagnostics, "load_provider_secrets", lambda: SimpleNamespace())
     monkeypatch.setattr(diagnostics, "_configured", lambda _slot, _cfg: True)
-    monkeypatch.setattr(diagnostics, "_invoke_slot", lambda *_args, **_kwargs: "different but healthy response")
+    monkeypatch.setattr(diagnostics, "_invoke_limited", lambda *_args, **_kwargs: "different but healthy response")
 
     row = diagnostics.test_configured_providers()[0]
     assert row.status == "ok"

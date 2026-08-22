@@ -170,6 +170,14 @@ class PublicationWorker:
                 return self._auth_blocks["facebook:*"]
             return self._auth_blocks.get(platform, "")
 
+    @staticmethod
+    def _is_drive_auth_error(exc: BaseException) -> bool:
+        text = str(exc).casefold()
+        return any(token in text for token in (
+            "token has been expired or revoked", "invalid_grant", "unauthorized_client",
+            "refresh token", "oauth2", "http 401", "http 403",
+        ))
+
     def _emit_result(self, result: WorkerResult) -> None:
         if self.result_callback is None:
             return
@@ -466,6 +474,19 @@ class PublicationWorker:
             )
             self._raise_if_cancel_requested(batch.id)
             if active_targets:
+                group = self.database.get_group(group_id)
+                drive_block = self.auth_block_reason("google_drive")
+                if group.media_file_id and drive_block:
+                    safe_error = "Google Drive / медіа: токен уже заблоковано. Оновіть Google Drive у налаштуваннях. Причина: " + drive_block
+                    self.database.mark_unsent_targets_failed(batch.id, safe_error)
+                    result.failed_targets += len(active_targets)
+                    for item in active_targets:
+                        result.failed_platforms[item.platform] = safe_error
+                    self.database.finish_batch(batch.id, owner, pause=True, max_automatic_attempts=self.max_automatic_attempts)
+                    result.paused = True
+                    result.pause_reason = "Потрібно оновити Google Drive; повторні API-запити зупинено."
+                    self._notify(f"Пакет #{batch.id}: Google Drive заблоковано до оновлення токена.")
+                    return result
                 try:
                     media, drive_client, group_id, media_info = self._load_media_cancellable(
                         batch_id=batch.id, batch_article_id=batch.article_id, owner=owner
@@ -476,13 +497,15 @@ class PublicationWorker:
                     return result
                 except Exception as exc:
                     safe_error = "Google Drive / медіа: " + redact_secrets(exc)[:900]
+                    if self._is_drive_auth_error(exc):
+                        self.block_auth("google_drive", safe_error, exc)
                     logger.warning("Publication preflight failed batch=%s: %s", batch.id, safe_error)
                     self.database.mark_unsent_targets_failed(batch.id, safe_error)
                     result.failed_targets += len(active_targets)
                     for item in active_targets:
                         result.failed_platforms[item.platform] = safe_error
                     result.completed = self.database.finish_batch(
-                        batch.id, owner, max_automatic_attempts=self.max_automatic_attempts
+                        batch.id, owner, pause=self._is_drive_auth_error(exc), max_automatic_attempts=self.max_automatic_attempts
                     )
                     final_batch = self.database.get_batch(batch.id)
                     result.paused = final_batch.status == "paused"
@@ -499,7 +522,29 @@ class PublicationWorker:
                 and media_info is not None
                 and any(target.platform == "threads" for target in active_targets)
             ):
-                temporary_permission_id = drive_client.ensure_public_for_threads(media_info)
+                try:
+                    temporary_permission_id = drive_client.ensure_public_for_threads(media_info)
+                except Exception as exc:
+                    safe_error = "Google Drive / Threads-підготовка: " + redact_secrets(exc)[:900]
+                    auth_error = self._is_drive_auth_error(exc)
+                    if auth_error:
+                        self.block_auth("google_drive", safe_error, exc)
+                    logger.warning("Drive Threads preflight failed batch=%s: %s", batch.id, safe_error)
+                    self.database.mark_unsent_targets_failed(batch.id, safe_error)
+                    result.failed_targets += len(active_targets)
+                    for item in active_targets:
+                        result.failed_platforms[item.platform] = safe_error
+                    result.completed = self.database.finish_batch(
+                        batch.id, owner, pause=auth_error, max_automatic_attempts=self.max_automatic_attempts
+                    )
+                    final_batch = self.database.get_batch(batch.id)
+                    result.paused = final_batch.status == "paused"
+                    result.pause_reason = (
+                        "Потрібно повторно підключити Google Drive; повторні API-запити зупинено."
+                        if auth_error else "Google Drive не завершив підготовку медіа для Threads."
+                    )
+                    self._notify(f"Пакет #{batch.id}: {safe_error}")
+                    return result
 
             attempted = 0
             total = len(active_targets)
@@ -668,9 +713,11 @@ class PublicationWorker:
                     try:
                         drive_client.remove_permission(media.file_id, temporary_permission_id)
                         break
-                    except GoogleDriveError as exc:
+                    except Exception as exc:
+                        if self._is_drive_auth_error(exc):
+                            self.block_auth("google_drive", str(exc), exc)
                         if attempt == 2:
-                            logger.error("Temporary Drive permission cleanup failed: %s", exc)
+                            logger.error("Temporary Drive permission cleanup failed: %s", redact_secrets(exc)[:900])
 
     def run_loop(self, stop_event: threading.Event, poll_seconds: float = 15.0) -> None:
         while not stop_event.is_set():
@@ -681,9 +728,11 @@ class PublicationWorker:
                 if worked or outcome.failed_targets or outcome.sent_targets or outcome.paused:
                     self._emit_result(outcome)
             except Exception as exc:
-                logger.error("Publication worker iteration failed: %s", exc)
+                logger.error("Publication worker iteration failed: %s", redact_secrets(exc)[:900])
                 worked = False
                 busy = False
+                if stop_event.wait(max(30.0, float(poll_seconds) * 2.0)):
+                    break
             if worked or busy:
                 stop_event.wait(1.0)
                 continue

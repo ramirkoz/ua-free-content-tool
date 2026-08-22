@@ -1,3 +1,4 @@
+# RC7 final synchronization CI trigger 2; product source remains byte-identical to validated Source ZIP.
 name: v1.3 Logic CI
 
 on:

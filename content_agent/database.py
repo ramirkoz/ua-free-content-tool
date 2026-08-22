@@ -888,6 +888,137 @@ class Database:
             rows = db.execute(query, params).fetchall()
         return [self._group_from_row(row, []) for row in rows]
 
+    def list_groups_with_preview_articles(
+        self,
+        status: str | None = None,
+        limit: int = 20000,
+        *,
+        preview_chars: int = 1400,
+    ) -> list[NewsGroup]:
+        """Return lightweight groups with one representative article preview.
+
+        Global duplicate search needs some body text for high-recall candidate generation,
+        but hydrating every article of up to 20k groups is unnecessarily expensive.
+        This method loads only one recent article per group; full hydration is deferred
+        until a group becomes a duplicate candidate.
+        """
+        groups = self.list_groups(status=status, limit=max(1, int(limit)))
+        if not groups:
+            return []
+        by_id = {group.id: group for group in groups}
+        ordered_ids = [group.id for group in groups]
+        cap = max(200, min(4000, int(preview_chars)))
+        with self.connect() as db:
+            for start in range(0, len(ordered_ids), 400):
+                chunk = ordered_ids[start:start + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = db.execute(
+                    f"""
+                    SELECT a.*, s.name AS source_name
+                    FROM articles a
+                    JOIN sources s ON s.id=a.source_id
+                    JOIN (
+                        SELECT group_id, MAX(id) AS article_id
+                        FROM articles
+                        WHERE group_id IN ({placeholders})
+                        GROUP BY group_id
+                    ) latest ON latest.article_id=a.id
+                    """,
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    group_id = int(row["group_id"])
+                    group = by_id.get(group_id)
+                    if group is None:
+                        continue
+                    article = self._article_from_row(row)
+                    article.raw_text = str(article.raw_text or "")[:cap]
+                    group.articles = [article]
+        return groups
+
+    def hydrate_groups_by_ids(self, group_ids: Iterable[int]) -> list[NewsGroup]:
+        """Fully hydrate only explicitly selected group IDs, preserving input order."""
+        ids: list[int] = []
+        seen: set[int] = set()
+        for raw in group_ids:
+            value = int(raw)
+            if value > 0 and value not in seen:
+                seen.add(value)
+                ids.append(value)
+        if not ids:
+            return []
+        groups: dict[int, NewsGroup] = {}
+        article_map: dict[int, list[Article]] = {group_id: [] for group_id in ids}
+        with self.connect() as db:
+            for start in range(0, len(ids), 400):
+                chunk = ids[start:start + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                summary_rows = db.execute(
+                    f"""
+                    SELECT g.*, COUNT(a.id) AS source_count,
+                           MIN(a.published_at) AS first_published_at,
+                           MAX(a.published_at) AS last_published_at
+                    FROM news_groups g JOIN articles a ON a.group_id=g.id
+                    WHERE g.id IN ({placeholders})
+                    GROUP BY g.id
+                    """,
+                    chunk,
+                ).fetchall()
+                for row in summary_rows:
+                    groups[int(row["id"])] = self._group_from_row(row, [])
+                article_rows = db.execute(
+                    f"""
+                    SELECT a.*, s.name AS source_name FROM articles a
+                    JOIN sources s ON s.id=a.source_id
+                    WHERE a.group_id IN ({placeholders})
+                    ORDER BY a.group_id, COALESCE(a.published_at,a.discovered_at), a.id
+                    """,
+                    chunk,
+                ).fetchall()
+                for row in article_rows:
+                    group_id = int(row["group_id"])
+                    if group_id in article_map:
+                        article_map[group_id].append(self._article_from_row(row))
+        for group_id, group in groups.items():
+            group.articles = article_map.get(group_id, [])
+        return [groups[group_id] for group_id in ids if group_id in groups]
+
+    def list_groups_with_articles(self, status: str | None = None, limit: int = 20000) -> list[NewsGroup]:
+        """Return the same ordered group list as list_groups(), but fully hydrated.
+
+        Global duplicate search must inspect article body text. list_groups() is
+        intentionally lightweight and returns article-less shells for fast inbox
+        rendering, so using it for semantic duplicate search silently degrades the
+        algorithm to title-only matching. This helper performs one summary query
+        plus bounded batched article hydration on the same local SQLite database.
+        """
+        groups = self.list_groups(status=status, limit=max(1, int(limit)))
+        if not groups:
+            return []
+        by_id = {group.id: group for group in groups}
+        article_map: dict[int, list[Article]] = {group.id: [] for group in groups}
+        ordered_ids = [group.id for group in groups]
+        with self.connect() as db:
+            for start in range(0, len(ordered_ids), 400):
+                chunk = ordered_ids[start:start + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = db.execute(
+                    f"""
+                    SELECT a.*, s.name AS source_name FROM articles a
+                    JOIN sources s ON s.id=a.source_id
+                    WHERE a.group_id IN ({placeholders})
+                    ORDER BY a.group_id, COALESCE(a.published_at,a.discovered_at), a.id
+                    """,
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    group_id = int(row["group_id"])
+                    if group_id in article_map:
+                        article_map[group_id].append(self._article_from_row(row))
+        for group_id, group in by_id.items():
+            group.articles = article_map.get(group_id, [])
+        return groups
+
     def get_group(self, group_id: int) -> NewsGroup:
         with self.connect() as db:
             row = db.execute(
@@ -2241,6 +2372,123 @@ class Database:
                 db.execute("ROLLBACK")
                 raise
 
+    def recover_abandoned_batches(self, max_automatic_attempts: int = 3) -> list[int]:
+        """Fail closed on packages left in_progress by a previous process.
+
+        A restarted desktop app cannot know whether the old process died before
+        or after a platform accepted a post. Pausing is therefore safer than an
+        automatic retry that could duplicate a publication. Pending packages
+        already beyond the automatic-attempt cap are paused as well.
+        """
+        limit = max(1, int(max_automatic_attempts))
+        now = _iso()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute(
+                    "SELECT id FROM publication_batches WHERE status='in_progress' OR (status='pending' AND attempts>=?)",
+                    (limit,),
+                ).fetchall()
+                ids = [int(row["id"]) for row in rows]
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    db.execute(
+                        f"UPDATE publication_batches SET status='paused',lease_owner=NULL,lease_until=NULL,updated_at=? "
+                        f"WHERE id IN ({placeholders})",
+                        [now, *ids],
+                    )
+                    db.execute(
+                        f"UPDATE publication_targets SET last_error=COALESCE(last_error, ?),updated_at=? "
+                        f"WHERE batch_id IN ({placeholders}) AND status!='sent'",
+                        [
+                            "Попередню публікацію перервано або вичерпано ліміт автоматичних спроб. Перевірте платформи перед ручним відновленням.",
+                            now,
+                            *ids,
+                        ],
+                    )
+                db.execute("COMMIT")
+                return ids
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def pause_exhausted_batches(self, max_automatic_attempts: int = 3) -> list[int]:
+        limit = max(1, int(max_automatic_attempts))
+        now = _iso()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id FROM publication_batches WHERE status='pending' AND attempts>=?",
+                (limit,),
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                db.execute(
+                    f"UPDATE publication_batches SET status='paused',lease_owner=NULL,lease_until=NULL,updated_at=? "
+                    f"WHERE id IN ({placeholders})",
+                    [now, *ids],
+                )
+        return ids
+
+    def mark_unsent_targets_failed(self, batch_id: int, error: object) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE publication_targets SET status='failed',last_error=?,updated_at=? "
+                "WHERE batch_id=? AND status!='sent'",
+                (redact_secrets(error)[:1000], _iso(), int(batch_id)),
+            )
+
+    def cancel_claimed_batch(self, batch_id: int, owner: str) -> None:
+        """Cancel a batch only while the caller still owns its publication lease."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute(
+                    "SELECT a.group_id FROM publication_batches b JOIN articles a ON a.id=b.article_id "
+                    "WHERE b.id=? AND b.status='in_progress' AND b.lease_owner=?",
+                    (int(batch_id), owner),
+                ).fetchone()
+                if not row:
+                    raise LeaseLost("Publication lease was lost before cancellation.")
+                group_id = int(row["group_id"])
+                now = _iso()
+                db.execute(
+                    "UPDATE publication_batches SET status='cancelled',lease_owner=NULL,lease_until=NULL,"
+                    "cleanup_error=NULL,updated_at=? WHERE id=? AND lease_owner=?",
+                    (now, int(batch_id), owner),
+                )
+                sent_count = int(
+                    db.execute(
+                        "SELECT COUNT(*) FROM publication_targets WHERE batch_id=? AND status='sent'",
+                        (int(batch_id),),
+                    ).fetchone()[0]
+                    or 0
+                )
+                next_status = "approved" if sent_count else "draft"
+                db.execute("UPDATE news_groups SET status=?,updated_at=? WHERE id=?", (next_status, now, group_id))
+                db.execute("UPDATE articles SET status=? WHERE group_id=?", (next_status, group_id))
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def fail_claimed_batch(
+        self,
+        batch_id: int,
+        owner: str,
+        error: object,
+        *,
+        max_automatic_attempts: int = 3,
+    ) -> None:
+        """Apply bounded retry/backoff to failures outside the target loop."""
+        self.assert_lease(batch_id, owner)
+        self.mark_unsent_targets_failed(batch_id, error)
+        self.finish_batch(
+            batch_id,
+            owner,
+            max_automatic_attempts=max_automatic_attempts,
+        )
+
     def claim_due_batch(self, owner: str | None = None, lease_seconds: int = 120) -> PublicationBatch | None:
         owner = owner or str(uuid.uuid4())
         now = _now()
@@ -2525,15 +2773,30 @@ class Database:
                 db.execute("ROLLBACK")
                 raise
 
-    def defer_cleanup(self, batch_id: int, owner: str, error: object, retry_minutes: int = 15) -> None:
+    def defer_cleanup(
+        self,
+        batch_id: int,
+        owner: str,
+        error: object,
+        retry_minutes: int = 15,
+        *,
+        max_automatic_attempts: int = 3,
+    ) -> None:
         self.assert_lease(batch_id, owner)
         with self.connect() as db:
+            row = db.execute(
+                "SELECT attempts FROM publication_batches WHERE id=? AND lease_owner=?",
+                (batch_id, owner),
+            ).fetchone()
+            attempts = int(row["attempts"] if row else 0)
+            status = "paused" if attempts >= max(1, int(max_automatic_attempts)) else "pending"
+            schedule = _iso(_now() + timedelta(minutes=retry_minutes))
             db.execute(
                 """
-                UPDATE publication_batches SET status='pending',scheduled_at=?,lease_owner=NULL,lease_until=NULL,
+                UPDATE publication_batches SET status=?,scheduled_at=?,lease_owner=NULL,lease_until=NULL,
                     cleanup_error=?,updated_at=? WHERE id=? AND lease_owner=?
                 """,
-                (_iso(_now() + timedelta(minutes=retry_minutes)), redact_secrets(error)[:1000], _iso(), batch_id, owner),
+                (status, schedule, redact_secrets(error)[:1000], _iso(), batch_id, owner),
             )
 
     def release_lost_batch(self, batch_id: int, owner: str) -> None:

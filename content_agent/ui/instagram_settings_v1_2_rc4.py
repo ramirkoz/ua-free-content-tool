@@ -125,7 +125,7 @@ class InstagramSettingsMixin:
             except Exception as exc:
                 text = f"Instagram потребує уваги: {exc}"
             try:
-                self.root.after(0, lambda: self.instagram_status_var.set(text))  # type: ignore[attr-defined]
+                self._post_ui(lambda value=text: self.instagram_status_var.set(value))  # type: ignore[attr-defined]
             except tk.TclError:
                 pass
 
