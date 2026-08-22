@@ -9,10 +9,9 @@ from content_agent.ui.main_window_enhancements import (
 )
 
 
-def test_public_version_matches_repository_metadata() -> None:
-    root = Path(__file__).resolve().parents[1]
-    expected = (root / "PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip()
-    assert read_public_version(root) == expected
+def test_public_version_reader_accepts_numeric_release_metadata(tmp_path: Path) -> None:
+    (tmp_path / "PUBLIC_VERSION.txt").write_text("1.3.1\n", encoding="utf-8")
+    assert read_public_version(tmp_path) == "1.3.1"
 
 
 def test_history_prediction_label_distinguishes_saved_states() -> None:
