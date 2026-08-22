@@ -26,7 +26,7 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
 
     nvidia_models = [slot.model for slot in router.MODEL_SLOTS if slot.provider == "nvidia"]
 
-    def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str) -> str:
+    def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str, _max_output_tokens: int = 128, **_kwargs) -> str:
         calls.append((slot.provider, slot.model))
         if slot.provider == "nvidia" and slot.model == nvidia_models[0]:
             raise router.AIModelError("first model unavailable", kind="model")
@@ -34,7 +34,7 @@ def test_provider_diagnostics_checks_each_configured_provider(monkeypatch: pytes
             raise router.AIModelError("bad key", kind="auth")
         return "UA_FREE_PROVIDER_OK"
 
-    monkeypatch.setattr(diagnostics, "_invoke_slot", invoke)
+    monkeypatch.setattr(diagnostics, "_invoke_limited", invoke)
     rows = diagnostics.test_configured_providers()
     by_provider = {row.provider: row for row in rows}
 
@@ -55,13 +55,13 @@ def test_provider_model_quota_continues_to_next_model(monkeypatch: pytest.Monkey
 
     nvidia_models = [slot.model for slot in router.MODEL_SLOTS if slot.provider == "nvidia"]
 
-    def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str) -> str:
+    def invoke(slot: router.AIModelSlot, _cfg: router.AIProviderSecrets, _prompt: str, _max_output_tokens: int = 128, **_kwargs) -> str:
         calls.append(slot.model)
         if slot.model == nvidia_models[0]:
             raise router.AIModelError("model quota", kind="quota")
         return "UA_FREE_PROVIDER_OK"
 
-    monkeypatch.setattr(diagnostics, "_invoke_slot", invoke)
+    monkeypatch.setattr(diagnostics, "_invoke_limited", invoke)
     rows = diagnostics.test_configured_providers()
     by_provider = {row.provider: row for row in rows}
 
@@ -75,7 +75,7 @@ def test_unconfigured_provider_is_not_called(monkeypatch: pytest.MonkeyPatch) ->
     calls: list[str] = []
     monkeypatch.setattr(diagnostics, "load_provider_secrets", lambda: cfg)
     monkeypatch.setattr(diagnostics, "_configured", lambda _slot, _cfg: False)
-    monkeypatch.setattr(diagnostics, "_invoke_slot", lambda slot, _cfg, _prompt: calls.append(slot.provider) or "OK")
+    monkeypatch.setattr(diagnostics, "_invoke_limited", lambda slot, _cfg, _prompt, *_args, **_kwargs: calls.append(slot.provider) or "OK")
 
     rows = diagnostics.test_configured_providers()
 
