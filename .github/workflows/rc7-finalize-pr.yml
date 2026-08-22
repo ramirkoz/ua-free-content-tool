@@ -18,71 +18,72 @@ jobs:
           ref: sync/v1.3.1-rc7-final
           fetch-depth: 0
 
-      - name: Verify current snapshot and apply exact delta
+      - name: Apply exact remaining RC7 source and verify 129 files
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from __future__ import annotations
-          import base64
-          import hashlib
-          import json
-          import lzma
-          import subprocess
+          import base64, hashlib, json, lzma, subprocess
           from pathlib import Path
 
-          transport = Path('.sync/rc7-current-to-final.delta.json.xz.b64')
-          raw = lzma.decompress(base64.b64decode(transport.read_text(encoding='ascii')))
-          if hashlib.sha256(raw).hexdigest() != '3c55b8e36fbb4db2bb4386c3a2772b3ab77db71e52b96a4186a8d973c5c0ceaf':
-              raise SystemExit('RC7 delta transport SHA-256 mismatch')
-          delta = json.loads(raw.decode('utf-8'))
-
-          expected_current = {
-              'content_agent/ai_router_v1_2_1.py': '304fdf3fffdaed0ee6cc9443246e4196f9258e0a',
-              'content_agent/ai_router_v1_2_2.py': '493a48e4eb18620d066f33a469f234e554492990',
-              'content_agent/database.py': 'e25bbfcb1ef97ea79fa6ba1cfc5d9e25fffda1ab',
-              'content_agent/rewrite_pipeline_v1_3.py': 'b2cebf708e0f35361c7144e7596bd1dfcef11672',
-              'content_agent/ui/ai_engine_v1_3.py': '32350b059b713093c165f89a20339ec294f1178f',
-              'content_agent/ui/main_window.py': 'fa15cb0e25315ab9bb5d33cadd880969b8a579f4',
-          }
-          expected_target = {
-              'content_agent/ai_router_v1_2_1.py': 'd44fa68c3916e90c780f261816e8381113449216',
-              'content_agent/ai_router_v1_2_2.py': 'e70ea6f51911eeb1e375ff69e069f6b353332b66',
-              'content_agent/database.py': '80849812f3192f33bbc6a1eaefbb2ac8fac07d0c',
-              'content_agent/rewrite_pipeline_v1_3.py': 'c2b9afa354cdb3dffc2df63683573610329ccc27',
-              'content_agent/ui/ai_engine_v1_3.py': '426901047634374bdad97efeb09ce9d09c3b59bc',
-              'content_agent/ui/main_window.py': 'bd1787e8a57815fd9e92f22b0bd8531b593f5cfc',
+          SPECS = {
+              'eol': ('.sync/rc7-eol-93.json.xz.b64', '8e8db9e71a5c6bc01bf83950911bc5d55c6e9412c043e7127474163594c905c9'),
+              'real': ('.sync/rc7-real-9.json.xz.b64', '9c0e490de53a986878e66c88b895e2015b775ac1f42734854f684dfb81a115d3'),
+              'manifest': ('.sync/rc7-target-129.json.xz.b64', 'e2886703d9d75e51dcaec85acb89eed4f20295c2ab5dada70bc1b27398adbd17'),
           }
 
-          def git_sha(path: str) -> str:
+          def load(name):
+              path, expected_raw_sha = SPECS[name]
+              raw = lzma.decompress(base64.b64decode(Path(path).read_text(encoding='ascii')))
+              actual = hashlib.sha256(raw).hexdigest()
+              if actual != expected_raw_sha:
+                  raise SystemExit(f'{name} transport SHA mismatch: {actual}')
+              return json.loads(raw.decode('utf-8'))
+
+          def git_sha(path):
               return subprocess.check_output(['git', 'hash-object', path], text=True).strip()
 
-          current_failures = []
-          for path, expected in expected_current.items():
-              actual = git_sha(path)
+          eol = load('eol')
+          real = load('real')
+          manifest = load('manifest')
+
+          if len(eol.get('paths', [])) != 93 or len(real.get('ops', {})) != 9 or len(manifest.get('target', {})) != 129:
+              raise SystemExit('RC7 transport cardinality mismatch')
+
+          current = dict(eol['current'])
+          current.update(real['current'])
+          if len(current) != 102:
+              raise SystemExit('RC7 current manifest must contain 102 unique files')
+          failures=[]
+          for path, expected in current.items():
+              actual=git_sha(path)
               if actual != expected:
-                  current_failures.append(f'{path}: expected current {expected}, got {actual}')
-          if current_failures:
-              raise SystemExit('Current sync snapshot changed; refusing delta:\n' + '\n'.join(current_failures))
+                  failures.append(f'{path}: expected current {expected}, got {actual}')
+          if failures:
+              raise SystemExit('Current sync snapshot mismatch:\n'+'\n'.join(failures))
 
-          if set(delta) != set(expected_target):
-              raise SystemExit('RC7 delta file set mismatch')
+          for path in eol['paths']:
+              p=Path(path)
+              data=p.read_bytes().replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+              p.write_bytes(data.replace(b'\n', b'\r\n'))
 
-          for path, changes in delta.items():
-              file_path = Path(path)
-              lines = file_path.read_text(encoding='utf-8').splitlines(keepends=True)
+          for path, changes in real['ops'].items():
+              p=Path(path)
+              lines=p.read_text(encoding='utf-8').splitlines(keepends=True)
               for i1, i2, replacement in reversed(changes):
                   lines[int(i1):int(i2)] = str(replacement).splitlines(keepends=True)
-              file_path.write_text(''.join(lines), encoding='utf-8', newline='')
+              p.write_text(''.join(lines), encoding='utf-8', newline='')
 
-          target_failures = []
-          for path, expected in expected_target.items():
-              actual = git_sha(path)
+          targets=manifest['target']
+          failures=[]
+          for path, expected in targets.items():
+              actual=git_sha(path)
               if actual != expected:
-                  target_failures.append(f'{path}: expected target {expected}, got {actual}')
-          if target_failures:
-              raise SystemExit('Exact RC7 verification failed:\n' + '\n'.join(target_failures))
-          print('Exact RC7 SHA verification PASS: 6/6 files')
+                  failures.append(f'{path}: expected target {expected}, got {actual}')
+          if failures:
+              raise SystemExit('Exact RC7 verification failed:\n'+'\n'.join(failures))
+          print('EXACT RC7 SOURCE PASS: 129/129 files')
           PY
           python -m compileall -q content_agent
 
@@ -93,7 +94,7 @@ jobs:
           find content_agent -type d -name __pycache__ -prune -exec rm -rf {} + || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- content_agent/ai_router_v1_2_1.py content_agent/ai_router_v1_2_2.py content_agent/database.py content_agent/rewrite_pipeline_v1_3.py content_agent/ui/ai_engine_v1_3.py content_agent/ui/main_window.py
           git rm -r -- .sync
-          git commit -m 'Synchronize exact v1.3.1-rc7 source'
+          git add -A
+          git commit -m 'Synchronize exact v1.3.1-rc7 source 129/129'
           git push origin HEAD:sync/v1.3.1-rc7-final
