@@ -31,13 +31,15 @@ def _many_source_group(count: int) -> NewsGroup:
     )
 
 
-def test_evidence_budget_preserves_every_source_header() -> None:
+def test_evidence_budget_preserves_every_source_fact_after_condensation() -> None:
     group = _many_source_group(24)
     pack = build_evidence_pack(group, max_chars=4300)
     assert len(pack.text) <= 4300
     assert pack.source_count == 24
+    assert "УНІКАЛЬНІ ФАКТИ ЗІ ЗВЕДЕНОЇ ГРУПИ" in pack.text
     for index in range(1, 25):
-        assert f"ДЖЕРЕЛО {index}/24" in pack.text
+        assert f"Source{index}" in pack.text
+        assert f"{index * 10} одиниць" in pack.text
 
 
 def test_source_timestamp_does_not_authorize_event_year() -> None:
