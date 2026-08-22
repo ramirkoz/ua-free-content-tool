@@ -148,7 +148,9 @@ def test_bounded_quota_cools_only_model_not_whole_provider(monkeypatch: pytest.M
 
     monkeypatch.setattr(bounded, "_invoke_limited", invoke)
     result = bounded.run_ai("small task", max_output_tokens=900)
-    assert result.provider == "nvidia"
+    assert result.provider == "groq"
+    assert calls[0] == next(slot.label for slot in legacy.MODEL_SLOTS if slot.provider == "nvidia")
+    assert any("Groq" in item for item in calls[1:])
     assert "provider:nvidia" not in state.cooldowns
     assert any(key.startswith("model:nvidia:") for key in state.cooldowns)
 

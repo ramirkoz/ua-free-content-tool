@@ -118,7 +118,8 @@ def test_fix28_additive_migration_preserves_sources_settings_projection_and_queu
 
 
 def test_fix28_one_editorial_text_limit_and_telegram_caption_budget() -> None:
-    core = "Ф" * EDITORIAL_TEXT_LIMIT
+    seed = "Підтверджений факт без службового тексту. "
+    core = (seed * ((EDITORIAL_TEXT_LIMIT // len(seed)) + 2))[:EDITORIAL_TEXT_LIMIT]
     validate_editorial_text(core)
     final = compose_publication_text(core, "telegram", include_source_link=False, source_url="")
     assert len(final) <= TELEGRAM_MEDIA_CAPTION_LIMIT
@@ -227,7 +228,7 @@ def test_fix28_manual_merge_feedback_boosts_topic_search() -> None:
 
 def test_fix28_ui_contract_has_one_text_and_topic_search() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
+    assert 'root.title("UA FREE Content Tool — v1.3.1-rc7")' in source
     assert 'text="Текст публікації: один для всіх мереж"' in source
     assert 'text="Пошук схожих за темою матеріалів"' in source
     assert "def find_all_by_topic(self) -> None:" in source

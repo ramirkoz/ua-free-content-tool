@@ -160,7 +160,7 @@ def test_fix23_facebook_and_threads_long_lived_exchange_contract(monkeypatch: py
 
 def test_fix23_ui_contract_is_non_modal_for_automatic_diagnostics_and_exposes_queue_recovery() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.1.2")' in source
+    assert 'root.title("UA FREE Content Tool — v1.3.1-rc7")' in source
     assert 'text="Перепланувати пропущені / призупинені"' in source
     assert "def reschedule_interrupted_batches" in source
     assert "def _publication_result_from_worker" in source
