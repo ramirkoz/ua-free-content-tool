@@ -25,11 +25,12 @@ jobs:
           base64 -d .sync/rc7.patch.xz.b64 | xz -d > /tmp/rc7.patch
           echo 'b1ab964f248620151add2e27ccf2ff70dcf4283570f028336756c24a61517704  /tmp/rc7.patch' | sha256sum -c -
 
-      - name: Apply RC7 delta with three-way merge
+      - name: Apply only still-missing RC7 hunks
         shell: bash
         run: |
           set -euo pipefail
-          git apply --3way --whitespace=nowarn -p2 /tmp/rc7.patch
+          patch --batch --forward --no-backup-if-mismatch --fuzz=3 -p2 < /tmp/rc7.patch || true
+          find . -type f \( -name '*.rej' -o -name '*.orig' \) -delete
 
       - name: Verify every transported file is exact RC7
         shell: bash
@@ -68,6 +69,6 @@ jobs:
           rmdir .sync 2>/dev/null || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add README.md RELEASE_NOTES_v1.3.1-rc7.md content_agent
           git commit -m 'Synchronize exact v1.3.1-rc7 source'
           git push origin HEAD:sync/v1.3.1-rc7-final
