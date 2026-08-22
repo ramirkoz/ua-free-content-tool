@@ -18,45 +18,71 @@ jobs:
           ref: sync/v1.3.1-rc7-final
           fetch-depth: 0
 
-      - name: Decode exact compact transport
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 -d .sync/rc7.patch.xz.b64 | xz -d > /tmp/rc7.patch
-          echo 'b1ab964f248620151add2e27ccf2ff70dcf4283570f028336756c24a61517704  /tmp/rc7.patch' | sha256sum -c -
-
-      - name: Apply only still-missing RC7 hunks
-        shell: bash
-        run: |
-          set -euo pipefail
-          patch --batch --forward --no-backup-if-mismatch --fuzz=3 -p2 < /tmp/rc7.patch || true
-          find . -type f \( -name '*.rej' -o -name '*.orig' \) -delete
-
-      - name: Verify every transported file is exact RC7
+      - name: Verify current snapshot and apply exact delta
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
+          from __future__ import annotations
+          import base64
+          import hashlib
+          import json
+          import lzma
+          import subprocess
           from pathlib import Path
-          import re, subprocess
-          patch = Path('/tmp/rc7.patch').read_text(encoding='utf-8')
-          failures = []
-          checked = 0
-          for raw in patch.split('diff --git ')[1:]:
-              section = 'diff --git ' + raw
-              first = raw.splitlines()[0]
-              path = first.split()[1].removeprefix('tmp/cc7src/')
-              m = re.search(r'^index [0-9a-f]+\.\.([0-9a-f]+)', section, re.M)
-              if not m:
-                  raise SystemExit(f'Missing target hash for {path}')
-              expected = m.group(1)
-              current = subprocess.check_output(['git', 'hash-object', path], text=True).strip()
-              checked += 1
-              if not current.startswith(expected):
-                  failures.append(f'{path}: expected {expected}, got {current}')
-          if failures:
-              raise SystemExit('Exact RC7 verification failed:\n' + '\n'.join(failures))
-          print(f'Exact RC7 transport verification PASS: {checked} files')
+
+          transport = Path('.sync/rc7-current-to-final.delta.json.xz.b64')
+          raw = lzma.decompress(base64.b64decode(transport.read_text(encoding='ascii')))
+          if hashlib.sha256(raw).hexdigest() != '3c55b8e36fbb4db2bb4386c3a2772b3ab77db71e52b96a4186a8d973c5c0ceaf':
+              raise SystemExit('RC7 delta transport SHA-256 mismatch')
+          delta = json.loads(raw.decode('utf-8'))
+
+          expected_current = {
+              'content_agent/ai_router_v1_2_1.py': '304fdf3fffdaed0ee6cc9443246e4196f9258e0a',
+              'content_agent/ai_router_v1_2_2.py': '493a48e4eb18620d066f33a469f234e554492990',
+              'content_agent/database.py': 'e25bbfcb1ef97ea79fa6ba1cfc5d9e25fffda1ab',
+              'content_agent/rewrite_pipeline_v1_3.py': 'b2cebf708e0f35361c7144e7596bd1dfcef11672',
+              'content_agent/ui/ai_engine_v1_3.py': '32350b059b713093c165f89a20339ec294f1178f',
+              'content_agent/ui/main_window.py': 'fa15cb0e25315ab9bb5d33cadd880969b8a579f4',
+          }
+          expected_target = {
+              'content_agent/ai_router_v1_2_1.py': 'd44fa68c3916e90c780f261816e8381113449216',
+              'content_agent/ai_router_v1_2_2.py': 'e70ea6f51911eeb1e375ff69e069f6b353332b66',
+              'content_agent/database.py': '80849812f3192f33bbc6a1eaefbb2ac8fac07d0c',
+              'content_agent/rewrite_pipeline_v1_3.py': 'c2b9afa354cdb3dffc2df63683573610329ccc27',
+              'content_agent/ui/ai_engine_v1_3.py': '426901047634374bdad97efeb09ce9d09c3b59bc',
+              'content_agent/ui/main_window.py': 'bd1787e8a57815fd9e92f22b0bd8531b593f5cfc',
+          }
+
+          def git_sha(path: str) -> str:
+              return subprocess.check_output(['git', 'hash-object', path], text=True).strip()
+
+          current_failures = []
+          for path, expected in expected_current.items():
+              actual = git_sha(path)
+              if actual != expected:
+                  current_failures.append(f'{path}: expected current {expected}, got {actual}')
+          if current_failures:
+              raise SystemExit('Current sync snapshot changed; refusing delta:\n' + '\n'.join(current_failures))
+
+          if set(delta) != set(expected_target):
+              raise SystemExit('RC7 delta file set mismatch')
+
+          for path, changes in delta.items():
+              file_path = Path(path)
+              lines = file_path.read_text(encoding='utf-8').splitlines(keepends=True)
+              for i1, i2, replacement in reversed(changes):
+                  lines[int(i1):int(i2)] = str(replacement).splitlines(keepends=True)
+              file_path.write_text(''.join(lines), encoding='utf-8', newline='')
+
+          target_failures = []
+          for path, expected in expected_target.items():
+              actual = git_sha(path)
+              if actual != expected:
+                  target_failures.append(f'{path}: expected target {expected}, got {actual}')
+          if target_failures:
+              raise SystemExit('Exact RC7 verification failed:\n' + '\n'.join(target_failures))
+          print('Exact RC7 SHA verification PASS: 6/6 files')
           PY
           python -m compileall -q content_agent
 
@@ -65,10 +91,9 @@ jobs:
         run: |
           set -euo pipefail
           find content_agent -type d -name __pycache__ -prune -exec rm -rf {} + || true
-          rm -f .sync/rc7.patch.xz.b64
-          rmdir .sync 2>/dev/null || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add README.md RELEASE_NOTES_v1.3.1-rc7.md content_agent
+          git add -- content_agent/ai_router_v1_2_1.py content_agent/ai_router_v1_2_2.py content_agent/database.py content_agent/rewrite_pipeline_v1_3.py content_agent/ui/ai_engine_v1_3.py content_agent/ui/main_window.py
+          git rm -r -- .sync
           git commit -m 'Synchronize exact v1.3.1-rc7 source'
           git push origin HEAD:sync/v1.3.1-rc7-final
