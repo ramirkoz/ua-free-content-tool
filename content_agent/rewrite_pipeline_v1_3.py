@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -12,7 +14,7 @@ from .evidence_pack import EvidencePack, build_evidence_pack
 from .fact_guard import FactGuardResult, guard_rewrite
 from .i18n import normalize_language
 from .models import NewsGroup, RewriteResult
-from .publication_text import validate_editorial_text
+from .publication_text import EDITORIAL_TEXT_LIMIT, validate_editorial_headline, validate_editorial_text
 from .rewriter import platform_texts_from_base
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -21,6 +23,7 @@ _FORBIDDEN_LINE = re.compile(
 )
 _LAST_ENGINE_LABEL = ""
 _LAST_DIAGNOSTIC = ""
+logger = logging.getLogger("content_agent.rewrite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +33,7 @@ class RewriteCandidate:
     model_fact_card: str
     route: AIResult
     guard: FactGuardResult
+    compacted: bool = False
 
 
 def last_rewrite_engine_label() -> str:
@@ -45,9 +49,10 @@ def _set_last(candidate: RewriteCandidate, evidence: EvidencePack, *, second_pas
     _LAST_ENGINE_LABEL = candidate.route.label
     pass_label = "2 проходи" if second_pass else "1 прохід"
     trunc = " · pack скорочено" if evidence.truncated else ""
+    compact = " · текст автостиснуто" if candidate.compacted else ""
     _LAST_DIAGNOSTIC = (
         f"Fact Guard PASS · quality {candidate.guard.score}/100 · {pass_label} · "
-        f"evidence {evidence.selected_sentences}/{evidence.total_sentences} речень{trunc}"
+        f"evidence {evidence.selected_sentences}/{evidence.total_sentences} речень{trunc}{compact}"
     )
 
 
@@ -119,6 +124,7 @@ def _parse_structural(raw: str) -> dict[str, object]:
         raise AIRouterError("AI не повернув заголовок або текст рерайту.")
     if _FORBIDDEN_LINE.search(rewrite) or rewrite.startswith(("{", "[")):
         raise AIRouterError("AI змішав службові секції з публічним текстом.")
+    validate_editorial_headline(headline)
     validate_editorial_text(rewrite)
     return payload
 
@@ -169,8 +175,8 @@ HARD RULES:
 1. CURRENT SOURCE EVIDENCE PACK is the only factual authority.
 2. Preserve uncertainty and attribution at the same strength. A plan is not a launch; an estimate is not an established fact.
 3. Do not add a year, date, number, percentage, company, person, product/model, record, world-first, largest/fastest/most-powerful claim unless supported by the evidence pack.
-4. Use facts from every represented source when they add unique information. Do not invent a compromise when sources conflict.
-5. One shared public text for all platforms, 1–4 short paragraphs, maximum 900 characters including spaces. Very short source material must stay short.
+4. Use the unique facts present in the evidence pack. Repeated reports may already be condensed. Do not invent a compromise when sources conflict.
+5. One shared public text for all platforms, 1–4 short paragraphs, HARD MAXIMUM 900 characters including spaces. Very short source material must stay short. Never mention source counts, prompt limits or other service metadata.
 6. No URLs, hashtags, fundraising block, analysis, model explanations or unsupported speculation.
 7. STYLE MEMORY is style only and can never supply facts.
 
@@ -196,8 +202,8 @@ CURRENT SOURCE EVIDENCE PACK:
 1. ПОТОЧНИЙ EVIDENCE PACK є єдиним джерелом фактів.
 2. Зберігай силу невизначеності й атрибуцію. План не є запуском; оцінка не є встановленим фактом; твердження компанії має лишатися атрибутованим.
 3. Не додавай рік, дату, число, відсоток, компанію, особу, продукт/модель, рекорд, «перший у світі», «найбільший», «найшвидший» або «найпотужніший», якщо цього немає в Evidence Pack.
-4. Використовуй унікальні факти з усіх представлених джерел. Якщо джерела суперечать одне одному, не вигадуй компроміс.
-5. Один спільний публічний текст для всіх платформ: 1–4 короткі абзаци, максимум 900 символів разом із пробілами. Дуже коротку новину не роздувай.
+4. Використовуй унікальні факти, які є в Evidence Pack. Повторні повідомлення вже можуть бути зведені. Якщо факти суперечать одне одному, не вигадуй компроміс.
+5. Один спільний публічний текст для всіх платформ: 1–4 короткі абзаци, ЖОРСТКО НЕ БІЛЬШЕ 900 символів разом із пробілами. Дуже коротку новину не роздувай. Не згадуй кількість джерел, ліміти промпта чи інші службові метадані.
 6. Без URL, хештегів, донатного блока, аналітики, пояснень моделі та домислів.
 7. РЕДАКЦІЙНА ПАМ'ЯТЬ є лише стилем і ніколи не може постачати факти.
 8. Весь публічний текст українською; назви брендів/моделей можна лишати в оригіналі.
@@ -214,7 +220,7 @@ CURRENT SOURCE EVIDENCE PACK:
 def _local_prompt(evidence: EvidencePack, *, language: str) -> str:
     if language == "en":
         return f"""
-Write a precise English news rewrite using ONLY the CURRENT EVIDENCE below. Do not add facts, dates, numbers, companies, products, records or conclusions. Keep hedges/attribution. Maximum 900 characters.
+Write a precise English news rewrite using ONLY the CURRENT EVIDENCE below. Do not add facts, dates, numbers, companies, products, records or conclusions. Keep hedges/attribution. HARD MAXIMUM 900 characters including spaces. Never mention source counts, prompt limits or service metadata.
 Return exactly:
 HEADLINE: short neutral headline
 TEXT: public text
@@ -223,7 +229,7 @@ CURRENT EVIDENCE:
 {evidence.text}
 """.strip()
     return f"""
-Зроби точний новинний рерайт українською, використовуючи ТІЛЬКИ ПОТОЧНІ ДОКАЗИ нижче. Не додавай фактів, дат, чисел, компаній, моделей, рекордів чи висновків. Зберігай невизначеність і атрибуцію. Максимум 900 символів.
+Зроби точний новинний рерайт українською, використовуючи ТІЛЬКИ ПОТОЧНІ ДОКАЗИ нижче. Не додавай фактів, дат, чисел, компаній, моделей, рекордів чи висновків. Зберігай невизначеність і атрибуцію. ЖОРСТКО НЕ БІЛЬШЕ 900 символів разом із пробілами. Не згадуй кількість джерел, ліміти промпта чи службові метадані.
 Поверни рівно:
 ЗАГОЛОВОК: короткий нейтральний заголовок
 ТЕКСТ: готовий публічний текст
@@ -239,9 +245,12 @@ def _router_call(
     *,
     skip_providers: set[str] | frozenset[str] = frozenset(),
     skip_models: set[str] | frozenset[str] = frozenset(),
+    task_timeout_seconds: int | None = None,
+    cancel_event: object | None = None,
 ) -> AIResult:
-    """Transport-only Router call. Candidate QA happens after this function returns."""
+    """One bounded transport call. Post-AI QA is applied by the caller."""
     profile = REWRITE_PROFILE
+    task_timeout = max(3, min(profile.task_timeout_seconds, int(task_timeout_seconds or profile.task_timeout_seconds)))
     try:
         return run_ai(
             prompt,
@@ -249,18 +258,18 @@ def _router_call(
             max_output_tokens=profile.cloud_output_tokens,
             local_prompt=local_prompt,
             local_max_output_tokens=profile.local_output_tokens,
-            local_timeout_seconds=profile.local_timeout_seconds,
-            cloud_timeout_seconds=profile.cloud_timeout_seconds,
-            task_timeout_seconds=profile.task_timeout_seconds,
+            local_timeout_seconds=min(profile.local_timeout_seconds, task_timeout),
+            cloud_timeout_seconds=min(profile.cloud_timeout_seconds, task_timeout),
+            task_timeout_seconds=task_timeout,
             skip_providers=skip_providers,
             skip_models=skip_models,
             local_repair=False,
+            cancel_event=cancel_event,
         )
     except TypeError as exc:
         if "unexpected keyword argument" not in str(exc):
             raise
         return run_ai(prompt, validator=None, max_output_tokens=profile.cloud_output_tokens)
-
 
 
 def _candidate_after_router(
@@ -270,34 +279,37 @@ def _candidate_after_router(
     *,
     language: str,
     skip_providers: set[str] | None = None,
-    max_candidates: int = 8,
+    max_candidates: int = 4,
+    deadline: float | None = None,
+    cancel_event: object | None = None,
 ) -> RewriteCandidate:
-    """Get a provider response first, then apply structural/editorial/Fact Guard QA.
-
-    A candidate rejected by post-AI QA never changes provider health or cooldown.
-    We skip only the rejected model where possible, preserving other models from
-    the same provider for the same news item.
-    """
+    """Return a fact-safe candidate within one shared rewrite deadline."""
     provider_skip = set(skip_providers or set())
     model_skip: set[str] = set()
     failures: list[str] = []
     local_repair_done = False
+    provider_format_repair_done: set[str] = set()
 
     for _ in range(max(1, int(max_candidates))):
+        if cancel_event is not None and bool(getattr(cancel_event, "is_set", lambda: False)()):
+            raise AIRouterError("AI-рерайт скасовано.")
+        remaining = None if deadline is None else int(deadline - time.monotonic())
+        if remaining is not None and remaining < 4:
+            break
         try:
             route = _router_call(
                 prompt,
                 local_prompt,
                 skip_providers=provider_skip,
                 skip_models=model_skip,
+                task_timeout_seconds=min(REWRITE_PROFILE.task_timeout_seconds, remaining) if remaining is not None else None,
+                cancel_event=cancel_event,
             )
         except AIRouterError as exc:
-            detail = " | ".join(failures[-5:])
+            detail = " | ".join(failures[-4:])
             if detail:
                 raise AIRouterError(
-                    "AI-провайдери відповіли, але post-AI QA відхилив кандидати. "
-                    + detail
-                    + f" | Router: {exc}"
+                    "AI-провайдери відповіли, але post-AI QA відхилив кандидати. " + detail + f" | Router: {exc}"
                 ) from exc
             raise
 
@@ -305,36 +317,74 @@ def _candidate_after_router(
             candidate = _candidate(route, evidence, language=language)
             if candidate.guard.allowed:
                 return candidate
-            failures.append(
-                f"{route.label}: Fact Guard: " + "; ".join(candidate.guard.issues[:4])
-            )
+            failures.append(f"{route.label}: Fact Guard: " + "; ".join(candidate.guard.issues[:4]))
         except Exception as exc:
             failures.append(f"{route.label}: {exc}")
-
-            if route.provider == "local" and not local_repair_done:
-                local_repair_done = True
+            # A healthy trusted model that merely missed the requested envelope
+            # gets one short same-provider format repair before we burn another
+            # provider. This is especially useful for Gemini/Codex responses that
+            # contain the right news text but omit/rename the JSON fields.
+            remaining = None if deadline is None else int(deadline - time.monotonic())
+            if (
+                route.provider in {"codex", "gemini"}
+                and route.provider not in provider_format_repair_done
+                and (remaining is None or remaining >= 9)
+            ):
+                provider_format_repair_done.add(route.provider)
                 repair_prompt = (
-                    local_prompt
-                    + "\n\nPOST-AI FORMAT REPAIR. Попередня відповідь була отримана, але не пройшла post-AI QA: "
-                    + str(exc)[:500]
-                    + "\nНе додавай нових фактів. Виправ лише формат, мову, завершеність і довжину. "
-                    + "Поверни рівно ЗАГОЛОВОК і ТЕКСТ у форматі, який вимагався вище.\n\nПОПЕРЕДНЯ ВІДПОВІДЬ:\n"
-                    + str(route.text)[:2600]
+                    prompt
+                    + "\n\nFORMAT REPAIR ONLY. The previous response failed parsing/QA because: "
+                    + str(exc)[:420]
+                    + "\nDo not add or change facts. Re-read CURRENT SOURCE EVIDENCE and return exactly the requested output envelope."
+                    + "\nPREVIOUS RESPONSE:\n" + str(route.text)[:2600]
                 )
+                all_providers = {"codex", "gemini", "nvidia", "groq", "cloudflare", "local"}
                 try:
                     repaired_route = _router_call(
                         repair_prompt,
                         repair_prompt,
-                        skip_providers={"codex", "gemini", "nvidia", "sambanova", "cerebras", "groq", "openrouter", "cloudflare"},
+                        skip_providers=all_providers - {route.provider},
+                        task_timeout_seconds=min(14, remaining) if remaining is not None else 14,
+                        cancel_event=cancel_event,
                     )
                     repaired = _candidate(repaired_route, evidence, language=language)
                     if repaired.guard.allowed:
+                        logger.info(
+                            "Rewrite same-provider format repair success provider=%s model=%s",
+                            repaired_route.provider, repaired_route.model,
+                        )
                         return repaired
                     failures.append(
-                        "local repair Fact Guard: " + "; ".join(repaired.guard.issues[:4])
+                        f"{repaired_route.label} format repair Fact Guard: "
+                        + "; ".join(repaired.guard.issues[:4])
                     )
                 except Exception as repair_exc:
-                    failures.append(f"local repair: {repair_exc}")
+                    failures.append(f"{route.label} format repair: {repair_exc}")
+
+            if route.provider == "local" and not local_repair_done:
+                local_repair_done = True
+                remaining = None if deadline is None else int(deadline - time.monotonic())
+                if remaining is None or remaining >= 8:
+                    repair_prompt = (
+                        local_prompt
+                        + "\n\nPOST-AI FORMAT REPAIR. Попередня відповідь не пройшла post-AI QA: "
+                        + str(exc)[:400]
+                        + "\nНе додавай нових фактів. Виправ лише формат, мову, завершеність і довжину."
+                        + "\nПОПЕРЕДНЯ ВІДПОВІДЬ:\n" + str(route.text)[:2200]
+                    )
+                    try:
+                        repaired_route = _router_call(
+                            repair_prompt, repair_prompt,
+                            skip_providers={"codex", "gemini", "nvidia", "groq", "cloudflare"},
+                            task_timeout_seconds=min(25, remaining) if remaining is not None else 25,
+                            cancel_event=cancel_event,
+                        )
+                        repaired = _candidate(repaired_route, evidence, language=language)
+                        if repaired.guard.allowed:
+                            return repaired
+                        failures.append("local repair Fact Guard: " + "; ".join(repaired.guard.issues[:4]))
+                    except Exception as repair_exc:
+                        failures.append(f"local repair: {repair_exc}")
 
         if route.provider == "local":
             provider_skip.add("local")
@@ -343,15 +393,91 @@ def _candidate_after_router(
         elif route.provider:
             provider_skip.add(str(route.provider).casefold())
 
+    if deadline is not None and time.monotonic() >= deadline:
+        failures.append("спільний ліміт часу рерайту вичерпано")
     raise AIRouterError(
-        "AI-провайдери відповіли, але post-AI QA відхилив усі кандидати. "
-        + " | ".join(failures[-6:])
+        "AI-провайдери відповіли, але post-AI QA не знайшов придатного кандидата. " + " | ".join(failures[-5:])
     )
 
-def _candidate(route: AIResult, evidence: EvidencePack, *, language: str) -> RewriteCandidate:
-    payload = _parse_structural(route.text)
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
+_FACT_DENSITY_NUMBER = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?:\s?%|\s?(?:млн|млрд|тис\.?|km|км|m|м|kg|кг|gb|гб|mw|мвт|gw|гвт|usd|eur|грн|₴|\$|€))?", re.IGNORECASE)
+_FACT_DENSITY_ENTITY = re.compile(r"\b(?:[A-ZА-ЯІЇЄҐ][A-Za-zА-Яа-яІіЇїЄєҐ0-9._+\-/’'\-]{2,})\b")
+
+
+def _compact_rewrite_to_limit(text: str, limit: int = EDITORIAL_TEXT_LIMIT) -> str:
+    """Deterministically keep complete, fact-dense sentences under the editor cap.
+
+    This is a last-mile safety net, not a factual summarizer: it only removes
+    sentences from the model's own candidate and never creates a new claim.
+    """
+    value = " ".join(str(text or "").split()).strip()
+    if len(value) <= limit:
+        return value
+    raw_sentences = [part.strip() for part in _SENTENCE_SPLIT.split(value) if part.strip()]
+    sentences: list[str] = []
+    seen_sentences: set[str] = set()
+    for sentence in raw_sentences:
+        key = re.sub(r"[^0-9a-zа-яіїєґ]+", " ", sentence.casefold()).strip()
+        if key and key in seen_sentences:
+            continue
+        if key:
+            seen_sentences.add(key)
+        sentences.append(sentence)
+    if len(sentences) <= 1:
+        cut = value.rfind(" ", 0, max(40, limit - 1))
+        if cut < max(40, limit // 2):
+            cut = max(40, limit - 1)
+        return value[:cut].rstrip(" ,;:-") + "…"
+
+    scored: list[tuple[float, int, str]] = []
+    for index, sentence in enumerate(sentences):
+        score = 0.0
+        if index == 0:
+            score += 50.0
+        score += 12.0 * len(_FACT_DENSITY_NUMBER.findall(sentence))
+        score += min(24.0, 4.0 * len(_FACT_DENSITY_ENTITY.findall(sentence)))
+        if re.search(r"(?iu)\b(?:заяв|повідом|за даними|за словами|може|планує|очіку|according|said|may|plans?|expected)\b", sentence):
+            score += 8.0
+        # Prefer informative sentences, but not sprawling ones.
+        score += min(12.0, len(sentence) / 45.0)
+        scored.append((score, index, sentence))
+
+    chosen: set[int] = {0}
+    used = len(sentences[0])
+    for _score, index, sentence in sorted(scored[1:], key=lambda row: (-row[0], row[1])):
+        addition = len(sentence) + 1
+        if used + addition <= limit:
+            chosen.add(index)
+            used += addition
+
+    compact = " ".join(sentence for index, sentence in enumerate(sentences) if index in chosen).strip()
+    if len(compact) > limit:
+        cut = compact.rfind(" ", 0, limit - 1)
+        compact = compact[: max(40, cut)].rstrip(" ,;:-") + "…"
+    return compact
+
+
+def _payload_without_length_rejection(raw: str) -> dict[str, object]:
+    payload = _decode_payload(raw)
     headline = str(payload.get("headline") or "").strip()
     rewrite = str(payload.get("rewrite") or "").strip()
+    if not headline or not rewrite:
+        raise AIRouterError("AI не повернув заголовок або текст рерайту.")
+    if _FORBIDDEN_LINE.search(rewrite) or rewrite.startswith(("{", "[")):
+        raise AIRouterError("AI змішав службові секції з публічним текстом.")
+    validate_editorial_headline(headline)
+    return payload
+
+
+def _candidate(route: AIResult, evidence: EvidencePack, *, language: str) -> RewriteCandidate:
+    payload = _payload_without_length_rejection(route.text)
+    headline = str(payload.get("headline") or "").strip()
+    rewrite = str(payload.get("rewrite") or "").strip()
+    compacted = len(rewrite) > EDITORIAL_TEXT_LIMIT
+    if compacted:
+        rewrite = _compact_rewrite_to_limit(rewrite, EDITORIAL_TEXT_LIMIT)
+    validate_editorial_text(rewrite)
     guard = guard_rewrite(evidence.text, headline, rewrite, language=language)
     return RewriteCandidate(
         headline=headline,
@@ -359,6 +485,7 @@ def _candidate(route: AIResult, evidence: EvidencePack, *, language: str) -> Rew
         model_fact_card=str(payload.get("fact_card") or "").strip(),
         route=route,
         guard=guard,
+        compacted=compacted,
     )
 
 
@@ -390,10 +517,13 @@ def rewrite_group_v13(
     *,
     graph_memory: str = "",
     language: str = "uk",
+    cancel_event: object | None = None,
 ) -> RewriteResult:
     """Evidence-first adaptive production rewrite for Content Tool 1.3."""
 
     language = normalize_language(language)
+    deadline = time.monotonic() + 95.0
+    logger.info("Rewrite start group=%d sources=%d", group.id, len(group.articles))
     cloud_evidence = build_evidence_pack(group, max_chars=REWRITE_PROFILE.cloud_evidence_chars)
     local_evidence = build_evidence_pack(group, max_chars=REWRITE_PROFILE.local_evidence_chars)
     if not cloud_evidence.text:
@@ -406,6 +536,9 @@ def rewrite_group_v13(
         local_prompt,
         cloud_evidence,
         language=language,
+        max_candidates=4,
+        deadline=deadline,
+        cancel_event=cancel_event,
     )
 
     candidates: list[RewriteCandidate] = [first]
@@ -413,7 +546,7 @@ def rewrite_group_v13(
     second_needed = first.guard.score < REWRITE_PROFILE.second_pass_threshold
     second_attempted = False
     second_error = ""
-    if second_needed:
+    if second_needed and (deadline - time.monotonic()) >= 18:
         feedback = "; ".join(first.guard.issues[:4]) if first.guard.issues else f"quality score {first.guard.score}/100"
         reinforced = (
             prompt
@@ -428,7 +561,9 @@ def rewrite_group_v13(
                 cloud_evidence,
                 language=language,
                 skip_providers={first.route.provider},
-                max_candidates=6,
+                max_candidates=2,
+                deadline=deadline,
+                cancel_event=cancel_event,
             )
             second_attempted = True
             candidates.append(second)
@@ -443,6 +578,11 @@ def rewrite_group_v13(
 
     chosen = max(candidates, key=lambda item: item.guard.score)
     _set_last(chosen, cloud_evidence, second_pass=second_attempted)
+    logger.info(
+        "Rewrite success group=%d provider=%s model=%s score=%d chars=%d compacted=%s evidence=%d/%d",
+        group.id, chosen.route.provider, chosen.route.model, chosen.guard.score, len(chosen.rewrite),
+        chosen.compacted, cloud_evidence.selected_sentences, cloud_evidence.total_sentences,
+    )
     return RewriteResult(
         headline=chosen.headline,
         fact_card=_fact_card(chosen, cloud_evidence, language=language),
@@ -454,5 +594,5 @@ def rewrite_group_v13(
         ),
         source_count_used=len(group.articles),
         source_count_total=len(group.articles),
-        auto_compacted=False,
+        auto_compacted=bool(chosen.compacted or len(group.articles) > 12),
     )
