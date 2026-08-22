@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .config import AppConfig, ConfigError, load_config
-from .database_v1_3_1_rc1 import DatabaseV131RC1
+from .database import Database
 from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import portable_mode
@@ -38,7 +38,7 @@ def main() -> int:
                 if portable_mode():
                     raise
                 config = AppConfig()
-            database = DatabaseV131RC1()
+            database = Database()
             database.quick_check()
             root = tk.Tk()
             MainWindow(root, database, config)

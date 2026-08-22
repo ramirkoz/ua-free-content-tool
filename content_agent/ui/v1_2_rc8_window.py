@@ -39,7 +39,7 @@ class MainWindow(RC7Window):
         self._install_target_preset_controls()
         self._target_preset_syncing = False
         self._refresh_target_preset_controls()
-        self.root.title("UA FREE Content Tool — v1.2.1 · Codex + Rowboat")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
 
     def _build_queue_tab(self) -> None:
         super()._build_queue_tab()
