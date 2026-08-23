@@ -193,6 +193,15 @@ def open_memory_folder() -> None:
         subprocess.Popen(["xdg-open", str(root)])
 
 
+def _write_text_if_changed(path: Path, text: str) -> None:
+    try:
+        if path.exists() and path.read_text(encoding="utf-8") == text:
+            return
+    except OSError:
+        pass
+    path.write_text(text, encoding="utf-8")
+
+
 def sync_editorial_memory(database) -> dict[str, int]:
     root = memory_root()
     examples_dir = root / "editorial-examples"
@@ -203,25 +212,25 @@ def sync_editorial_memory(database) -> dict[str, int]:
         final_text = str(row.get("final_text") or "").strip()
         source_text = str(row.get("source_text") or "").strip()
         headline = str(row.get("headline") or "").strip()
-        (examples_dir / f"example-{item_id}.md").write_text(
+        example_text = (
             "---\ntype: editorial-example\nlanguage: uk\n---\n\n"
             f"# {headline or 'Схвалений рерайт'}\n\n## Джерело\n\n{source_text}\n\n"
-            f"## Фінальний текст\n\n{final_text}\n\nЗв'язки: [[UA FREE Editorial Memory]]\n",
-            encoding="utf-8",
+            f"## Фінальний текст\n\n{final_text}\n\nЗв'язки: [[UA FREE Editorial Memory]]\n"
         )
+        _write_text_if_changed(examples_dir / f"example-{item_id}.md", example_text)
     feedback = list(database.list_topic_feedback(language="uk")) if hasattr(database, "list_topic_feedback") else []
     for row in feedback:
         decision = str(row.get("decision") or "unknown")
         anchor = str(row.get("anchor_text") or "")
         candidate = str(row.get("candidate_text") or "")
         fingerprint = hashlib.sha1(f"{decision}|{anchor}|{candidate}".encode("utf-8")).hexdigest()[:12]
-        (decisions_dir / f"decision-{fingerprint}.md").write_text(
+        decision_text = (
             "---\ntype: topic-decision\n"
             f"decision: {decision}\n---\n\n# Редакційне рішення: {decision}\n\n"
             f"## Матеріал A\n\n{anchor}\n\n## Матеріал B\n\n{candidate}\n\n"
-            "Зв'язки: [[UA FREE Editorial Memory]]\n",
-            encoding="utf-8",
+            "Зв'язки: [[UA FREE Editorial Memory]]\n"
         )
+        _write_text_if_changed(decisions_dir / f"decision-{fingerprint}.md", decision_text)
     return {"examples": len(examples), "decisions": len(feedback)}
 
 

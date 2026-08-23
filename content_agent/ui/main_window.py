@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import faulthandler
 import queue
 import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from datetime import datetime, timedelta
@@ -248,6 +250,8 @@ class MainWindow:
         self.connection_diagnostics_result_queue: queue.Queue[tuple[int, str, object]] = queue.Queue()
         self._ui_event_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._ui_dispatch_after_id: str | None = None
+        self._ui_last_pulse = time.monotonic()
+        self._ui_last_freeze_dump = 0.0
         self.threads_token_maintenance_after_id: str | None = None
         self.last_connection_warning_signature: tuple[tuple[str, str, str], ...] = ()
         self.ollama_prewarm_model = ""
@@ -326,6 +330,7 @@ class MainWindow:
             )
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._ui_dispatch_after_id = self.root.after(50, self._drain_ui_events)
+        threading.Thread(target=self._ui_freeze_watchdog_loop, name="ui-freeze-watchdog", daemon=True).start()
         # FIX28 fails closed: the publication worker is not started until the
         # one-time 900-character migration has either completed or proved unnecessary.
         self.root.after(250, self._startup_queue_migration_gate)
@@ -342,6 +347,7 @@ class MainWindow:
     def _drain_ui_events(self) -> None:
         """Run queued UI work on the Tk main thread."""
         self._ui_dispatch_after_id = None
+        self._ui_last_pulse = time.monotonic()
         if getattr(self, "_closing", False):
             return
         processed = 0
@@ -361,6 +367,25 @@ class MainWindow:
                 self._ui_dispatch_after_id = self.root.after(50, self._drain_ui_events)
             except tk.TclError:
                 self._ui_dispatch_after_id = None
+
+    def _ui_freeze_watchdog_loop(self) -> None:
+        """Persist a Python stack dump if Tk stops pumping events for too long."""
+        while not self.stop_event.wait(2.0):
+            lag = time.monotonic() - self._ui_last_pulse
+            if lag < 8.0:
+                continue
+            now = time.monotonic()
+            if now - self._ui_last_freeze_dump < 30.0:
+                continue
+            self._ui_last_freeze_dump = now
+            try:
+                path = data_dir() / "ui_freeze_trace.log"
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write(f"\n=== UI FREEZE {datetime.now().isoformat(timespec='seconds')} lag={lag:.1f}s ===\n")
+                    handle.flush()
+                    faulthandler.dump_traceback(file=handle, all_threads=True)
+            except Exception:
+                pass
 
     def _start_background_services(self) -> None:
         if self.background_services_started or self.stop_event.is_set():
@@ -971,8 +996,9 @@ class MainWindow:
         self.auto_collect_running = False
         total, errors = result  # type: ignore[misc]
         self.refresh_sources()
-        self.refresh_groups()
-        self._notify_current_group_updates()
+        if int(total or 0) > 0:
+            self.refresh_groups()
+            self._notify_current_group_updates()
         if errors:
             self.set_status(
                 f"Автооновлення завершено. Сьогодні додано: {total}. "
