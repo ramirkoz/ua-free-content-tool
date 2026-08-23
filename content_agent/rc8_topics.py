@@ -4,7 +4,7 @@ import re
 
 
 _TOPIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Київ", ("київ", "киев", "kyiv", "kiev")),
+    ("Київ", ("київ", "києв", "киев", "kyiv", "kiev")),
     (
         "Війна",
         (
