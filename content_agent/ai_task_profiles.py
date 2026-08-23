@@ -22,9 +22,9 @@ REWRITE_PROFILE = AITaskProfile(
     local_evidence_chars=4000,
     cloud_output_tokens=950,
     local_output_tokens=340,
-    cloud_timeout_seconds=28,
-    local_timeout_seconds=45,
-    task_timeout_seconds=70,
+    cloud_timeout_seconds=45,
+    local_timeout_seconds=18,
+    task_timeout_seconds=82,
     second_pass_threshold=74,
 )
 

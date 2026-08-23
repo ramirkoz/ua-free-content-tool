@@ -41,12 +41,13 @@ logger = logging.getLogger("content_agent.ui.rc8")
 
 
 class MainWindow(SourceHealthV13Mixin, StableV122Window):
-    """UA FREE Content Tool v1.3.1-rc10 stabilization layer."""
+    """UA FREE Content Tool v1.3.1-rc11 stabilization layer."""
 
-    VERSION_LABEL = "1.3.1-rc10"
+    VERSION_LABEL = "1.3.1-rc11"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self._rewrite_attempt_serial = 0
+        self._rewrite_inflight = threading.Event()
         self._inbox_layout_save_after_id: str | None = None
         self._inbox_layout_path = inbox_layout_path()
         self._donation_settings_path = donation_settings_path()
@@ -73,7 +74,7 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
     # Version labels.
     # ------------------------------------------------------------------
     def _apply_v13_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v1.3.1-rc10")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc11")
         button = getattr(self, "rewrite_button", None)
         if button is not None:
             if getattr(self.config, "ui_language", "uk") == "en":
@@ -524,6 +525,14 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
             self.msg.showinfo("Редактор", "Спочатку прийміть блок у роботу.", parent=self.root)
             return
 
+        if self._rewrite_inflight.is_set():
+            self.msg.showinfo(
+                "AI-рерайт ще завершується",
+                "Попередній AI-рерайт ще зупиняє фоновий виклик. Зачекайте кілька секунд; паралельний другий рерайт не запускається.",
+                parent=self.root,
+            )
+            return
+
         self.db.set_group_options(
             self.current_group_id,
             include_source_link=self.include_source_var.get(),
@@ -535,10 +544,14 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         self._rewrite_attempt_serial += 1
         attempt_id = self._rewrite_attempt_serial
         logger.info("RC8 rewrite attempt=%s group=%s started", attempt_id, group.id)
+        self._rewrite_inflight.set()
 
         def action() -> object:
             try:
-                sync_editorial_memory(self.db)
+                # Do not export the entire Rowboat memory graph on every rewrite.
+                # The live DB examples below are authoritative; Rowboat has its own
+                # explicit synchronization action in Settings. Rewriting thousands
+                # of memory files here was pure I/O tax and could outlive the UI timeout.
                 examples = rank_editorial_examples(
                     group.combined_text,
                     self.db.list_editorial_examples(language=config.ui_language),
@@ -556,6 +569,8 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
             except Exception:
                 logger.exception("RC8 rewrite attempt=%s group=%s failed", attempt_id, group.id)
                 raise
+            finally:
+                self._rewrite_inflight.clear()
 
         def success(result: object) -> None:
             rewrite_result, example_count = result  # type: ignore[misc]
@@ -587,7 +602,6 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
                         "attempt_id": attempt_id,
                     },
                 )
-            self.refresh_groups()
             self.update_text_metrics()
             self.refresh_ai_component_status()
             logger.info(

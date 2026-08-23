@@ -431,7 +431,10 @@ def run_ai(
             seen_provider.add(slot.provider)
         else:
             secondary.append(slot)
-    ordered_slots = [*primary, *local_slots, *secondary]
+    # Try every configured cloud provider before spending the remaining budget
+    # on local inference. A stalled local runtime must never starve a healthy
+    # secondary cloud model.
+    ordered_slots = [*primary, *secondary, *local_slots]
 
     local_configured = any(
         slot.provider == "local" and legacy._configured(slot, cfg)
@@ -439,7 +442,7 @@ def run_ai(
     ) and "local" not in suppressed_providers
     if deadline is not None and local_configured:
         total_budget = max(3, int(task_timeout_seconds or 0))
-        local_reserve = min(local_timeout, max(8, min(22, total_budget // 3)))
+        local_reserve = min(local_timeout, max(6, min(10, total_budget // 5)))
     else:
         local_reserve = 0
 
@@ -498,11 +501,12 @@ def run_ai(
         if slot.provider != "local" and remaining is not None and local_reserve and remaining <= local_reserve + 2:
             continue
 
+        provider_cooldown = False
         if slot.provider != "local":
-            if legacy._cooldown_active(state, legacy._provider_key(slot.provider), now) or legacy._cooldown_active(
-                state, legacy._slot_key(slot), now
-            ):
-                continue
+            provider_cooldown = legacy._cooldown_active(state, legacy._provider_key(slot.provider), now)
+        model_cooldown = legacy._cooldown_active(state, legacy._slot_key(slot), now)
+        if provider_cooldown or model_cooldown:
+            continue
 
         attempted.append(slot.label)
         runtime_slot = slot
@@ -536,7 +540,8 @@ def run_ai(
                     break
                 # Codex gets a larger slice; other cloud providers get a compact
                 # health-sized slice so the router can actually reach fallbacks.
-                provider_cap = min(cloud_timeout, 28 if slot.provider == "codex" else 9)
+                provider_caps = {"codex": 42, "groq": 12, "nvidia": 10, "gemini": 10, "cloudflare": 10}
+                provider_cap = min(cloud_timeout, provider_caps.get(slot.provider, 10))
                 if remaining is not None:
                     available_for_cloud = remaining
                     if local_reserve:
@@ -599,17 +604,21 @@ def run_ai(
                 suppressed_providers.add(slot.provider.casefold())
             if exc.kind == "request_too_large":
                 continue
-            if slot.provider != "local":
-                key_name = (
-                    legacy._provider_key(slot.provider)
-                    if exc.kind in {"auth", "configuration"}
-                    else legacy._slot_key(slot)
-                )
-                cooldown = legacy._cooldown_seconds(exc)
-                if slot.provider == "codex" and exc.kind == "quota":
-                    cooldown = min(cooldown, 5 * 60)
-                legacy._put_cooldown(state, key_name, cooldown, str(exc))
-                legacy.save_router_state(state)
+            key_name = (
+                legacy._provider_key(slot.provider)
+                if slot.provider != "local" and exc.kind in {"auth", "configuration"}
+                else legacy._slot_key(slot)
+            )
+            cooldown = legacy._cooldown_seconds(exc)
+            if slot.provider == "codex" and exc.kind == "quota":
+                cooldown = min(cooldown, 5 * 60)
+            if slot.provider == "local":
+                # A dead/stalled local runtime used to eat the timeout on every
+                # rewrite. Back it off briefly and let working cloud providers
+                # handle the next request.
+                cooldown = 300 if exc.kind in {"configuration", "auth"} else 90
+            legacy._put_cooldown(state, key_name, cooldown, str(exc))
+            legacy.save_router_state(state)
             continue
         except Exception as exc:
             elapsed = time.monotonic() - call_started

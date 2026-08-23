@@ -3,14 +3,14 @@
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
 > **Public release:** `v1.3.0`  
-> **Current version:** `v1.3.1-rc10`
+> **Current version:** `v1.3.1-rc11`
 > **Platform:** Windows 10/11, portable
 > **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
 
 UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
 
-## What is new in v1.3.1-rc10
+## What is new in v1.3.1-rc11
 
 - RC10 keeps the RC9 Tk target/donation-control crash fix and additionally fixes Inbox column geometry: widths no longer stretch with the window, a horizontal scrollbar is available, and Shift+click adds secondary/tertiary sort keys.
 - The RC8 changes remain: persisted Inbox column widths, one-word central topic, bounded visible rewrite attempts, Threads ambiguous-publication reconciliation, local/history potential scoring, and editable per-target donation policy.
@@ -23,9 +23,9 @@ UA FREE Content Tool gives a human editor one local workflow for the news-produc
 - The duplicate prefilter now obeys its deadline instead of discarding it; AI verification stops when the remaining budget is too small while deterministic candidates remain usable.
 - The global-search emergency UI guard is separate from the internal search deadline and cancellation is propagated to the worker.
 - Large merged blocks retain the evidence condenser and <=900-character post-AI safety introduced earlier.
-- Visible application naming is consistently `UA FREE Content Tool v1.3.1-rc10`; historical `dev`/internal build labels are not shown.
+- Visible application naming is consistently `UA FREE Content Tool v1.3.1-rc11`; historical `dev`/internal build labels are not shown.
 
-See [RELEASE_NOTES_v1.3.1-rc10.md](RELEASE_NOTES_v1.3.1-rc10.md).
+See [RELEASE_NOTES_v1.3.1-rc11.md](RELEASE_NOTES_v1.3.1-rc11.md).
 
 ## Core workflow
 
@@ -143,7 +143,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. For this candidate, use `UA_FREE_Content_Tool_v1.3.1-rc10_Windows_Portable.zip`.
+2. For this candidate, use `UA_FREE_Content_Tool_v1.3.1-rc11_Windows_Portable.zip`.
 3. Verify SHA-256 against `SHA256SUMS.txt`.
 4. Extract the full ZIP into a new folder.
 5. Copy your existing `Data` folder if updating.
@@ -174,11 +174,11 @@ Build_Portable_Windows.bat
 
 The release workflow validates source, tests the application, builds the signed portable runtime, performs GUI startup checks, runs Microsoft Defender, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
 
-The public v1.3.0 release remains the stable baseline. v1.3.1-rc10 is the current live candidate built on the same signed portable runtime; its global-search and Router changes are covered by targeted deterministic tests, while final Windows/Data acceptance is performed on the operator workstation.
+The public v1.3.0 release remains the stable baseline. v1.3.1-rc11 is the current live candidate built on the same signed portable runtime; its global-search and Router changes are covered by targeted deterministic tests, while final Windows/Data acceptance is performed on the operator workstation.
 
 ## Documentation
 
-- [RELEASE_NOTES_v1.3.1-rc10.md](RELEASE_NOTES_v1.3.1-rc10.md) — current candidate notes.
+- [RELEASE_NOTES_v1.3.1-rc11.md](RELEASE_NOTES_v1.3.1-rc11.md) — current candidate notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
