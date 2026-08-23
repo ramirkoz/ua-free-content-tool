@@ -8,14 +8,14 @@ from .paths import data_dir
 
 
 DEFAULT_WIDTHS: dict[str, int] = {
-    "id": 62,
-    "status": 78,
-    "title": 720,
-    "topic": 112,
-    "sources": 46,
-    "published": 178,
-    "score": 108,
-    "history": 132,
+    "id": 72,
+    "status": 82,
+    "title": 520,
+    "topic": 130,
+    "sources": 72,
+    "published": 205,
+    "score": 150,
+    "history": 180,
 }
 
 _MIN_WIDTHS: dict[str, int] = {
@@ -30,7 +30,7 @@ _MIN_WIDTHS: dict[str, int] = {
 }
 
 _MAX_WIDTH = 1800
-_FILE_NAME = "inbox_layout_v1_3_1_rc8.json"
+_FILE_NAME = "inbox_layout_v1_3_1_rc10.json"
 
 
 def inbox_layout_path() -> Path:

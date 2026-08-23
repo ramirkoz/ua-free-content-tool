@@ -33,6 +33,7 @@ from ..worker_v1_2_rc4 import Rc4PublicationWorker
 from ..rc8_topics import central_topic
 from . import main_window as legacy_ui
 from .source_health_v1_3 import SourceHealthV13Mixin
+from .main_window_enhancements import tree_sort_key
 from .v1_2_2_rc1_window import MainWindow as StableV122Window
 
 
@@ -40,9 +41,9 @@ logger = logging.getLogger("content_agent.ui.rc8")
 
 
 class MainWindow(SourceHealthV13Mixin, StableV122Window):
-    """UA FREE Content Tool v1.3.1-rc8 stabilization layer."""
+    """UA FREE Content Tool v1.3.1-rc10 stabilization layer."""
 
-    VERSION_LABEL = "1.3.1-rc8"
+    VERSION_LABEL = "1.3.1-rc10"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self._rewrite_attempt_serial = 0
@@ -52,6 +53,8 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         self._donation_settings = load_donation_settings(self._donation_settings_path)
         self.donation_vars: dict[str, tk.BooleanVar] = {}
         self.donation_checks: dict[str, ttk.Checkbutton] = {}
+        self._inbox_sort_state: list[tuple[str, bool]] = []
+        self._inbox_hscroll: ttk.Scrollbar | None = None
         super().__init__(*args, **kwargs)
 
         # The inherited RC8 target-preset layer installs the historical composer
@@ -70,7 +73,7 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
     # Version labels.
     # ------------------------------------------------------------------
     def _apply_v13_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v1.3.1-rc8")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc10")
         button = getattr(self, "rewrite_button", None)
         if button is not None:
             if getattr(self.config, "ui_language", "uk") == "en":
@@ -83,7 +86,7 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         self._apply_v13_labels()
         self._update_donation_legacy_label()
         if hasattr(self, "groups_tree") and "topic" in tuple(self.groups_tree.cget("columns")):
-            self.groups_tree.heading("topic", text="Topic" if self.config.ui_language == "en" else "Тема")
+            self._install_inbox_multisort_headings(self.groups_tree)
 
     # ------------------------------------------------------------------
     # Inbox: compact default geometry + one central topic + persistence.
@@ -102,24 +105,154 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         columns = [str(item) for item in tuple(tree.cget("columns"))]
         if "topic" not in columns:
             tree.configure(columns=tuple([*columns, "topic"]))
-        tree.heading("topic", text="Topic" if self.config.ui_language == "en" else "Тема")
         tree.configure(
             displaycolumns=("id", "status", "title", "topic", "sources", "published", "score", "history")
         )
+
         widths = load_widths(self._inbox_layout_path)
+        minwidths = {
+            "id": 45,
+            "status": 55,
+            "title": 260,
+            "topic": 75,
+            "sources": 50,
+            "published": 110,
+            "score": 90,
+            "history": 100,
+        }
         for column, width in widths.items():
             if column in tuple(tree.cget("columns")):
                 tree.column(
                     column,
                     width=width,
-                    minwidth=38 if column != "title" else 260,
-                    stretch=(column == "title"),
+                    minwidth=minwidths.get(column, 45),
+                    stretch=False,
                     anchor="w",
                 )
-        tree.bind("<ButtonRelease-1>", self._schedule_inbox_layout_save, add="+")
-        installer = getattr(self, "_install_tree_sorting", None)
-        if callable(installer):
-            installer(reset_labels=True)
+
+        self._install_inbox_horizontal_scrollbar(tree)
+        self._install_inbox_multisort_headings(tree)
+        tree.bind("<ButtonRelease-1>", self._on_inbox_button_release, add="+")
+
+    def _install_inbox_horizontal_scrollbar(self, tree: ttk.Treeview) -> None:
+        frame = tree.master
+        vertical: ttk.Scrollbar | None = None
+        for widget in frame.winfo_children():
+            if not isinstance(widget, ttk.Scrollbar):
+                continue
+            try:
+                orient = str(widget.cget("orient"))
+            except tk.TclError:
+                continue
+            if orient == "vertical":
+                vertical = widget
+                break
+
+        if self._inbox_hscroll is None or not self._inbox_hscroll.winfo_exists():
+            self._inbox_hscroll = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(xscrollcommand=self._inbox_hscroll.set)
+
+        tree.pack_forget()
+        if vertical is not None:
+            vertical.pack_forget()
+            vertical.pack(side="right", fill="y")
+        self._inbox_hscroll.pack_forget()
+        self._inbox_hscroll.pack(side="bottom", fill="x")
+        tree.pack(side="left", fill="both", expand=True)
+
+    def _install_inbox_multisort_headings(self, tree: ttk.Treeview | None = None) -> None:
+        target = tree or getattr(self, "groups_tree", None)
+        if target is None:
+            return
+        for column in tuple(target.cget("columns")):
+            name = str(column)
+            target.heading(name, command=lambda: None)
+        self._update_inbox_sort_headings(target)
+
+    def _on_inbox_button_release(self, event: tk.Event) -> str | None:
+        tree = getattr(self, "groups_tree", None)
+        if tree is None:
+            return None
+        self._schedule_inbox_layout_save()
+        try:
+            region = tree.identify_region(event.x, event.y)
+        except tk.TclError:
+            return None
+        if region != "heading":
+            return None
+        column_token = tree.identify_column(event.x)
+        try:
+            display_index = int(column_token.lstrip("#")) - 1
+        except (TypeError, ValueError):
+            return "break"
+        display = tuple(str(item) for item in tree.cget("displaycolumns"))
+        if display == ("#all",):
+            display = tuple(str(item) for item in tree.cget("columns"))
+        if display_index < 0 or display_index >= len(display):
+            return "break"
+        column = display[display_index]
+        additive = bool(int(getattr(event, "state", 0)) & 0x0001)
+        remove = bool(int(getattr(event, "state", 0)) & 0x0004)
+        self._sort_inbox_column(column, additive=additive, remove=remove)
+        return "break"
+
+    def _sort_inbox_column(self, column: str, *, additive: bool, remove: bool = False) -> None:
+        state = list(self._inbox_sort_state)
+        existing = next((index for index, item in enumerate(state) if item[0] == column), None)
+
+        if remove:
+            if existing is not None:
+                state.pop(existing)
+        elif additive:
+            if existing is None:
+                state.append((column, False))
+            else:
+                old_column, descending = state[existing]
+                state[existing] = (old_column, not descending)
+        else:
+            if len(state) == 1 and existing == 0:
+                state = [(column, not state[0][1])]
+            else:
+                state = [(column, False)]
+
+        self._inbox_sort_state = state
+        self._apply_inbox_sort()
+
+    def _apply_inbox_sort(self) -> None:
+        tree = getattr(self, "groups_tree", None)
+        if tree is None:
+            return
+        ordered = list(tree.get_children(""))
+        for column, descending in reversed(self._inbox_sort_state):
+            nonempty: list[tuple[tuple[int, object], str]] = []
+            empty: list[str] = []
+            for item_id in ordered:
+                key = tree_sort_key(tree.set(item_id, column))
+                if key[0] == 3:
+                    empty.append(item_id)
+                else:
+                    nonempty.append((key, item_id))
+            nonempty.sort(key=lambda item: item[0], reverse=descending)
+            ordered = [item_id for _key, item_id in nonempty] + empty
+
+        for position, item_id in enumerate(ordered):
+            tree.move(item_id, "", position)
+        self._update_inbox_sort_headings(tree)
+
+    def _update_inbox_sort_headings(self, tree: ttk.Treeview | None = None) -> None:
+        target = tree or getattr(self, "groups_tree", None)
+        if target is None:
+            return
+        labels = self._inbox_headings()
+        priorities = {column: (index + 1, descending) for index, (column, descending) in enumerate(self._inbox_sort_state)}
+        for column in tuple(target.cget("columns")):
+            name = str(column)
+            base = labels.get(name, str(target.heading(name, "text")).split("  ", 1)[0])
+            marker = ""
+            if name in priorities:
+                priority, descending = priorities[name]
+                marker = f"  {priority}{'▼' if descending else '▲'}"
+            target.heading(name, text=base + marker)
 
     def _schedule_inbox_layout_save(self, _event: object | None = None) -> None:
         if self._inbox_layout_save_after_id is not None:
@@ -150,13 +283,8 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
             return
         for item_id in tree.get_children(""):
             tree.set(item_id, "topic", central_topic(tree.set(item_id, "title")))
-        reapply = getattr(self, "_reapply_tree_sort", None)
-        if callable(reapply):
-            reapply(tree)
+        self._apply_inbox_sort()
 
-    # ------------------------------------------------------------------
-    # Donation block: editable once, enabled independently per target.
-    # ------------------------------------------------------------------
     def _compose_publication_text_rc8(
         self,
         core_text: str,
@@ -165,9 +293,6 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         include_source_link: bool,
         source_url: str,
     ) -> str:
-        # Start from the established source-link formatting, then remove the
-        # legacy mandatory footer. Facebook/Threads use a separate comment/reply;
-        # LinkedIn/Telegram/Instagram keep the optional donation inline.
         legacy = legacy_compose_publication_text(
             core_text,
             platform,
@@ -269,18 +394,19 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         editor.focus_set()
 
     def _rebuild_target_controls(self) -> None:
-        # This override is invoked during ancestor initialization, so the state is
-        # prepared before super().__init__ runs.
+        old_donation_checks = list(getattr(self, "donation_checks", {}).values())
+        self.donation_vars = {}
+        self.donation_checks = {}
+        for check in old_donation_checks:
+            try:
+                if check.winfo_exists():
+                    check.destroy()
+            except tk.TclError:
+                pass
+
         super()._rebuild_target_controls()
         if not hasattr(self, "targets_row"):
             return
-        for check in list(getattr(self, "donation_checks", {}).values()):
-            try:
-                check.destroy()
-            except tk.TclError:
-                pass
-        self.donation_vars = {}
-        self.donation_checks = {}
         enabled_targets = set(self._donation_settings.targets)
         for platform in self.target_vars:
             variable = tk.BooleanVar(value=platform in enabled_targets)
@@ -308,8 +434,12 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
             target_check.grid(row=row, column=column, sticky="w", padx=(0, 18), pady=(2, 0))
             donation_check = donations.get(platform)
             if donation_check is not None:
-                donation_check.grid_forget()
-                donation_check.grid(row=row + 1, column=column, sticky="w", padx=(18, 18), pady=(0, 4))
+                try:
+                    if donation_check.winfo_exists():
+                        donation_check.grid_forget()
+                        donation_check.grid(row=row + 1, column=column, sticky="w", padx=(18, 18), pady=(0, 4))
+                except tk.TclError:
+                    continue
         row_count = max(1, (len(getattr(self, "target_vars", {})) + columns - 1) // columns)
         for column in range(max(4, columns)):
             self.targets_row.columnconfigure(column, weight=1 if column < columns else 0)
@@ -389,9 +519,6 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
         self.history_details.insert("end", "\n\nДОНАТНИЙ БЛОК:\n" + "\n".join(donation_lines))
         self.history_details.configure(state="disabled")
 
-    # ------------------------------------------------------------------
-    # Rewrite: never silently disappear.
-    # ------------------------------------------------------------------
     def rewrite_current(self) -> None:
         if self.current_group_id is None:
             self.msg.showinfo("Редактор", "Спочатку прийміть блок у роботу.", parent=self.root)
@@ -495,10 +622,6 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
             timeout_is_error=True,
         )
 
-    # ------------------------------------------------------------------
-    # Potential: local editorial signal + own publication history.
-    # Threads keyword-search zeros are no longer treated as data.
-    # ------------------------------------------------------------------
     def analyze_current(self) -> None:
         if self.current_group_id is None:
             return
