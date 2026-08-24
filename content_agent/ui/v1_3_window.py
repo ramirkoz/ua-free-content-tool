@@ -27,7 +27,7 @@ from ..rewrite_pipeline_v1_3 import (
     last_rewrite_engine_label,
     rewrite_group_v13,
 )
-from ..rowboat_bridge_v1_3 import memory_context, sync_editorial_memory
+from ..rowboat_bridge_v1_3 import sync_editorial_memory
 from ..scheduling import KYIV
 from ..worker_v1_2_rc4 import Rc4PublicationWorker
 from ..rc8_topics import central_topic
@@ -41,9 +41,9 @@ logger = logging.getLogger("content_agent.ui.rc8")
 
 
 class MainWindow(SourceHealthV13Mixin, StableV122Window):
-    """UA FREE Content Tool v1.3.1-rc11 stabilization layer."""
+    """UA FREE Content Tool v1.3.1-rc12 stabilization layer."""
 
-    VERSION_LABEL = "1.3.1-rc11"
+    VERSION_LABEL = "1.3.1-rc12"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self._rewrite_attempt_serial = 0
@@ -74,7 +74,7 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
     # Version labels.
     # ------------------------------------------------------------------
     def _apply_v13_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v1.3.1-rc11")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc12")
         button = getattr(self, "rewrite_button", None)
         if button is not None:
             if getattr(self.config, "ui_language", "uk") == "en":
@@ -552,16 +552,29 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
                 # The live DB examples below are authoritative; Rowboat has its own
                 # explicit synchronization action in Settings. Rewriting thousands
                 # of memory files here was pure I/O tax and could outlive the UI timeout.
-                examples = rank_editorial_examples(
-                    group.combined_text,
-                    self.db.list_editorial_examples(language=config.ui_language),
-                    limit=config.learning_examples_limit if config.learning_enabled else 0,
+                # RC12 keeps the interactive rewrite path bounded. The previous
+                # implementation scanned the entire Rowboat Markdown graph on every
+                # click and compared every memory file against the full combined text.
+                # On large merged groups (50+ sources) this prep stage could itself
+                # outlive the 105 s UI watchdog before the AI router even started.
+                query_text = group.combined_text[:12000]
+                logger.info(
+                    "RC12 rewrite prep attempt=%s group=%s sources=%s query_chars=%s",
+                    attempt_id, group.id, group.source_count, len(query_text),
                 )
-                graph = memory_context(group.combined_text, limit=6)
+                examples = rank_editorial_examples(
+                    query_text,
+                    self.db.list_editorial_examples(limit=300, language=config.ui_language),
+                    limit=min(12, config.learning_examples_limit) if config.learning_enabled else 0,
+                )
+                logger.info(
+                    "RC12 rewrite prep done attempt=%s group=%s examples=%s",
+                    attempt_id, group.id, len(examples),
+                )
                 result = rewrite_group_v13(
                     group,
                     examples,
-                    graph_memory=graph,
+                    graph_memory="",
                     language=config.ui_language,
                     cancel_event=cancel_event,
                 )
