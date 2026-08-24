@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from urllib.parse import quote, urlencode
 
 from . import facebook_comments_v1_2_rc3 as facebook_comments
@@ -60,10 +61,11 @@ def _save_donation_outcome(
 
 
 def _threads_recent_match(user_id: str, token: str, expected_text: str) -> tuple[str, str] | None:
-    """Conservatively reconcile a one-part Threads post after an ambiguous write.
+    """Find exactly one recent Threads post with the expected normalized text.
 
-    We accept only an exact normalized text match among recent posts. If the API
-    cannot prove the write, RC8 remains fail-closed and never posts a blind copy.
+    Meta can return code 24/subcode 4279009 after the post is already visible.
+    Reconciliation is deliberately conservative: an exact text match must be
+    unique inside the recent-post window or we refuse to guess.
     """
 
     expected = _normalized_text(expected_text)
@@ -78,7 +80,7 @@ def _threads_recent_match(user_id: str, token: str, expected_text: str) -> tuple
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         max_bytes=3 * 1024 * 1024,
         allowed_content_types={"application/json", "text/javascript"},
-        timeout=30,
+        timeout=20,
         max_redirects=0,
         allow_http_errors=True,
     )
@@ -88,6 +90,7 @@ def _threads_recent_match(user_id: str, token: str, expected_text: str) -> tuple
     rows = payload.get("data")
     if not isinstance(rows, list):
         return None
+    matches: list[tuple[str, str]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -95,8 +98,8 @@ def _threads_recent_match(user_id: str, token: str, expected_text: str) -> tuple
             continue
         remote_id = str(row.get("id") or "").strip()
         if remote_id:
-            return remote_id, str(row.get("permalink") or "").strip()
-    return None
+            matches.append((remote_id, str(row.get("permalink") or "").strip()))
+    return matches[0] if len(matches) == 1 else None
 
 
 class Rc8FacebookPublisher(Publisher):
@@ -146,15 +149,24 @@ class Rc8ThreadsPublisher(Publisher):
         self.donation_text = str(donation_text or "").strip()
         self.enabled = bool(enabled and self.donation_text)
 
-    def _reconcile_one_part(
+    def _reconcile_root_and_resume(
         self,
         clean: str,
         latest: dict[str, object],
         context: PublishContext,
         exc: Exception,
+        media: MediaPayload | ImageGalleryPayload | None,
     ) -> PublishResult | None:
+        """Recover a root post that Meta published but reported as failed.
+
+        RC8 only reconciled one-part text posts. RC12 also handles multi-part
+        chains and media/gallery roots, then resumes from part 2 without
+        creating a duplicate root. A short bounded retry covers Threads'
+        eventual-consistency delay before a new post appears in /threads.
+        """
+
         parts = split_threads_chain(clean, 500)
-        if len(parts) != 1:
+        if not parts:
             return None
         outcome_unknown = bool(getattr(exc, "outcome_unknown", False))
         code = getattr(exc, "code", None)
@@ -162,12 +174,20 @@ class Rc8ThreadsPublisher(Publisher):
         known_meta_ambiguity = code == 24 and subcode == 4279009
         if not outcome_unknown and not known_meta_ambiguity:
             return None
-        try:
-            matched = _threads_recent_match(self.inner.user_id, self.inner.token, parts[0])
-        except (NetworkError, PublishError, ValueError):
-            matched = None
+
+        matched: tuple[str, str] | None = None
+        for attempt in range(3):
+            try:
+                matched = _threads_recent_match(self.inner.user_id, self.inner.token, parts[0])
+            except (NetworkError, PublishError, ValueError):
+                matched = None
+            if matched is not None:
+                break
+            if attempt < 2:
+                time.sleep(2.0)
         if matched is None:
             return None
+
         remote_id, permalink = matched
         updated = dict(latest)
         updated.pop("container_id", None)
@@ -175,16 +195,45 @@ class Rc8ThreadsPublisher(Publisher):
         updated.update(
             {
                 "published_parts": 1,
-                "total_parts": 1,
+                "total_parts": len(parts),
                 "remote_ids": [remote_id],
                 "threads_reconciled": True,
                 "threads_permalink": permalink,
-                "donation_status": "not_attempted_after_reconcile" if self.enabled else "disabled",
             }
         )
+        if isinstance(media, ImageGalleryPayload):
+            updated["threads_gallery_remote_id"] = remote_id
+            updated["threads_gallery_publish_started"] = False
         context.save_progress(updated)
-        logger.warning("Threads ambiguous API outcome reconciled to existing post %s", remote_id)
-        return PublishResult(remote_id=remote_id, progress=updated)
+        latest.clear()
+        latest.update(updated)
+        logger.warning(
+            "Threads ambiguous API outcome reconciled to existing root post %s; resuming remaining parts=%d",
+            remote_id,
+            max(0, len(parts) - 1),
+        )
+
+        try:
+            resumed = self.inner.publish(clean, latest, context, media)
+        except Exception as resume_exc:
+            current_ids = latest.get("remote_ids") if isinstance(latest.get("remote_ids"), list) else []
+            current_root = str(current_ids[0] if current_ids else latest.get("threads_gallery_remote_id") or remote_id).strip()
+            donation_phase = bool(
+                latest.get("threads_donation_comment_started")
+                or latest.get("threads_donation_comment_completed")
+                or latest.get("threads_donation_container_id")
+                or "донат" in str(resume_exc).casefold()
+            )
+            all_parts_done = int(latest.get("published_parts", 0) or 0) >= len(parts)
+            if current_root and donation_phase and all_parts_done:
+                latest = _save_donation_outcome(context, latest, status="failed", error=resume_exc)
+                return PublishResult(remote_id=current_root, progress=latest)
+            raise
+
+        final_progress = dict(resumed.progress)
+        status = "sent" if self.enabled else "disabled"
+        final_progress = _save_donation_outcome(context, final_progress, status=status)
+        return PublishResult(remote_id=resumed.remote_id or remote_id, progress=final_progress)
 
     def publish(
         self,
@@ -218,7 +267,7 @@ class Rc8ThreadsPublisher(Publisher):
                 logger.warning("Threads main post succeeded; donation phase failed: %s", exc)
                 latest = _save_donation_outcome(proxy, latest, status="failed", error=exc)
                 return PublishResult(remote_id=root_id, progress=latest)
-            reconciled = self._reconcile_one_part(clean, latest, proxy, exc)
+            reconciled = self._reconcile_root_and_resume(clean, latest, proxy, exc, media)
             if reconciled is not None:
                 return reconciled
             raise
