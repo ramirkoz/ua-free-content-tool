@@ -15,3 +15,5 @@ Focused publication-queue stabilization on the canonical RC12 source.
 - No SQLite schema change.
 - Copy the complete existing `Data` directory into a fresh RC13 portable folder.
 - Already-sent targets remain protected from duplicate publication.
+
+Release synchronization retriggered from the cleaned canonical RC13 tree.
