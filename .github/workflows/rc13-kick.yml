@@ -1,0 +1,30 @@
+name: RC13 sync kick
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/rc13-kick.yml]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run deterministic RC13 sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run rc13-sync2.yml --ref main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/rc13-kick.yml
+          git commit -m 'Remove RC13 sync kick'
+          git push origin HEAD:main
