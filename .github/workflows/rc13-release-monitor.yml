@@ -1,0 +1,43 @@
+name: RC13 release monitor
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/rc13-release-monitor.yml]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Wait for canonical RC13 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            run_id=$(gh run list --workflow release.yml --branch main --event workflow_dispatch --limit 10 --json databaseId,createdAt --jq '.[0].databaseId // empty')
+            if [ -n "$run_id" ]; then break; fi
+            sleep 10
+          done
+          test -n "${run_id:-}"
+          set +e
+          gh run watch "$run_id" --exit-status
+          watch_rc=$?
+          set -e
+          gh run view "$run_id" --json databaseId,status,conclusion,headSha,event,url,createdAt,updatedAt > _RC13_RELEASE_STATUS.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" > _RC13_RELEASE_ARTIFACTS.json
+          if gh release view v1.3.1-rc13 --json tagName,name,url,isPrerelease,publishedAt > _RC13_RELEASE.json 2>/dev/null; then :; else echo '{"missing":true}' > _RC13_RELEASE.json; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _RC13_RELEASE_STATUS.json _RC13_RELEASE_ARTIFACTS.json _RC13_RELEASE.json
+          git commit -m 'Record RC13 canonical release status' || true
+          git push origin HEAD:main
+          exit $watch_rc
