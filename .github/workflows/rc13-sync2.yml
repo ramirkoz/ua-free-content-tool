@@ -255,7 +255,6 @@ jobs:
           +    probes = iter([(False, ""), (True, "image/jpeg")])
           +    monkeypatch.setattr("content_agent.google_drive.probe_public_media", lambda _file_id: next(probes))
           PATCH
-          sed -i 's/^          //' /tmp/rc13.patch
           git apply --ignore-space-change --ignore-whitespace /tmp/rc13.patch
 
           python - <<'PY'
@@ -285,9 +284,7 @@ jobs:
           - Copy the complete existing `Data` directory into a fresh RC13 portable folder.
           - Already-sent targets remain protected from duplicate publication.
           EOF
-          sed -i 's/^          //' RELEASE_NOTES_v1.3.1-rc13.md
 
-          cp /dev/null tests/test_rc13_publication_stability.py
           cat > tests/test_rc13_publication_stability.py <<'EOF'
           from __future__ import annotations
           import time
@@ -327,7 +324,6 @@ jobs:
           def test_worker_result_distinguishes_explicit_cancellation() -> None:
               assert WorkerResult(claimed=True, batch_id=273, cancelled=True).cancelled is True
           EOF
-          sed -i 's/^          //' tests/test_rc13_publication_stability.py
 
           rm -f .github/workflows/rc13-sync.yml .github/workflows/rc13-sync2.yml
           python -m compileall -q content_agent tests app.py
