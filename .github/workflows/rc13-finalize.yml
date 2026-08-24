@@ -1,0 +1,75 @@
+name: RC13 final synchronization
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/rc13-finalize.yml]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact RC13 stabilization source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git apply --ignore-space-change --ignore-whitespace .rc13-core.patch
+
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Expected RC12 text missing in {path}: {old}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'content_agent/ui/queue_safety_v1_3_1_rc1.py',
+              'self.worker.request_cancel(batch.id)',
+              'self.worker.request_cancel(batch.id, reason="queue-ui-confirmed")',
+          )
+          p = Path('content_agent/ui/v1_3_window.py')
+          text = p.read_text(encoding='utf-8').replace('1.3.1-rc12', '1.3.1-rc13')
+          p.write_text(text, encoding='utf-8')
+
+          p = Path('tests/test_r8_fix8.py')
+          text = p.read_text(encoding='utf-8')
+          old = 'monkeypatch.setattr("content_agent.google_drive.probe_public_media", lambda _file_id: (True, "image/jpeg"))'
+          new = 'probes = iter([(False, ""), (True, "image/jpeg")])\n    monkeypatch.setattr("content_agent.google_drive.probe_public_media", lambda _file_id: next(probes))'
+          if old not in text:
+              raise SystemExit('Expected RC12 Threads probe test line missing')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          rm -f .rc13-core.patch \
+            .github/workflows/rc13-sync.yml \
+            .github/workflows/rc13-sync2.yml \
+            .github/workflows/rc13-canonical-sync.yml \
+            .github/workflows/rc13-finalize.yml
+
+          python -m compileall -q content_agent tests app.py
+          python -m pytest -q tests/test_rc13_publication_stability.py tests/test_r8_fix8.py tests/test_rc12_stability.py
+
+          test "$(cat VERSION.txt)" = "1.3.1-rc13"
+          test "$(cat PUBLIC_VERSION.txt)" = "1.3.1-rc13"
+          python -c "from content_agent import __version__; assert __version__ == '1.3.1-rc13'"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Release v1.3.1-rc13 publication stabilization'
+          git push origin HEAD:main
+
+          gh workflow run release.yml --ref main
