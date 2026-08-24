@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths: [.github/workflows/rc13-canonical-sync.yml]
+  workflow_dispatch:
 
 permissions:
   contents: write
