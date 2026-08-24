@@ -49,7 +49,7 @@ class QueueSafetyRC1Mixin:
                         "Пакет, що публікується, зупиняйте окремо. Інші вибрані пакети не змінено."
                     )
                 batch = active[0]
-                if not self.worker.request_cancel(batch.id):
+                if not self.worker.request_cancel(batch.id, reason="queue-ui-confirmed"):
                     raise ValueError(
                         f"Пакет #{batch.id} позначений як «публікується», але не належить поточному worker. "
                         "Оновіть чергу; після перезапуску 1.3.1 RC1 такий пакет буде безпечно призупинено."

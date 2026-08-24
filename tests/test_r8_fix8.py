@@ -89,7 +89,8 @@ def test_drive_creates_and_revokes_temporary_threads_permission(monkeypatch) -> 
         return HttpResponse(204, {}, b"", url)
 
     monkeypatch.setattr("content_agent.google_drive.fetch_url", fake_fetch)
-    monkeypatch.setattr("content_agent.google_drive.probe_public_media", lambda _file_id: (True, "image/jpeg"))
+    probes = iter([(False, ""), (True, "image/jpeg")])
+    monkeypatch.setattr("content_agent.google_drive.probe_public_media", lambda _file_id: next(probes))
     client = GoogleDriveClient("client.apps.googleusercontent.com", "secret", "refresh")
     client._access_token = "access"
     info = DriveMediaInfo(

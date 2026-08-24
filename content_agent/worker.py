@@ -28,6 +28,7 @@ class WorkerResult:
     completed: bool = False
     busy: bool = False
     paused: bool = False
+    cancelled: bool = False
     pause_reason: str = ""
     sent_targets: int = 0
     failed_targets: int = 0
@@ -56,7 +57,7 @@ class PublicationWorker:
         max_automatic_attempts: int = 3,
         target_timeout_seconds: float = 120.0,
         media_target_timeout_seconds: float = 240.0,
-        media_preflight_timeout_seconds: float = 60.0,
+        media_preflight_timeout_seconds: float = 100.0,
         progress_callback: Callable[[str], None] | None = None,
         result_callback: Callable[[WorkerResult], None] | None = None,
     ):
@@ -79,12 +80,18 @@ class PublicationWorker:
         self._cancel_lock = threading.Lock()
         self._cancel_requested_batches: set[int] = set()
         self._active_batch_id: int | None = None
+        self._media_preflight_lock = threading.Lock()
+        self._media_preflight_jobs: dict[int, tuple[
+            threading.Event,
+            list[tuple[MediaPayload | None, GoogleDriveClient | None, int, DriveMediaInfo | None]],
+            list[BaseException],
+        ]] = {}
 
     def active_batch_id(self) -> int | None:
         with self._cancel_lock:
             return self._active_batch_id
 
-    def request_cancel(self, batch_id: int) -> bool:
+    def request_cancel(self, batch_id: int, *, reason: str = "explicit") -> bool:
         """Request a cooperative stop for the batch owned by this worker.
 
         A platform HTTP write cannot be killed safely. If one is already in
@@ -94,8 +101,15 @@ class PublicationWorker:
         batch_id = int(batch_id)
         with self._cancel_lock:
             if self._active_batch_id != batch_id:
+                logger.info(
+                    "Publication cancellation rejected batch=%s reason=%s active_batch=%s",
+                    batch_id, reason, self._active_batch_id,
+                )
                 return False
             self._cancel_requested_batches.add(batch_id)
+        logger.warning(
+            "Publication cancellation requested batch=%s reason=%s", batch_id, reason
+        )
         self.wake()
         return True
 
@@ -200,7 +214,9 @@ class PublicationWorker:
         client = self._drive_client()
         # Re-read current Drive capabilities. A file may be private, moved or have
         # different sharing permissions by the time its queue slot becomes due.
-        info = client.inspect_media(group.media_file_id)
+        # Keep the generic media read bounded. Threads public-URL probing is
+        # deferred until a Threads target actually needs it.
+        info = client.inspect_media(group.media_file_id, probe_public=False)
         data = client.download_media(info)
         return (
             MediaPayload(
@@ -219,28 +235,42 @@ class PublicationWorker:
     def _load_media_cancellable(
         self, *, batch_id: int, batch_article_id: int, owner: str
     ) -> tuple[MediaPayload | None, GoogleDriveClient | None, int, DriveMediaInfo | None]:
-        """Run Drive preflight outside SQLite locks with a cancellable hard bound.
+        """Run Drive preflight outside SQLite locks with one reusable in-flight job.
 
-        Drive reads have no publication side effects, so a timed-out/background
-        read can safely be abandoned without risking a duplicate social post.
+        RC12 could time out its 60-second outer guard while the Drive client's
+        bounded token/metadata/download calls were still legitimately running.
+        Every retry then spawned another daemon read. RC13 makes the outer guard
+        consistent with the inner bounds and reuses a late in-flight job instead
+        of multiplying background network work.
         """
-        done = threading.Event()
-        result_holder: list[tuple[MediaPayload | None, GoogleDriveClient | None, int, DriveMediaInfo | None]] = []
-        error_holder: list[BaseException] = []
+        batch_key = int(batch_id)
+        with self._media_preflight_lock:
+            job = self._media_preflight_jobs.get(batch_key)
+            if job is not None and job[0].is_set() and job[2]:
+                self._media_preflight_jobs.pop(batch_key, None)
+                job = None
+            if job is None:
+                done = threading.Event()
+                result_holder: list[tuple[
+                    MediaPayload | None, GoogleDriveClient | None, int, DriveMediaInfo | None
+                ]] = []
+                error_holder: list[BaseException] = []
+                job = (done, result_holder, error_holder)
+                self._media_preflight_jobs[batch_key] = job
 
-        def runner() -> None:
-            try:
-                result_holder.append(self._load_media(batch_article_id))
-            except BaseException as exc:
-                error_holder.append(exc)
-            finally:
-                done.set()
+                def runner() -> None:
+                    try:
+                        result_holder.append(self._load_media(batch_article_id))
+                    except BaseException as exc:
+                        error_holder.append(exc)
+                    finally:
+                        done.set()
 
-        threading.Thread(
-            target=runner,
-            name=f"drive-preflight-{batch_id}",
-            daemon=True,
-        ).start()
+                threading.Thread(
+                    target=runner, name=f"drive-preflight-{batch_id}", daemon=True
+                ).start()
+
+        done, result_holder, error_holder = job
         deadline = time.monotonic() + self.media_preflight_timeout_seconds
         next_renew = time.monotonic() + min(20.0, max(5.0, self.media_preflight_timeout_seconds / 3.0))
         while not done.wait(0.2):
@@ -248,13 +278,17 @@ class PublicationWorker:
             now = time.monotonic()
             if now >= deadline:
                 raise GoogleDriveError(
-                    f"Google Drive не завершив підготовку медіа за {int(self.media_preflight_timeout_seconds)} секунд."
+                    f"Google Drive не завершив підготовку медіа за {int(self.media_preflight_timeout_seconds)} секунд. "
+                    "Поточне безпечне читання не дублюється; наступна спроба використає його результат."
                 )
             if now >= next_renew:
                 self.database.assert_lease(batch_id, owner)
                 self.database.renew_lease(batch_id, owner, self.lease_seconds)
                 next_renew = now + 20.0
         self._raise_if_cancel_requested(batch_id)
+        with self._media_preflight_lock:
+            if self._media_preflight_jobs.get(batch_key) is job:
+                self._media_preflight_jobs.pop(batch_key, None)
         if error_holder:
             raise error_holder[0]
         if not result_holder:
@@ -493,6 +527,7 @@ class PublicationWorker:
                     )
                 except PublicationCancelRequested:
                     self.database.cancel_claimed_batch(batch.id, owner)
+                    result.cancelled = True
                     self._notify(f"Пакет #{batch.id}: скасовано до початку публікації.")
                     return result
                 except Exception as exc:
@@ -551,6 +586,7 @@ class PublicationWorker:
             for target in active_targets:
                 if self._cancel_requested(batch.id):
                     self.database.cancel_claimed_batch(batch.id, owner)
+                    result.cancelled = True
                     self._notify(f"Пакет #{batch.id}: зупинено перед наступною платформою.")
                     return result
                 blocked_reason = self.auth_block_reason(target.platform)
@@ -612,6 +648,7 @@ class PublicationWorker:
                     )
                     if self._cancel_requested(batch.id):
                         self.database.cancel_claimed_batch(batch.id, owner)
+                        result.cancelled = True
                         self._notify(
                             f"Пакет #{batch.id}: поточний запит завершився; решту платформ скасовано."
                         )
@@ -690,6 +727,7 @@ class PublicationWorker:
         except PublicationCancelRequested:
             try:
                 self.database.cancel_claimed_batch(batch.id, owner)
+                result.cancelled = True
             except LeaseLost:
                 pass
             self._notify(f"Пакет #{batch.id}: зупинено користувачем.")

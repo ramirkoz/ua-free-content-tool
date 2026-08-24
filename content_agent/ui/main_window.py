@@ -530,6 +530,8 @@ class MainWindow:
                 display = display.replace(key, label)
             self.status_var.set(display)
             self.operation_detail_var.set(display)
+            if hasattr(self, "queue_alert_var") and ("публікація" in text or "опубліковано" in text):
+                self.queue_alert_var.set("")
             if not self.operation_running:
                 self.background_publication_active = True
                 self.operation_var.set("Поточна операція: фонове публікування")
@@ -549,7 +551,16 @@ class MainWindow:
                     "Поточна операція: помилка" if result.failed_platforms else "Поточна операція: завершено"
                 )
             labels = target_labels(self.config)
-            if result.failed_platforms:
+            if result.cancelled:
+                sent = ", ".join(labels.get(key, key) for key in result.sent_platforms)
+                state = f"Пакет #{result.batch_id}: зупинено користувачем."
+                if sent:
+                    state += f" Уже опубліковано: {sent}."
+                self.status_var.set(state)
+                self.operation_detail_var.set(state)
+                if hasattr(self, "queue_alert_var"):
+                    self.queue_alert_var.set(state)
+            elif result.failed_platforms:
                 failed = ", ".join(labels.get(key, key) for key in result.failed_platforms)
                 state = (
                     f"Пакет #{result.batch_id}: не опубліковано {failed}. "
@@ -2704,7 +2715,7 @@ class MainWindow:
                         "Пакет, що публікується, зупиняйте окремо. Інші вибрані пакети не змінено."
                     )
                 batch = active[0]
-                if not self.worker.request_cancel(batch.id):
+                if not self.worker.request_cancel(batch.id, reason="queue-ui-confirmed"):
                     raise ValueError(
                         f"Пакет #{batch.id} позначений як «публікується», але не належить поточному worker. "
                         "Оновіть чергу; після перезапуску програми такий пакет буде безпечно призупинено."
@@ -2841,6 +2852,8 @@ class MainWindow:
             return
         labels = target_labels(self.config)
         lines = [f"Пакет #{value.batch_id} оброблено."]
+        if value.cancelled:
+            lines.append("Публікацію зупинено явною командою користувача; нові платформи не запускалися.")
         if value.sent_platforms:
             lines.append(
                 "Опубліковано зараз: "

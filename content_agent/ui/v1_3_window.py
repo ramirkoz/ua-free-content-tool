@@ -41,9 +41,9 @@ logger = logging.getLogger("content_agent.ui.rc8")
 
 
 class MainWindow(SourceHealthV13Mixin, StableV122Window):
-    """UA FREE Content Tool v1.3.1-rc12 stabilization layer."""
+    """UA FREE Content Tool v1.3.1-rc13 stabilization layer."""
 
-    VERSION_LABEL = "1.3.1-rc12"
+    VERSION_LABEL = "1.3.1-rc13"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self._rewrite_attempt_serial = 0
@@ -74,7 +74,7 @@ class MainWindow(SourceHealthV13Mixin, StableV122Window):
     # Version labels.
     # ------------------------------------------------------------------
     def _apply_v13_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v1.3.1-rc12")
+        self.root.title("UA FREE Content Tool — v1.3.1-rc13")
         button = getattr(self, "rewrite_button", None)
         if button is not None:
             if getattr(self.config, "ui_language", "uk") == "en":
