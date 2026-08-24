@@ -326,10 +326,12 @@ class GoogleDriveClient:
 
     def _token(self) -> str:
         if not self._access_token:
-            self._access_token = refresh_access_token(self.client_id, self.client_secret, self.refresh_token)
+            self._access_token = refresh_access_token(
+                self.client_id, self.client_secret, self.refresh_token, timeout=15
+            )
         return self._access_token
 
-    def inspect_media(self, file_id: str) -> DriveMediaInfo:
+    def inspect_media(self, file_id: str, *, probe_public: bool = True) -> DriveMediaInfo:
         file_id = _validate_file_id(file_id)
         fields = "id,name,mimeType,size,trashed,capabilities(canDownload,canDelete,canShare)"
         url = f"https://www.googleapis.com/drive/v3/files/{quote(file_id)}?" + urlencode(
@@ -357,10 +359,12 @@ class GoogleDriveClient:
         if size > _MAX_MEDIA_BYTES:
             raise GoogleDriveError("Медіафайл перевищує ліміт програми 200 МБ.")
         capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
-        public_direct, public_type = probe_public_media(file_id)
-        if public_direct and public_type and public_type != mime_type:
-            mime_type = public_type
-            kind = _kind_from_mime(mime_type)
+        public_direct = False
+        if probe_public:
+            public_direct, public_type = probe_public_media(file_id)
+            if public_direct and public_type and public_type != mime_type:
+                mime_type = public_type
+                kind = _kind_from_mime(mime_type)
         return DriveMediaInfo(
             file_id=file_id,
             name=str(payload.get("name", "media")),
@@ -383,6 +387,11 @@ class GoogleDriveClient:
         Only a permission created here may later be revoked by this program.
         """
         if info.public_direct:
+            return ""
+        # Generic publication preflight intentionally skips the expensive public
+        # URL probe. Threads performs it only when this target actually runs.
+        public_now, _content_type = probe_public_media(info.file_id)
+        if public_now:
             return ""
         if not info.can_share:
             raise GoogleDriveError(
