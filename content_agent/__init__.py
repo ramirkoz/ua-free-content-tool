@@ -1,3 +1,3 @@
 """UA FREE Content Tool."""
 
-__version__ = "1.3.1-rc11"
+__version__ = "1.3.1-rc12"
