@@ -1,0 +1,22 @@
+name: RC13 final helper
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/rc13-final-helper.yml]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Finalize RC13
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/rc13_finalize.sh
