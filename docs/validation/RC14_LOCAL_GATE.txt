@@ -1,0 +1,14 @@
+UA FREE Content Tool v1.3.1-rc14
+Local validation gate — 2026-08-26
+
+python -m compileall -q content_agent tests: PASS
+python -m pytest -q: PASS
+Result: 441 passed
+
+Focused RC14 regressions cover:
+- seven-day SQL history window;
+- archive-table move for old sent publication batches;
+- duplicate prevention after archive;
+- Threads worker path uses thread-safe UI posting.
+
+Windows CI and signed portable release gate remain required before publication.
