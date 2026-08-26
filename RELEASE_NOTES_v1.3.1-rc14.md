@@ -15,13 +15,13 @@ RC14 is a Windows UI/startup stabilization and operational-history retention rel
 
 - Publication History shows only the most recent rolling 7 days.
 - Bulk statistics refresh works only on that same 7-day operational window.
-- Completed/cancelled publication batches with sent targets older than 7 days are automatically moved out of the operational DB into `Data/archives/publication_history.sqlite3`.
+- Completed/cancelled publication batches with sent targets older than 7 days are automatically moved out of the operational `publication_batches` / `publication_targets` tables into `archived_publication_batches` / `archived_publication_targets` tables in the same SQLite database.
 - Archived platform statuses remain available to duplicate-publication checks, so archiving history does not allow an old successful target to be posted again.
-- The publication-history archive is included in new Backup files and restored when present; older backups without it remain accepted.
+- Because archive tables live in the same SQLite database, the existing Backup/Import flow carries them automatically; no separate archive-file handling is required.
 
 ## Compatibility
 
-- Operational SQLite schema remains version 8.
+- Operational SQLite schema remains version 8; RC14 archive tables are additive and created lazily.
 - Existing RC13 `Data` is compatible. No manual database migration is required.
 - Collection, rewrite, media and publishing logic are unchanged except for the UI-thread and history-query behavior above.
 
