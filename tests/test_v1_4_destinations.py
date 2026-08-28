@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -127,7 +126,7 @@ def test_destination_clocks_do_not_consume_each_others_slots(tmp_path: Path) -> 
         [CollectedArticle("id-2", "Incoming 2", "https://example.com/b", "Body 2", None)],
         enforce_today=False,
     ) == 1
-    article2 = next(article.id for article in db.list_articles() if article.external_id == "id-2")
+    article2 = next(article.id for article in db.list_articles() if article.title == "Incoming 2")
     second = db.queue_independent_targets(
         article2,
         {"telegram": "tg"},
