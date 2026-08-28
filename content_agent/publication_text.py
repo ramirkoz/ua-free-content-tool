@@ -20,6 +20,7 @@ PLATFORM_LIMITS = {
     "threads": 500,  # physical limit of every item in the automatic chain
     "linkedin": 3_000,
     "telegram": 12_000,
+    "instagram": 2_200,
 }
 
 
@@ -60,7 +61,7 @@ def core_limit(platform: str, *, include_source_link: bool, source_url: str) -> 
     """
 
     del include_source_link, source_url
-    if platform in {"facebook", "threads", "linkedin", "telegram"}:
+    if platform in {"facebook", "threads", "linkedin", "telegram", "instagram"}:
         return EDITORIAL_TEXT_LIMIT
     return EDITORIAL_TEXT_LIMIT
 
@@ -150,3 +151,5 @@ def validate_media_message(text: str, platform: str, *, has_media: bool) -> None
             f"Готовий підпис Telegram має {len(text)} символів при ліміті "
             f"{TELEGRAM_MEDIA_CAPTION_LIMIT}. Скоротіть текст або вимкніть посилання на джерело."
         )
+    if platform == "instagram" and not has_media:
+        raise TextLimitError("Instagram потребує хоча б одного фото або відео.")
