@@ -9,7 +9,7 @@ from datetime import datetime
 from tkinter import messagebox, ttk
 
 from .config import AppConfig, ConfigError, load_config
-from .database_v1_4 import Database
+from .database_v1_4_runtime import Database
 from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
