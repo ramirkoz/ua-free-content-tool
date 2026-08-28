@@ -14,7 +14,7 @@ from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
 from .portable import PortableMigrationError, ensure_portable_data_migrated
-from .ui.v1_4_window import MainWindow
+from .ui.v1_4_rc2_window import MainWindow
 
 
 def _show_startup_error(root: tk.Tk, message: str) -> None:
