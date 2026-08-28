@@ -61,7 +61,10 @@ def discover_instagram_accounts(user_token: str, graph_version: str) -> list[Ins
             "Спочатку підключіть Facebook Pages: потрібен чинний Facebook User Access Token."
         )
 
-    fields = "id,name,access_token,instagram_business_account{id,username,account_type}"
+    # Meta Graph API v26.0 does not expose account_type on this edge. Asking for
+    # it aborts the whole /me/accounts request with (#100), so keep discovery to
+    # fields that are valid for Instagram Business Account expansion.
+    fields = "id,name,access_token,instagram_business_account{id,username}"
     url = f"https://graph.facebook.com/{version}/me/accounts?" + urlencode(
         {"fields": fields, "limit": "100"}
     )
@@ -94,7 +97,7 @@ def discover_instagram_accounts(user_token: str, graph_version: str) -> list[Ins
                 InstagramDestination(
                     id=account_id,
                     username=str(instagram.get("username") or "").strip(),
-                    account_type=str(instagram.get("account_type") or "").strip(),
+                    account_type="Professional",
                     page_id=page_id,
                     page_name=page_name,
                     auth_mode="facebook_login",
@@ -110,11 +113,4 @@ def discover_instagram_accounts(user_token: str, graph_version: str) -> list[Ins
             raise PlatformSetupError("Meta повернула небезпечне посилання пагінації.")
         url = next_url
 
-    # Expansion can omit username on some accounts. Resolve only those profiles,
-    # using the Page token already delivered in /me/accounts, but do not retain it.
-    page_tokens: dict[str, str] = {}
-    # We deliberately avoid a second /me/accounts pass here. The account id is a
-    # stable, sufficient display fallback; username will be available after the
-    # first successful profile verification/publication if Meta exposes it.
-    del page_tokens
     return result
