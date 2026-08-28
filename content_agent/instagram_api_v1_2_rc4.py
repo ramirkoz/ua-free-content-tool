@@ -57,7 +57,7 @@ def inspect_instagram_profile(user_id: str, token: str, graph_version: str) -> I
         raise InstagramError("Вкажіть Instagram User ID і Access Token.")
     payload = _graph_request(
         f"https://graph.facebook.com/{version}/{user_id}?"
-        + urlencode({"fields": "id,username,account_type", "access_token": token})
+        + urlencode({"fields": "id,username", "access_token": token})
     )
     returned_id = str(payload.get("id") or "").strip()
     if not returned_id:
@@ -65,7 +65,7 @@ def inspect_instagram_profile(user_id: str, token: str, graph_version: str) -> I
     return InstagramProfile(
         user_id=returned_id,
         username=str(payload.get("username") or returned_id),
-        account_type=str(payload.get("account_type") or "professional"),
+        account_type="Professional",
     )
 
 
