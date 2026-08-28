@@ -8,7 +8,7 @@ import pytest
 
 from content_agent.config import AppConfig
 from content_agent.database_v1_4_runtime import Database
-from content_agent.ui.v1_4_window import MainWindow
+from content_agent.ui.v1_4_rc2_window import MainWindow
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Tk desktop smoke is validated on Windows CI")
@@ -23,7 +23,7 @@ def test_v14_main_window_constructs_with_destination_tabs(tmp_path: Path, isolat
         root.update_idletasks()
         assert "__all__" in window.queue_trees
         assert "__all__" in window.history_trees
-        assert window.VERSION_LABEL == "1.4.0-rc1"
+        assert window.VERSION_LABEL == "1.4.0-rc2"
     finally:
         if window is not None:
             window.stop_event.set()
