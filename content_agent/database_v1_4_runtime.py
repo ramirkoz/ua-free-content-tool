@@ -11,16 +11,30 @@ class Database(V14Database):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        # A new process cannot safely know whether an old in-flight HTTP request
+        # reached the platform before the previous process died. Terminalize it
+        # before any queue UI is built, so it cannot be retried or rendered as an
+        # old multi-target active package.
+        self._terminalize_legacy_in_progress_batches()
         self._terminalize_legacy_paused_batches()
 
+    def _terminalize_legacy_in_progress_batches(self) -> int:
+        message = (
+            "Попередню спробу публікації було перервано. Результат невідомий; "
+            "автоматичний повтор вимкнено, щоб не створити дубль."
+        )
+        return self._terminalize_legacy_status("in_progress", message)
+
     def _terminalize_legacy_paused_batches(self) -> int:
-        """Old paused failures must not become a hidden retry queue in v1.4."""
         message = (
             "Завдання було призупинене старою версією. У v1.4 автоматичні повтори вимкнено; "
             "запис перенесено в історію як завершений з помилкою."
         )
+        return self._terminalize_legacy_status("paused", message)
+
+    def _terminalize_legacy_status(self, status: str, message: str) -> int:
         with self.connect() as db:
-            rows = db.execute("SELECT id FROM publication_batches WHERE status='paused'").fetchall()
+            rows = db.execute("SELECT id FROM publication_batches WHERE status=?", (status,)).fetchall()
             ids = [int(row[0]) for row in rows]
             if not ids:
                 return 0
@@ -83,9 +97,12 @@ class Database(V14Database):
                     or 0
                 )
                 archived = bool(self._archived_final_for_group(group_id))
-                status = "approved" if active or final or archived else "draft"
-                db.execute("UPDATE news_groups SET status=?,updated_at=? WHERE id=?", (status, now, group_id))
-                db.execute("UPDATE articles SET status=? WHERE group_id=?", (status, group_id))
+                status_value = "approved" if active or final or archived else "draft"
+                db.execute(
+                    "UPDATE news_groups SET status=?,updated_at=? WHERE id=?",
+                    (status_value, now, group_id),
+                )
+                db.execute("UPDATE articles SET status=? WHERE group_id=?", (status_value, group_id))
 
     def cancel_batches(self, batch_ids: Iterable[int]) -> list[int]:
         requested = [int(value) for value in batch_ids]
