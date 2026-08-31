@@ -1,15 +1,34 @@
 from __future__ import annotations
 
+import json
+import os
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 
 from ..global_duplicates_v1_3_rc6 import DuplicateCluster
 from ..models import NewsGroup
+from ..paths import data_dir
+
+
+DEFAULT_AUTO_SELECT_CONFIDENCE = 90
+_LAYOUT_FILE = "duplicate_dialog_layout_v1_4.json"
+_DEFAULT_WIDTHS = {
+    "#0": 18,
+    "use": 80,
+    "confidence": 105,
+    "cluster": 760,
+    "members": 90,
+    "reason": 520,
+}
+
+
+def default_cluster_selected(confidence: int) -> bool:
+    return int(confidence) >= DEFAULT_AUTO_SELECT_CONFIDENCE
 
 
 class GlobalDuplicatesDialog(tk.Toplevel):
-    """Review merge proposals produced by AI or the deterministic local fallback."""
+    """Review merge proposals with safe defaults and persistent working layout."""
 
     def __init__(
         self,
@@ -23,9 +42,12 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         self.clusters = list(clusters)
         self.groups = groups
         self.on_apply = on_apply
-        self.selected: set[int] = set(range(len(self.clusters)))
+        self.selected: set[int] = {
+            index for index, cluster in enumerate(self.clusters) if default_cluster_selected(cluster.confidence)
+        }
+        self._layout_path = data_dir() / _LAYOUT_FILE
+        self._layout_save_after_id: str | None = None
         self.title("Дублікати серед усіх нових матеріалів")
-        self.geometry("1250x760")
         self.minsize(900, 560)
         self.transient(parent.winfo_toplevel())
 
@@ -42,31 +64,41 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         columns = ("use", "confidence", "cluster", "members", "reason")
         self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="browse")
         self.tree.heading("#0", text="")
-        self.tree.column("#0", width=18, stretch=False)
         self.tree.heading("use", text="Об'єднати")
         self.tree.heading("confidence", text="Впевненість")
         self.tree.heading("cluster", text="Пропозиція")
-        self.tree.heading("members", text="Блоків")
+        self.tree.heading("members", text="Матеріалів")
         self.tree.heading("reason", text="Причина")
-        self.tree.column("use", width=80, anchor="center")
-        self.tree.column("confidence", width=105, anchor="center")
-        self.tree.column("cluster", width=500, anchor="w")
-        self.tree.column("members", width=70, anchor="center")
-        self.tree.column("reason", width=430, anchor="w")
+
+        widths = self._load_widths()
+        self.tree.column("#0", width=widths.get("#0", 18), minwidth=16, stretch=False)
+        self.tree.column("use", width=widths.get("use", 80), minwidth=70, anchor="center", stretch=False)
+        self.tree.column("confidence", width=widths.get("confidence", 105), minwidth=90, anchor="center", stretch=False)
+        self.tree.column("cluster", width=widths.get("cluster", 760), minwidth=300, anchor="w", stretch=True)
+        self.tree.column("members", width=widths.get("members", 90), minwidth=80, anchor="center", stretch=False)
+        self.tree.column("reason", width=widths.get("reason", 520), minwidth=260, anchor="w", stretch=True)
         self.tree.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.tree.bind("<Button-1>", self._click, add="+")
         self.tree.bind("<space>", self._space)
+        self.tree.bind("<ButtonRelease-1>", self._schedule_layout_save, add="+")
 
         for index, cluster in enumerate(self.clusters):
             titles = [groups[group_id].canonical_title for group_id in cluster.group_ids if group_id in groups]
             parent_id = f"cluster:{index}"
+            enabled = index in self.selected
             self.tree.insert(
                 "",
                 "end",
                 iid=parent_id,
-                values=("☑", f"{cluster.confidence}%", " + ".join(titles[:2]), len(cluster.group_ids), cluster.reason),
+                values=(
+                    "☑" if enabled else "☐",
+                    f"{cluster.confidence}%",
+                    " + ".join(titles[:2]),
+                    len(cluster.group_ids),
+                    cluster.reason,
+                ),
                 open=True,
-                tags=("strong" if cluster.confidence >= 80 else "possible",),
+                tags=("strong" if cluster.confidence >= DEFAULT_AUTO_SELECT_CONFIDENCE else "possible",),
             )
             for group_id in cluster.group_ids:
                 group = groups.get(group_id)
@@ -76,7 +108,7 @@ class GlobalDuplicatesDialog(tk.Toplevel):
                     parent_id,
                     "end",
                     iid=f"member:{index}:{group_id}",
-                    values=("", "", f"#{group_id} · {group.canonical_title}", group.source_count, group.last_published_at or "—"),
+                    values=("", "", group.canonical_title, group.source_count, group.last_published_at or "—"),
                 )
         self.tree.tag_configure("strong", background="#e5f5e5")
         self.tree.tag_configure("possible", background="#fff5d6")
@@ -85,12 +117,73 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         actions.pack(fill="x")
         ttk.Button(actions, text="Вибрати всі", command=self.select_all).pack(side="left")
         ttk.Button(actions, text="Зняти всі", command=self.clear_all).pack(side="left", padx=6)
-        ttk.Button(actions, text="Закрити", command=self.destroy).pack(side="right")
-        self.apply_button = ttk.Button(actions, text="Об'єднати вибрані блоки", command=self.apply)
+        ttk.Button(actions, text="Закрити", command=self.close).pack(side="right")
+        self.apply_button = ttk.Button(actions, text="Об'єднати вибрані матеріали", command=self.apply)
         self.apply_button.pack(side="right", padx=(0, 8))
         self._update_summary()
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.after_idle(self._maximize)
         self.grab_set()
         self.focus_set()
+
+    def _maximize(self) -> None:
+        try:
+            self.state("zoomed")
+            return
+        except tk.TclError:
+            pass
+        try:
+            width = max(900, int(self.winfo_screenwidth()))
+            height = max(560, int(self.winfo_screenheight()) - 60)
+            self.geometry(f"{width}x{height}+0+0")
+        except tk.TclError:
+            self.geometry("1250x760")
+
+    def _load_widths(self) -> dict[str, int]:
+        result = dict(_DEFAULT_WIDTHS)
+        try:
+            payload = json.loads(self._layout_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return result
+        if not isinstance(payload, dict):
+            return result
+        widths = payload.get("widths")
+        if not isinstance(widths, dict):
+            return result
+        for key in result:
+            try:
+                value = int(widths.get(key, result[key]))
+            except (TypeError, ValueError):
+                continue
+            if value >= 16:
+                result[key] = value
+        return result
+
+    def _schedule_layout_save(self, _event: object | None = None) -> None:
+        if self._layout_save_after_id is not None:
+            try:
+                self.after_cancel(self._layout_save_after_id)
+            except tk.TclError:
+                pass
+        self._layout_save_after_id = self.after(350, self._save_layout)
+
+    def _save_layout(self) -> None:
+        self._layout_save_after_id = None
+        try:
+            widths = {
+                key: int(self.tree.column(key, "width"))
+                for key in ("#0", "use", "confidence", "cluster", "members", "reason")
+            }
+            self._layout_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._layout_path.with_name(self._layout_path.name + ".tmp")
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump({"version": 1, "widths": widths}, handle, ensure_ascii=False, sort_keys=True, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._layout_path)
+        except (OSError, tk.TclError, TypeError, ValueError):
+            return
 
     def _cluster_index(self, iid: str) -> int | None:
         if not iid.startswith("cluster:"):
@@ -134,15 +227,29 @@ class GlobalDuplicatesDialog(tk.Toplevel):
             self._set(index, False)
 
     def _update_summary(self) -> None:
+        strong = sum(default_cluster_selected(cluster.confidence) for cluster in self.clusters)
         self.summary_var.set(
-            f"Запропоновано блоків на об'єднання: {len(self.clusters)} · вибрано: {len(self.selected)}"
+            f"Знайдено груп-кандидатів: {len(self.clusters)} · "
+            f"автоматично рекомендовано: {strong} · вибрано: {len(self.selected)}"
         )
         self.apply_button.configure(state="normal" if self.selected else "disabled")
+
+    def close(self) -> None:
+        self._save_layout()
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
 
     def apply(self) -> None:
         chosen = [self.clusters[index] for index in sorted(self.selected)]
         if not chosen:
             return
-        self.grab_release()
+        self._save_layout()
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
         self.destroy()
         self.on_apply(chosen)
