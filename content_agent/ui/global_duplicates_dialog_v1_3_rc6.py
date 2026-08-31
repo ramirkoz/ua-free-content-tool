@@ -62,7 +62,12 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         ttk.Label(header, textvariable=self.summary_var, foreground="#555").pack(anchor="w", pady=(4, 0))
 
         columns = ("use", "confidence", "cluster", "members", "reason")
-        self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="browse")
+        table = ttk.Frame(self)
+        table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        table.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
+
+        self.tree = ttk.Treeview(table, columns=columns, show="tree headings", selectmode="browse")
         self.tree.heading("#0", text="")
         self.tree.heading("use", text="Об'єднати")
         self.tree.heading("confidence", text="Впевненість")
@@ -71,13 +76,26 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         self.tree.heading("reason", text="Причина")
 
         widths = self._load_widths()
+        # No Treeview column is allowed to absorb spare window width automatically.
+        # With stretch=False, a width dragged by the editor remains exactly that
+        # width instead of snapping back when Tk recalculates the maximized layout.
         self.tree.column("#0", width=widths.get("#0", 18), minwidth=16, stretch=False)
         self.tree.column("use", width=widths.get("use", 80), minwidth=70, anchor="center", stretch=False)
         self.tree.column("confidence", width=widths.get("confidence", 105), minwidth=90, anchor="center", stretch=False)
-        self.tree.column("cluster", width=widths.get("cluster", 760), minwidth=300, anchor="w", stretch=True)
+        self.tree.column("cluster", width=widths.get("cluster", 760), minwidth=180, anchor="w", stretch=False)
         self.tree.column("members", width=widths.get("members", 90), minwidth=80, anchor="center", stretch=False)
-        self.tree.column("reason", width=widths.get("reason", 520), minwidth=260, anchor="w", stretch=True)
-        self.tree.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self.tree.column("reason", width=widths.get("reason", 520), minwidth=180, anchor="w", stretch=False)
+
+        self.tree_y_scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
+        self.tree_x_scroll = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(
+            yscrollcommand=self.tree_y_scroll.set,
+            xscrollcommand=self.tree_x_scroll.set,
+        )
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.tree_x_scroll.grid(row=1, column=0, sticky="ew")
+
         self.tree.bind("<Button-1>", self._click, add="+")
         self.tree.bind("<space>", self._space)
         self.tree.bind("<ButtonRelease-1>", self._schedule_layout_save, add="+")
