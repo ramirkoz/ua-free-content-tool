@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import content_agent.ui.v1_4_rc7_window as rc7
+from content_agent.target_presets_v1_2_1 import TargetPresetState
 
 
 class _Var:
@@ -39,7 +40,7 @@ def test_rc7_fresh_material_restores_last_used_targets(monkeypatch) -> None:
         "telegram": _Var(False),
         "linkedin": _Var(False),
     }
-    window._target_preset_state = SimpleNamespace(
+    window._target_preset_state = TargetPresetState(
         last_targets=["facebook:news", "telegram"],
         presets={},
     )
