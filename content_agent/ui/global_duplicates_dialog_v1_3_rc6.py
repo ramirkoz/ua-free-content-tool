@@ -11,6 +11,7 @@ from ..models import NewsGroup
 from ..paths import data_dir
 
 
+HIGH_CONFIDENCE = 80
 DEFAULT_AUTO_SELECT_CONFIDENCE = 90
 _LAYOUT_FILE = "duplicate_dialog_layout_v1_4.json"
 _DEFAULT_WIDTHS = {
@@ -25,6 +26,16 @@ _DEFAULT_WIDTHS = {
 
 def default_cluster_selected(confidence: int) -> bool:
     return int(confidence) >= DEFAULT_AUTO_SELECT_CONFIDENCE
+
+
+def confidence_visual_class(confidence: int) -> str:
+    """Return the visual confidence class independently of auto-selection.
+
+    80-89% remains a strong (green) match, but only 90%+ is selected
+    automatically. Visual meaning and safety automation are deliberately separate.
+    """
+
+    return "strong" if int(confidence) >= HIGH_CONFIDENCE else "possible"
 
 
 class GlobalDuplicatesDialog(tk.Toplevel):
@@ -51,8 +62,15 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         self.minsize(900, 560)
         self.transient(parent.winfo_toplevel())
 
+        # The dialog itself owns the vertical layout. The table is the only row
+        # allowed to expand; the header and action footer always keep their space.
+        # This prevents the maximized Treeview from pushing the action buttons
+        # below the usable Windows desktop.
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
         header = ttk.Frame(self, padding=(12, 10, 12, 6))
-        header.pack(fill="x")
+        header.grid(row=0, column=0, sticky="ew")
         ttk.Label(
             header,
             text="Знайдено кандидати на об’єднання серед нових матеріалів",
@@ -63,7 +81,7 @@ class GlobalDuplicatesDialog(tk.Toplevel):
 
         columns = ("use", "confidence", "cluster", "members", "reason")
         table = ttk.Frame(self)
-        table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        table.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
         table.rowconfigure(0, weight=1)
         table.columnconfigure(0, weight=1)
 
@@ -116,7 +134,7 @@ class GlobalDuplicatesDialog(tk.Toplevel):
                     cluster.reason,
                 ),
                 open=True,
-                tags=("strong" if cluster.confidence >= DEFAULT_AUTO_SELECT_CONFIDENCE else "possible",),
+                tags=(confidence_visual_class(cluster.confidence),),
             )
             for group_id in cluster.group_ids:
                 group = groups.get(group_id)
@@ -132,7 +150,7 @@ class GlobalDuplicatesDialog(tk.Toplevel):
         self.tree.tag_configure("possible", background="#fff5d6")
 
         actions = ttk.Frame(self, padding=(12, 0, 12, 12))
-        actions.pack(fill="x")
+        actions.grid(row=2, column=0, sticky="ew")
         ttk.Button(actions, text="Вибрати всі", command=self.select_all).pack(side="left")
         ttk.Button(actions, text="Зняти всі", command=self.clear_all).pack(side="left", padx=6)
         ttk.Button(actions, text="Закрити", command=self.close).pack(side="right")
@@ -152,7 +170,7 @@ class GlobalDuplicatesDialog(tk.Toplevel):
             pass
         try:
             width = max(900, int(self.winfo_screenwidth()))
-            height = max(560, int(self.winfo_screenheight()) - 60)
+            height = max(560, int(self.winfo_screenheight()) - 80)
             self.geometry(f"{width}x{height}+0+0")
         except tk.TclError:
             self.geometry("1250x760")
