@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import inspect
 
 from content_agent.donation_settings_v1_3_1_rc8 import DonationSettings
 import content_agent.ui.v1_4_rc8_window as rc8
@@ -52,9 +52,10 @@ def test_rc8_status_counts_visible_destination_switches() -> None:
     assert window.donation_status_var.get() == "текст збережено · увімкнено профілів: 2"
 
 
-def test_rc8_rebuild_uses_v14_destination_readiness(monkeypatch) -> None:
+def test_rc8_rebuild_uses_v14_destination_readiness() -> None:
     # The concrete implementation must not fall back to AppConfig.platform_ready
     # for instagram:<id>; that was the v1.4 regression path.
-    source = rc8.MainWindow._rebuild_target_controls.__code__.co_names
+    source = inspect.getsource(rc8.MainWindow._rebuild_target_controls)
     assert "destination_ready" in source
     assert "_donation_target_toggled" in source
+    assert "Донатний блок" in source
