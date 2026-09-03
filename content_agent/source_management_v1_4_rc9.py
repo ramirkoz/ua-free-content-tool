@@ -21,9 +21,9 @@ _RSS_SUFFIXES = (".rss", ".xml", ".atom", ".rdf")
 def detect_source_kind(address: str) -> str:
     """Infer the collector type from an address without network access.
 
-    This deliberately uses only strong syntactic signals. A normal HTTP(S) URL is
-    treated as a web page unless its path/query clearly looks like a feed. Users
-    can still explicitly override the result in the UI for unusual feed URLs.
+    This deliberately uses only strong syntactic feed/Telegram signals. A normal
+    HTTP(S) URL is treated as a web page unless its path/query clearly looks like
+    a feed. Unusual feeds can still be forced to RSS manually in the editor.
     """
 
     raw = str(address or "").strip()
@@ -54,7 +54,10 @@ def detect_source_kind(address: str) -> str:
     if path_parts & _RSS_PATH_PARTS:
         return "rss"
 
-    query = {key.casefold(): [str(value).casefold() for value in values] for key, values in parse_qs(parsed.query).items()}
+    query = {
+        key.casefold(): [str(value).casefold() for value in values]
+        for key, values in parse_qs(parsed.query).items()
+    }
     for key in ("feed", "format", "output", "type"):
         if any(value in {"rss", "rss2", "atom", "xml"} for value in query.get(key, [])):
             return "rss"
@@ -63,9 +66,17 @@ def detect_source_kind(address: str) -> str:
 
 
 def resolve_source_kind(address: str, selected_kind: str = "auto") -> str:
-    """Return a persisted source kind, respecting an explicit user override."""
+    """Return a persisted kind with automatic correction of obvious mistakes.
 
+    Strong Telegram/RSS address signals win even if the selector was accidentally
+    left on another value. A generic HTTP(S) URL remains manually overridable so
+    feeds with non-obvious URLs can still be entered as RSS.
+    """
+
+    detected = detect_source_kind(address)
+    if detected in {"telegram", "rss"}:
+        return detected
     selected = str(selected_kind or "auto").strip().casefold()
     if selected in SOURCE_KINDS:
         return selected
-    return detect_source_kind(address)
+    return detected
