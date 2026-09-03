@@ -40,7 +40,7 @@ def test_keyword_search_requires_all_terms_across_title_and_body(tmp_path: Path)
         source_id,
         external_id="one",
         title="КИЇВ запускає експеримент",
-        text="Мережа тестує персональну знижку для покупців.",
+        text="Мережа тестує персональну знижка для покупців.",
     )
     _add(
         db,
