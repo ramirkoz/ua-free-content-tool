@@ -19,3 +19,7 @@ RC12 is a production hotfix for the Sources tab regression exposed by the RC9 so
 - RC11 Inbox sorting/merged-block visibility fixes remain unchanged.
 - RC10 `ОПУБЛІКУВАТИ ЗАРАЗ` remains isolated from the normal queue.
 - No database schema migration and no Data reset.
+
+## Release verification
+
+- RC12 regression coverage is included in the Windows CI and release validation path before the portable archive is published.
