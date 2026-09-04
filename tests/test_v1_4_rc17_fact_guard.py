@@ -9,7 +9,7 @@ from content_agent.rewrite_pipeline_v1_4_rc17 import candidate_after_router_rc17
 
 def test_rc17_youtube_cyrillic_source_matches_canonical_brand() -> None:
     result = guard_rewrite_rc17(
-        "В салоне электрокара можно смотреть Ютуб, а в багажнике хватает места для вещей.",
+        "Tesla показала Cybercab. В салоне электрокара можно смотреть Ютуб, а в багажнике хватает места для вещей.",
         "Tesla показала салон Cybercab",
         "У пасажирів Cybercab є екран, на якому можна дивитися YouTube.",
         language="uk",
