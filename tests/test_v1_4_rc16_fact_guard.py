@@ -1,4 +1,8 @@
+from content_agent.ai_router_v1_2_1 import AIResult
+from content_agent.evidence_pack import EvidencePack
 from content_agent.fact_guard import extract_numbers, guard_rewrite
+from content_agent import rewrite_pipeline_v1_3 as base_pipeline
+from content_agent.rewrite_pipeline_v1_4_rc16 import candidate_after_router_rc16
 
 
 def test_rc16_ru_ua_thousand_translation_is_same_fact() -> None:
@@ -71,3 +75,45 @@ def test_rc16_still_rejects_genuinely_new_number() -> None:
     )
     assert result.allowed is False
     assert "600000" in result.unsupported_numbers
+
+
+def test_rc16_fact_guard_reject_gets_one_same_provider_correction(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_router_call(prompt: str, local_prompt: str, **kwargs: object) -> AIResult:
+        del local_prompt
+        calls.append({"prompt": prompt, **kwargs})
+        if len(calls) == 1:
+            text = (
+                '{"headline":"Канада фінансує дослідження","fact_card":"",'
+                '"rewrite":"Канада фінансує наукові дослідження. Кожен професор отримуватиме 600 тис. доларів на рік."}'
+            )
+        else:
+            text = (
+                '{"headline":"Канада фінансує дослідження","fact_card":"",'
+                '"rewrite":"Канада фінансує наукові дослідження. Кожен професор отримуватиме 500 тис. доларів на рік."}'
+            )
+        return AIResult(text, "codex", "codex-chatgpt", "Codex / ChatGPT", 1, ("Codex / ChatGPT",))
+
+    monkeypatch.setattr(base_pipeline, "_router_call", fake_router_call)
+    evidence = EvidencePack(
+        text="Канада фінансує наукові дослідження. Кожен професор отримує 500 тис. доларів на рік.",
+        source_count=1,
+        selected_sentences=2,
+        total_sentences=2,
+        truncated=False,
+    )
+
+    candidate = candidate_after_router_rc16(
+        "PROMPT",
+        "LOCAL",
+        evidence,
+        language="uk",
+        max_candidates=2,
+    )
+
+    assert candidate.guard.allowed is True
+    assert "500 тис." in candidate.rewrite
+    assert len(calls) == 2
+    assert "FACT GUARD REPAIR ONLY" in str(calls[1]["prompt"])
+    assert calls[1]["skip_providers"] == {"gemini", "nvidia", "groq", "cloudflare", "local"}
