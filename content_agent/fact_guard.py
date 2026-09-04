@@ -2,8 +2,36 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
-_NUMBER_RE = re.compile(r"(?<![\w])(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?)(?:\s?%|\s?(?:млн|млрд|тис\.?|km|км|m|м|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|usd|eur|грн|₴|\$|€))?", re.IGNORECASE)
+_NUMBER_RE = re.compile(
+    r"(?<![\w])"
+    r"(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
+    r"(?P<number>"
+    r"(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?)"
+    r")"
+    r"(?P<suffix>"
+    r"(?:\s*(?:"
+    r"%|"
+    r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
+    r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
+    r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
+    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м|k(?![a-zа-яіїєґ])|"
+    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
+    r"dollars?|євро|евро|euros?|₴|\$|€"
+    r")){0,2}"
+    r")",
+    re.IGNORECASE,
+)
+_SUFFIX_TOKEN_RE = re.compile(
+    r"(?iu)%|"
+    r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
+    r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
+    r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
+    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м|k(?![a-zа-яіїєґ])|"
+    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
+    r"dollars?|євро|евро|euros?|₴|\$|€"
+)
 _LATIN_ENTITY_RE = re.compile(
     r"\b(?:[A-Z][A-Za-z0-9]*(?:[._+\-/][A-Za-z0-9]+)*|[A-Z]{2,}[A-Z0-9._+\-/]*|[A-Za-z]+\d+[A-Za-z0-9._+\-/]*)\b"
 )
@@ -17,6 +45,44 @@ _METADATA_PREFIXES = (
     "ЧАС:",
     "TIME:",
     "URL:",
+)
+
+_SCALE_ALIASES: tuple[tuple[re.Pattern[str], Decimal], ...] = (
+    (re.compile(r"(?iu)^(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|k)$"), Decimal(1000)),
+    (re.compile(r"(?iu)^(?:млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million)$"), Decimal(1_000_000)),
+    (re.compile(r"(?iu)^(?:млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn)$"), Decimal(1_000_000_000)),
+)
+_UNIT_ALIASES: dict[str, str] = {
+    "%": "%",
+    "km": "km",
+    "км": "km",
+    "m": "m",
+    "м": "m",
+    "kg": "kg",
+    "кг": "kg",
+    "gb": "gb",
+    "гб": "gb",
+    "mb": "mb",
+    "мб": "mb",
+    "tb": "tb",
+    "тб": "tb",
+    "mw": "mw",
+    "мвт": "mw",
+    "gw": "gw",
+    "гвт": "gw",
+    "usd": "usd",
+    "$": "usd",
+    "eur": "eur",
+    "€": "eur",
+    "uah": "uah",
+    "грн": "uah",
+    "₴": "uah",
+}
+_CURRENCY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?iu)^грив(?:ня|ні|ень)$"), "uah"),
+    (re.compile(r"(?iu)^дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)$"), "usd"),
+    (re.compile(r"(?iu)^dollars?$"), "usd"),
+    (re.compile(r"(?iu)^(?:євро|евро|euros?)$"), "eur"),
 )
 
 _HIGH_RISK_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -65,21 +131,62 @@ class FactGuardResult:
     unsupported_entities: tuple[str, ...] = ()
 
 
-def _canon_number(token: str) -> str:
-    value = str(token or "").strip().lower().replace("\u00a0", " ").replace("\u202f", " ")
-    value = value.replace("₴", "грн").replace("$", "usd").replace("€", "eur")
-    match = re.match(r"^(.*?\d(?:[\d ,.]*\d|\d)?)(.*)$", value)
-    if not match:
-        return " ".join(value.split())
-    numeric = match.group(1).strip()
-    suffix = " ".join(match.group(2).split())
-    numeric = numeric.replace(" ", "")
-    # Comma-separated 3-digit groups are thousands unless the integer part is zero.
-    if re.fullmatch(r"[1-9]\d{0,2}(?:,\d{3})+", numeric):
-        numeric = numeric.replace(",", "")
-    elif "," in numeric and "." not in numeric:
-        numeric = numeric.replace(",", ".")
-    return (numeric + (" " + suffix if suffix else "")).strip()
+def _parse_decimal(raw: str) -> Decimal | None:
+    value = str(raw or "").strip().replace("\u00a0", " ").replace("\u202f", " ")
+    compact = value.replace(" ", "")
+    if re.fullmatch(r"[1-9]\d{0,2}(?:,\d{3})+", compact):
+        compact = compact.replace(",", "")
+    elif "," in compact and "." not in compact:
+        compact = compact.replace(",", ".")
+    try:
+        return Decimal(compact)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _decimal_text(value: Decimal) -> str:
+    if value == value.to_integral():
+        return str(int(value))
+    return format(value.normalize(), "f").rstrip("0").rstrip(".")
+
+
+def _scale_for(token: str) -> Decimal | None:
+    clean = str(token or "").strip().casefold()
+    for pattern, multiplier in _SCALE_ALIASES:
+        if pattern.fullmatch(clean):
+            return multiplier
+    return None
+
+
+def _unit_for(token: str) -> str | None:
+    clean = str(token or "").strip().casefold()
+    if clean in _UNIT_ALIASES:
+        return _UNIT_ALIASES[clean]
+    for pattern, canonical in _CURRENCY_PATTERNS:
+        if pattern.fullmatch(clean):
+            return canonical
+    return None
+
+
+def _canon_number_match(match: re.Match[str]) -> str:
+    base = _parse_decimal(match.group("number"))
+    if base is None:
+        return ""
+    scale = Decimal(1)
+    unit = _unit_for(match.group("prefix") or match.group("prefix_word") or "")
+    suffix = match.group("suffix") or ""
+    for token_match in _SUFFIX_TOKEN_RE.finditer(suffix):
+        token = token_match.group(0)
+        multiplier = _scale_for(token)
+        if multiplier is not None:
+            scale = multiplier
+            continue
+        candidate_unit = _unit_for(token)
+        if candidate_unit is not None:
+            unit = candidate_unit
+    value = base * scale
+    canonical = _decimal_text(value)
+    return canonical + (f" {unit}" if unit else "")
 
 
 def _factual_evidence(value: str) -> str:
@@ -103,7 +210,12 @@ def _factual_evidence(value: str) -> str:
 
 
 def extract_numbers(value: str) -> set[str]:
-    return {_canon_number(item) for item in _NUMBER_RE.findall(str(value or "")) if _canon_number(item)}
+    result: set[str] = set()
+    for match in _NUMBER_RE.finditer(str(value or "")):
+        canonical = _canon_number_match(match)
+        if canonical:
+            result.add(canonical)
+    return result
 
 
 def extract_latin_entities(value: str) -> set[str]:
@@ -175,6 +287,10 @@ def guard_rewrite(
     Editorial memory is deliberately absent from ``evidence``. Evidence Pack
     transport metadata is also excluded from factual matching. Therefore an old
     memory fact or a source timestamp cannot silently authorize a new claim.
+
+    Numeric facts are compared semantically across common RU/UA/EN forms, so
+    ``500 тыс.``, ``500 тис.``, ``500 thousand`` and ``500,000`` are treated as
+    the same quantity instead of as four unrelated strings.
     """
 
     source = _factual_evidence(evidence)
