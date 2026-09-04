@@ -4,23 +4,23 @@ import re
 
 from .fact_guard import FactGuardResult, _factual_evidence, _quality_score, guard_rewrite
 
-# Curated aliases only.  These are well-known brand/platform spellings that are
+# Curated aliases only. These are well-known brand/platform spellings that are
 # routinely transliterated in RU/UA source feeds while the public rewrite keeps
-# the canonical Latin brand.  We deliberately do NOT attempt generic Cyrillic ↔
+# the canonical Latin brand. We deliberately do NOT attempt generic Cyrillic ↔
 # Latin transliteration for arbitrary model/person names because that would turn
 # Fact Guard into a hallucination permit.
 _ENTITY_ALIAS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "youtube": (
         re.compile(r"(?iu)\byou\s*tube\b"),
-        re.compile(r"(?iu)\bютуб(?:а|і|у|ом|е)?\b"),
+        re.compile(r"(?iu)\bютуб(?:а|і|и|у|ом|і|е)?\b"),
     ),
     "telegram": (
         re.compile(r"(?iu)\btelegram\b"),
-        re.compile(r"(?iu)\bтелеграм(?:а|і|у|ом|і)?\b"),
+        re.compile(r"(?iu)\bтелеграм(?:а|і|и|у|ом|і|е)?\b"),
     ),
     "facebook": (
         re.compile(r"(?iu)\bfacebook\b"),
-        re.compile(r"(?iu)\bфейсбук(?:а|і|у|ом|е)?\b"),
+        re.compile(r"(?iu)\bфейсбук(?:а|і|и|у|ом|і|е)?\b"),
     ),
     "instagram": (
         re.compile(r"(?iu)\binstagram\b"),
@@ -54,11 +54,11 @@ _ENTITY_ALIAS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
     "google": (
         re.compile(r"(?iu)\bgoogle\b"),
-        re.compile(r"(?iu)\bгугл(?:а|і|у|ом|е)?\b"),
+        re.compile(r"(?iu)\bгугл(?:а|і|и|у|ом|і|е)?\b"),
     ),
     "microsoft": (
         re.compile(r"(?iu)\bmicrosoft\b"),
-        re.compile(r"(?iu)\bмайкрософт(?:а|і|у|ом|е)?\b"),
+        re.compile(r"(?iu)\bмайкрософт(?:а|і|и|у|ом|і|е)?\b"),
     ),
     "nvidia": (
         re.compile(r"(?iu)\bnvidia\b"),
@@ -128,10 +128,10 @@ def guard_rewrite_rc17(
 ) -> FactGuardResult:
     """RC17 Fact Guard with safe canonical-brand equivalence.
 
-    RC16 compared Latin entities literally.  A source spelling ``Ютуб`` and a
+    RC16 compared Latin entities literally. A source spelling ``Ютуб`` and a
     perfectly factual rewrite spelling ``YouTube`` therefore looked like a new
-    entity.  RC17 only relaxes that one class of false positive through a
-    curated alias table.  Unknown products/models remain strict.
+    entity. RC17 only relaxes that one class of false positive through a
+    curated alias table. Unknown products/models remain strict.
     """
 
     result = guard_rewrite(evidence, headline, rewrite, language=language)
