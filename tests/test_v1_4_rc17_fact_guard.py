@@ -78,24 +78,23 @@ def test_rc17_false_alias_positive_returns_first_candidate_without_repair(monkey
 
 def test_rc17_uses_only_one_fact_repair_across_fresh_provider_attempts(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
+    headline = "Програма отримала фінансування на дослідження"
+
+    def response(amount: int, provider: str, model: str, label: str) -> AIResult:
+        text = (
+            f"Програма отримала {amount} тис. доларів на проведення наукових досліджень "
+            "у межах нового конкурсу. Кошти спрямують на роботу дослідницької команди."
+        )
+        return AIResult(
+            '{"headline":"' + headline + '","fact_card":"","rewrite":"' + text + '"}',
+            provider, model, label, 1, (label,),
+        )
 
     responses = [
-        AIResult(
-            '{"headline":"Фінансування","fact_card":"","rewrite":"Програма отримала 600 тис. доларів."}',
-            "codex", "codex-chatgpt", "Codex / ChatGPT", 1, ("Codex / ChatGPT",),
-        ),
-        AIResult(
-            '{"headline":"Фінансування","fact_card":"","rewrite":"Програма отримала 700 тис. доларів."}',
-            "codex", "codex-chatgpt", "Codex / ChatGPT", 1, ("Codex / ChatGPT",),
-        ),
-        AIResult(
-            '{"headline":"Фінансування","fact_card":"","rewrite":"Програма отримала 800 тис. доларів."}',
-            "groq", "openai/gpt-oss-120b", "GPT-OSS 120B / Groq", 1, ("GPT-OSS",),
-        ),
-        AIResult(
-            '{"headline":"Фінансування","fact_card":"","rewrite":"Програма отримала 500 тис. доларів."}',
-            "nvidia", "nvidia/nemotron", "Nemotron / NVIDIA", 1, ("Nemotron",),
-        ),
+        response(600, "codex", "codex-chatgpt", "Codex / ChatGPT"),
+        response(700, "codex", "codex-chatgpt", "Codex / ChatGPT"),
+        response(800, "groq", "openai/gpt-oss-120b", "GPT-OSS 120B / Groq"),
+        response(500, "nvidia", "nvidia/nemotron", "Nemotron / NVIDIA"),
     ]
 
     def fake_router_call(prompt: str, local_prompt: str, **kwargs: object) -> AIResult:
@@ -105,10 +104,13 @@ def test_rc17_uses_only_one_fact_repair_across_fresh_provider_attempts(monkeypat
 
     monkeypatch.setattr(base_pipeline, "_router_call", fake_router_call)
     evidence = EvidencePack(
-        text="Програма отримала 500 тис. доларів.",
+        text=(
+            "Програма отримала 500 тис. доларів на проведення наукових досліджень "
+            "у межах нового конкурсу. Кошти спрямують на роботу дослідницької команди."
+        ),
         source_count=1,
-        selected_sentences=1,
-        total_sentences=1,
+        selected_sentences=2,
+        total_sentences=2,
         truncated=False,
     )
 
@@ -124,3 +126,4 @@ def test_rc17_uses_only_one_fact_repair_across_fresh_provider_attempts(monkeypat
     assert "500 тис." in candidate.rewrite
     repair_prompts = [str(call["prompt"]) for call in calls if "FACT-SAFE REPAIR" in str(call["prompt"])]
     assert len(repair_prompts) == 1
+    assert len(calls) == 4
