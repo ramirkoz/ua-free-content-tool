@@ -2,30 +2,25 @@
 
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
-> **Public release:** `v1.3.0`  
-> **Current version:** `v1.3.1-rc13`
+> **Current release:** `v1.4.0-rc15`  
+> **Current version:** `v1.4.0-rc15`
 > **Platform:** Windows 10/11, portable
 > **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
 
 UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
 
-## What is new in v1.3.1-rc13
+## What is new in v1.4.0-rc15
 
-- RC10 keeps the RC9 Tk target/donation-control crash fix and additionally fixes Inbox column geometry: widths no longer stretch with the window, a horizontal scrollbar is available, and Shift+click adds secondary/tertiary sort keys.
-- The RC8 changes remain: persisted Inbox column widths, one-word central topic, bounded visible rewrite attempts, Threads ambiguous-publication reconciliation, local/history potential scoring, and editable per-target donation policy.
+- Keyword-search results in Inbox now open as a near-fullscreen editorial workspace.
+- The merged-block composition editor uses the same near-fullscreen workspace for full-text comparison.
+- Inbox has a source filter populated from sources actually present in the currently visible working set.
+- A merged block remains visible when any article inside it belongs to the selected source.
+- Source filtering composes with the existing Inbox status filter and RC11 stable multi-sort instead of replacing them.
+- RC14 keyword merge search and safe detach behavior are preserved unchanged.
+- No database schema migration and no Data reset are required.
 
-- Codex has a visible runtime status: installation, authorization, Router availability/cooldown, last attempt and latency.
-- Codex watchdog now terminates the active Codex child app-server when a request exceeds its bounded slice, preventing timed-out requests from continuing invisibly in the background.
-- Rewrite keeps one shared deadline and performs one bounded same-provider format repair for Codex/Gemini before falling through to weaker providers.
-- Recoverable rewrite/search failures are reported in the operation/status area instead of repeatedly blocking the editor with modal dialogs.
-- Global **Find and merge** is staged: a lightweight one-article preview scans the full `new` inbox, then only candidate groups are fully hydrated from SQLite.
-- The duplicate prefilter now obeys its deadline instead of discarding it; AI verification stops when the remaining budget is too small while deterministic candidates remain usable.
-- The global-search emergency UI guard is separate from the internal search deadline and cancellation is propagated to the worker.
-- Large merged blocks retain the evidence condenser and <=900-character post-AI safety introduced earlier.
-- Visible application naming is consistently `UA FREE Content Tool v1.3.1-rc13`; historical `dev`/internal build labels are not shown.
-
-See [RELEASE_NOTES_v1.3.1-rc13.md](RELEASE_NOTES_v1.3.1-rc13.md).
+See [RELEASE_NOTES_v1.4.0-rc15.md](RELEASE_NOTES_v1.4.0-rc15.md).
 
 ## Core workflow
 
@@ -143,7 +138,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. For this candidate, use `UA_FREE_Content_Tool_v1.3.1-rc13_Windows_Portable.zip`.
+2. For this candidate, use `UA_FREE_Content_Tool_v1.4.0-rc15_Windows_Portable.zip`.
 3. Verify SHA-256 against `SHA256SUMS.txt`.
 4. Extract the full ZIP into a new folder.
 5. Copy your existing `Data` folder if updating.
@@ -174,11 +169,11 @@ Build_Portable_Windows.bat
 
 The release workflow validates source, tests the application, builds the signed portable runtime, performs GUI startup checks, runs Microsoft Defender, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
 
-The public v1.3.0 release remains the stable baseline. v1.3.1-rc13 is the current live candidate built on the same signed portable runtime; its global-search and Router changes are covered by targeted deterministic tests, while final Windows/Data acceptance is performed on the operator workstation.
+v1.4.0-rc15 is the current release candidate built on the live-accepted RC14 baseline. It preserves the existing signed portable runtime, publication behavior and Data compatibility while adding the RC15 Inbox workspace and source-filter changes covered by deterministic regression tests and Windows CI.
 
 ## Documentation
 
-- [RELEASE_NOTES_v1.3.1-rc13.md](RELEASE_NOTES_v1.3.1-rc13.md) — current candidate notes.
+- [RELEASE_NOTES_v1.4.0-rc15.md](RELEASE_NOTES_v1.4.0-rc15.md) — current candidate notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
