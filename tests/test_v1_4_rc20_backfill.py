@@ -40,7 +40,7 @@ def test_recovery_policy_uses_working_timezone_and_gap_overlap() -> None:
     ) == expected
 
     assert rc20.recovery_not_before(
-        "2026-09-04T22:30:00+00:00", now=now, zone=berlin
+        "2026-09-04T20:30:00+00:00", now=now, zone=berlin
     ) == midnight
     assert rc20.recovery_not_before(
         "2026-09-05T14:58:00+00:00",
