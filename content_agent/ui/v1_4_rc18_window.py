@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 from ..scheduling import KYIV
 from .v1_4_rc17_window import MainWindow as Rc17MainWindow
@@ -15,7 +15,8 @@ def milliseconds_until_next_kyiv_rollover(*, now: datetime | None = None) -> int
     current = (now or datetime.now(KYIV)).astimezone(KYIV)
     next_date = current.date() + timedelta(days=1)
     target = datetime.combine(next_date, time(0, 0, ROLLOVER_GRACE_SECONDS), tzinfo=KYIV)
-    return max(1000, int((target - current).total_seconds() * 1000))
+    elapsed = target.astimezone(timezone.utc) - current.astimezone(timezone.utc)
+    return max(1000, int(elapsed.total_seconds() * 1000))
 
 
 class MainWindow(Rc17MainWindow):
