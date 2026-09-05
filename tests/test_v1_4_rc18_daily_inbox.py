@@ -19,6 +19,13 @@ def _item(external_id: str, title: str, published_at: str) -> CollectedArticle:
     )
 
 
+def _latest_group_id(db: Database) -> int:
+    with db.connect() as con:
+        row = con.execute("SELECT id FROM news_groups ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
 def test_rc18_midnight_rollover_archives_previous_day_blocks(tmp_path: Path) -> None:
     db = Database(tmp_path / "db.sqlite3")
     source = db.add_source("rss", "Test", "https://example.com/feed")
@@ -26,7 +33,7 @@ def test_rc18_midnight_rollover_archives_previous_day_blocks(tmp_path: Path) -> 
     old = datetime(2026, 9, 4, 23, 50, tzinfo=KYIV).isoformat()
 
     assert db.insert_collected(source, [_item("old", "Новина 4 вересня", old)], enforce_today=False) == 1
-    group_id = db.list_groups(status="new")[0].id
+    group_id = _latest_group_id(db)
 
     result = db.rollover_inbox_day(now=now)
 
@@ -49,10 +56,10 @@ def test_rc18_mixed_block_keeps_only_current_day_story_in_working_group(tmp_path
     fresh = datetime(2026, 9, 5, 8, 15, tzinfo=KYIV).isoformat()
 
     assert db.insert_collected(first, [_item("old", "Стара версія події", old)], enforce_today=False) == 1
-    old_group = db.list_groups(status="new")[0].id
+    old_group = _latest_group_id(db)
     assert db.insert_collected(second, [_item("fresh", "Свіже оновлення події", fresh)], enforce_today=False) == 1
-    groups = db.list_groups(status="new")
-    fresh_group = next(group.id for group in groups if group.id != old_group)
+    fresh_group = _latest_group_id(db)
+    assert fresh_group != old_group
     assert db.merge_groups(old_group, [old_group, fresh_group]) == 1
 
     with db.connect() as con:
@@ -108,8 +115,7 @@ def test_rc18_approved_yesterday_story_is_hidden_from_inbox_but_preserved(tmp_pa
         [_item("approved-old", "Учорашня схвалена новина", yesterday)],
         enforce_today=False,
     ) == 1
-    with db.connect() as con:
-        group_id = int(con.execute("SELECT id FROM news_groups ORDER BY id DESC LIMIT 1").fetchone()[0])
+    group_id = _latest_group_id(db)
     db.set_group_status(group_id, "approved")
 
     assert all(group.id != group_id for group in db.list_groups())
