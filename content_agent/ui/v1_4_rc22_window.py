@@ -17,6 +17,10 @@ install_runtime()
 
 from .v1_4_rc21_window import MainWindow as Rc21MainWindow
 
+# The inherited UI imports compatibility router functions while it is loading.
+# Patch those consumer globals now that the full inheritance chain exists.
+install_runtime()
+
 
 class MainWindow(Rc21MainWindow):
     """v1.4.0-rc22: resilient AI routing and truthful provider health."""
@@ -26,7 +30,9 @@ class MainWindow(Rc21MainWindow):
     def __init__(self, root, database, config) -> None:
         self.ai_provider_health_var = tk.StringVar(master=root, value="AI-провайдери: стан ще не перевірено")
         self._rc22_health_label: ttk.Label | None = None
+        install_runtime()
         super().__init__(root, database, config)
+        install_runtime()
         self._install_provider_health_panel()
         self._apply_v14_labels()
         self.refresh_ai_component_status()
