@@ -14,7 +14,7 @@ from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
 from .portable import PortableMigrationError, ensure_portable_data_migrated
-from .ui.v1_4_rc25_window import MainWindow
+from .ui.v1_4_rc26_window import MainWindow
 
 
 def _show_startup_error(root: tk.Tk, message: str) -> None:
@@ -25,14 +25,14 @@ def _show_startup_error(root: tk.Tk, message: str) -> None:
 
 
 def _run_ui_startup(root: tk.Tk, logger: object) -> int:
-    root.title("UA FREE Content Tool — v1.4.0-rc25 · запуск")
+    root.title("UA FREE Content Tool — v1.4.0-rc26 · запуск")
     root.geometry("560x150")
     root.minsize(520, 140)
 
     frame = ttk.Frame(root, padding=18)
     frame.pack(fill="both", expand=True)
     status_var = tk.StringVar(value="Запуск: підготовка…")
-    ttk.Label(frame, text="UA FREE Content Tool v1.4.0-rc25", font="TkHeadingFont").pack(anchor="w")
+    ttk.Label(frame, text="UA FREE Content Tool v1.4.0-rc26", font="TkHeadingFont").pack(anchor="w")
     ttk.Label(frame, textvariable=status_var, wraplength=500).pack(anchor="w", pady=(10, 8))
     progress = ttk.Progressbar(frame, mode="indeterminate")
     progress.pack(fill="x")
@@ -55,7 +55,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
             set_stage("portable_migration")
             migration_started = time.monotonic()
             migration = ensure_portable_data_migrated()
-            logger.info(  # type: ignore[attr-defined]
+            logger.info(
                 "STARTUP stage=portable_migration end duration=%.3fs migrated=%s",
                 time.monotonic() - migration_started,
                 migration.migrated,
@@ -66,27 +66,21 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
             try:
                 config = load_config()
             except ConfigError as exc:
-                logger.error("Configuration could not be opened: %s", exc)  # type: ignore[attr-defined]
+                logger.error("Configuration could not be opened: %s", exc)
                 if portable_mode():
                     raise
                 config = AppConfig()
-            logger.info(  # type: ignore[attr-defined]
-                "STARTUP stage=config end duration=%.3fs", time.monotonic() - config_started
-            )
+            logger.info("STARTUP stage=config end duration=%.3fs", time.monotonic() - config_started)
 
             set_stage("database_init")
             database_started = time.monotonic()
             database = Database()
-            logger.info(  # type: ignore[attr-defined]
-                "STARTUP stage=database_init end duration=%.3fs", time.monotonic() - database_started
-            )
+            logger.info("STARTUP stage=database_init end duration=%.3fs", time.monotonic() - database_started)
 
             set_stage("database_quick_check")
             check_started = time.monotonic()
             database.quick_check()
-            logger.info(  # type: ignore[attr-defined]
-                "STARTUP stage=database_quick_check end duration=%.3fs", time.monotonic() - check_started
-            )
+            logger.info("STARTUP stage=database_quick_check end duration=%.3fs", time.monotonic() - check_started)
             result_queue.put(("ok", (database, config, migration)))
         except Exception as exc:
             result_queue.put(("error", exc))
@@ -146,15 +140,15 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
             stop_watchdog.set()
             progress.stop()
             error = payload if isinstance(payload, Exception) else RuntimeError(str(payload))
-            logger.error("Application startup failed: %s", error)  # type: ignore[attr-defined]
+            logger.error("Application startup failed: %s", error)
             status_var.set("Запуск не завершено.")
             _show_startup_error(root, str(error))
             root.destroy()
             return
 
-        database, config, migration = payload  # type: ignore[misc]
+        database, config, migration = payload
         if migration.migrated:
-            logger.info("Portable data imported from the previous local installation.")  # type: ignore[attr-defined]
+            logger.info("Portable data imported from the previous local installation.")
         progress.stop()
         frame.destroy()
         with pulse_lock:
@@ -168,9 +162,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
             _show_startup_error(root, str(exc))
             root.destroy()
             return
-        logger.info(  # type: ignore[attr-defined]
-            "STARTUP stage=build_main_window end duration=%.3fs", time.monotonic() - build_started
-        )
+        logger.info("STARTUP stage=build_main_window end duration=%.3fs", time.monotonic() - build_started)
         stop_watchdog.set()
 
     root.after(100, pulse_ui)
