@@ -22,7 +22,8 @@ save_router_state = legacy.save_router_state
 
 _BASE_RUN_AI = base.run_ai
 _LEGACY_RUN_AI = legacy.run_ai
-_ORIGINAL_COOLDOWN_SECONDS = legacy._cooldown_seconds
+_BASE_TEST_AI_ROUTER = base.test_ai_router
+_LEGACY_TEST_AI_ROUTER = legacy.test_ai_router
 
 _RC22_COOLDOWN_CAPS = {
     "auth": 30 * 60,
@@ -172,6 +173,7 @@ def provider_health_rows() -> list[dict[str, object]]:
     _normalize_persisted_cooldowns()
     overview = base.router_overview_cached()
     state = load_router_state()
+    cfg = load_provider_secrets()
     now = time.time()
     grouped: dict[str, dict[str, object]] = {}
 
@@ -217,7 +219,6 @@ def provider_health_rows() -> list[dict[str, object]]:
         provider = original.provider
         if provider not in grouped:
             continue
-        cfg = load_provider_secrets()
         slot = _runtime_slot(original, cfg)
         keys = [legacy._provider_key(provider), legacy._slot_key(slot)]
         for key in keys:
@@ -331,7 +332,9 @@ def run_ai(
 
     last_error: AIRouterError | None = None
     try:
-        return _BASE_RUN_AI(prompt, **kwargs)
+        result = _BASE_RUN_AI(prompt, **kwargs)
+        _normalize_persisted_cooldowns()
+        return result
     except AIRouterError as exc:
         last_error = exc
         _normalize_persisted_cooldowns()
@@ -348,7 +351,9 @@ def run_ai(
         recovered.add(legacy._slot_key(candidate))
         _clear_candidate_cooldown(candidate)
         try:
-            return _BASE_RUN_AI(prompt, **kwargs)
+            result = _BASE_RUN_AI(prompt, **kwargs)
+            _normalize_persisted_cooldowns()
+            return result
         except AIRouterError as exc:
             last_error = exc
             _normalize_persisted_cooldowns()
@@ -392,25 +397,20 @@ def probe_provider(provider: str) -> str:
 
 
 def install_runtime() -> None:
-    """Make RC22 the single router used by old compatibility modules in this process."""
-    legacy._cooldown_seconds = _cooldown_seconds_rc22
-    legacy.run_ai = run_ai
-    legacy.test_ai_router = test_ai_router
-    base.run_ai = run_ai
-    base.test_ai_router = test_ai_router
-
+    """Patch production consumers, while leaving legacy/base modules independently testable."""
+    this_module = sys.modules.get(__name__)
+    protected = {legacy, base, this_module}
     for module in list(sys.modules.values()):
-        if module is None or not str(getattr(module, "__name__", "")).startswith("content_agent"):
+        if module is None or module in protected:
+            continue
+        if not str(getattr(module, "__name__", "")).startswith("content_agent"):
             continue
         try:
             current = getattr(module, "run_ai", None)
             if current is _BASE_RUN_AI or current is _LEGACY_RUN_AI:
                 setattr(module, "run_ai", run_ai)
             current_test = getattr(module, "test_ai_router", None)
-            if current_test is getattr(base, "test_ai_router", None) or current_test is getattr(legacy, "test_ai_router", None):
+            if current_test is _BASE_TEST_AI_ROUTER or current_test is _LEGACY_TEST_AI_ROUTER:
                 setattr(module, "test_ai_router", test_ai_router)
         except Exception:
             continue
-
-
-install_runtime()
