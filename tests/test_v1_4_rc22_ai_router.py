@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 from content_agent import ai_router_v1_4_rc22 as router
 
 
@@ -44,8 +47,16 @@ def test_rc22_retries_one_cooled_provider_instead_of_false_no_provider(monkeypat
     assert calls[0]["max_output_tokens"] == 4095
 
 
-def test_rc22_runtime_installs_single_router() -> None:
-    router.install_runtime()
-    assert router.legacy.run_ai is router.run_ai
-    assert router.base.run_ai is router.run_ai
-    assert router.legacy.test_ai_router is router.test_ai_router
+def test_rc22_runtime_patches_consumers_but_not_core_routers() -> None:
+    dummy = types.ModuleType("content_agent._rc22_dummy_consumer")
+    dummy.run_ai = router._BASE_RUN_AI
+    dummy.test_ai_router = router._LEGACY_TEST_AI_ROUTER
+    sys.modules[dummy.__name__] = dummy
+    try:
+        router.install_runtime()
+        assert dummy.run_ai is router.run_ai
+        assert dummy.test_ai_router is router.test_ai_router
+        assert router.legacy.run_ai is router._LEGACY_RUN_AI
+        assert router.base.run_ai is router._BASE_RUN_AI
+    finally:
+        sys.modules.pop(dummy.__name__, None)
