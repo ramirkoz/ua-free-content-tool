@@ -99,9 +99,6 @@ def _write_pointer(target: Path) -> None:
 def _verify_install(target: Path) -> None:
     if not (target / "openai_codex").exists():
         raise CodexEngineError("Codex встановився без пакета openai_codex; staging відхилено.")
-    # pydantic_core is the exact binary that RC27 tried to delete while loaded.
-    # Presence is not mandatory for every future SDK build, so verify metadata or
-    # package directory rather than hardcoding one wheel layout.
     metadata = list(target.glob("openai_codex-*.dist-info"))
     if not metadata:
         metadata = list(target.glob("openai_codex*.dist-info"))
@@ -147,7 +144,7 @@ def install_codex() -> str:
         )
         if completed.returncode != 0:
             tail = "\n".join(completed.stdout.splitlines()[-14:])
-            raise CodexEngineEr("Не вдалося встановити Codex у безпечний staging.\n" + tail)
+            raise CodexEngineError("Не вдалося встановити Codex у безпечний staging.\n" + tail)
         _verify_install(staging)
         staging.rename(target)
         _write_pointer(target)
@@ -169,7 +166,6 @@ def install_codex() -> str:
 
 
 def _patch_imported_install_references() -> None:
-    """Replace `from ... import install_codex` references already loaded by Tk UI modules."""
     for module in list(sys.modules.values()):
         if module is None:
             continue
@@ -183,7 +179,6 @@ def _patch_imported_install_references() -> None:
 
 
 def install_runtime() -> None:
-    """Keep RC24 live-model selection and replace only runtime storage/install mechanics."""
     rc24.install_runtime()
     legacy.codex_extension_dir = codex_extension_dir
     legacy._activate_extension_dir = _activate_extension_dir
