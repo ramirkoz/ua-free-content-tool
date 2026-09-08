@@ -13,12 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from .paths import data_dir
+from .codex_runtime import CodexEngineError
 
 CODEX_PACKAGE = "openai-codex==0.144.4"
-
-
-class CodexEngineError(RuntimeError):
-    pass
 
 
 _CODEX_PROCESS_LOCK = threading.RLock()

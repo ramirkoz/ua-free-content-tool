@@ -1308,23 +1308,14 @@ def _replace_legacy_callable_references(module: object) -> None:
 
 
 def install_runtime() -> None:
-    """Install one canonical RC30 AI runtime across every already-loaded consumer.
+    """Initialize the canonical RC30 AI runtime without mutating historical modules.
 
-    Old versioned UI modules remain as layout/history dependencies, but their imported Router
-    and Codex function objects are replaced in-place.  Repeated calls are idempotent, which is
-    important because historical constructors still invoke their legacy ``install_runtime``
-    aliases while the inheritance chain is being built.
+    Active consumers import :mod:`content_agent.ai_router` and :mod:`content_agent.codex_runtime`
+    directly. Older RC modules remain inert compatibility/history modules and must never be
+    monkey-patched at runtime; doing so made test/import order change live behavior in RC29.
+    Repeated calls are intentionally idempotent.
     """
-    import sys
-
     _reset_stale_transient_cooldowns_once()
-    for module in list(sys.modules.values()):
-        if module is None:
-            continue
-        try:
-            _replace_legacy_callable_references(module)
-        except Exception:
-            logger.debug("RC30 canonical runtime patch skipped module=%r", getattr(module, "__name__", None), exc_info=True)
 
 # Compatibility helpers used by the provider diagnostics panel. They are aliases into
 # the canonical transport path, not separate router implementations.
