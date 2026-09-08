@@ -1,0 +1,55 @@
+name: RC30 apply CI fixes
+on:
+  push:
+    branches: [rc30-canonical-ai-runtime]
+    paths: [.github/workflows/rc30-ci-fix.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rc30-canonical-ai-runtime
+          fetch-depth: 0
+      - name: Apply verified RC30 fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path('content_agent/ai_router.py')
+          text = p.read_text(encoding='utf-8')
+          pattern = r'def install_runtime\(\) -> None:\n.*?(?=\n# Compatibility helpers used by the provider diagnostics panel\.)'
+          replacement = '''def install_runtime() -> None:\n    \"\"\"Initialize the canonical RC30 AI runtime without mutating historical modules.\n\n    Active consumers import :mod:`content_agent.ai_router` and :mod:`content_agent.codex_runtime`\n    directly. Older RC modules remain inert compatibility/history modules and must never be\n    monkey-patched at runtime; doing so made test/import order change live behavior in RC29.\n    Repeated calls are intentionally idempotent.\n    \"\"\"\n    _reset_stale_transient_cooldowns_once()\n'''
+          text2, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'ai_router install_runtime patch count={count}')
+          p.write_text(text2, encoding='utf-8')
+
+          p = Path('content_agent/codex_engine_v1_3.py')
+          text = p.read_text(encoding='utf-8')
+          old = '''from .paths import data_dir\n\nCODEX_PACKAGE = \"openai-codex==0.144.4\"\n\n\nclass CodexEngineError(RuntimeError):\n    pass\n'''
+          new = '''from .paths import data_dir\nfrom .codex_runtime import CodexEngineError\n\nCODEX_PACKAGE = \"openai-codex==0.144.4\"\n'''
+          if old not in text:
+              raise SystemExit('codex_engine legacy exception block not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          p = Path('content_agent/ai_provider_diagnostics_v1_2_1.py')
+          text = p.read_text(encoding='utf-8')
+          old = '''            except Exception as exc:\n                failures.append(f\"{slot.model}: тимчасова помилка перевірки: {exc}\")\n                continue\n'''
+          new = '''            except Exception as exc:\n                kind = str(getattr(exc, \"kind\", \"\") or \"\")\n                if kind:\n                    failures.append(f\"{slot.model}: {exc}\")\n                    if kind in {\"auth\", \"configuration\"}:\n                        terminal_status = \"error\"\n                        break\n                    if kind == \"quota\":\n                        terminal_status = \"warning\"\n                        continue\n                    continue\n                failures.append(f\"{slot.model}: тимчасова помилка перевірки: {exc}\")\n                continue\n'''
+          if old not in text:
+              raise SystemExit('diagnostics compatibility block not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          Path('.github/workflows/rc30-ci-fix.yml').unlink()
+      - name: Commit clean fixes
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'RC30: fix canonical runtime compatibility without legacy rebinding'
+          git push origin HEAD:rc30-canonical-ai-runtime
