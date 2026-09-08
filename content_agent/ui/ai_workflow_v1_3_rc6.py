@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from ..ai_router_v1_2_1 import last_ai_result_label
+from ..ai_router import last_ai_result_label
 from ..codex_news_v1_3 import rewrite_group_with_codex
 from ..editorial_memory import rank_editorial_examples
 from ..global_duplicates_v1_2_2_rc7 import (

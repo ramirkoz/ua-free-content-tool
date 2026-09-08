@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..ai_router_v1_4_rc24 import install_runtime
+from ..ai_router import install_runtime
 from .v1_4_rc23_window import MainWindow as Rc23MainWindow
 
 # RC23 and RC22 install their historical runtime layers while importing.

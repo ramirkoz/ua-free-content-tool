@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
-from .ai_router_v1_2_1 import AIRouterError
+from .ai_router import AIRouterError
 from .ai_task_profiles import REWRITE_PROFILE
 from .evidence_pack import EvidencePack
 from .rewrite_pipeline_v1_3 import RewriteCandidate

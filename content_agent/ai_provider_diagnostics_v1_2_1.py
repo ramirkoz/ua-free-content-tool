@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .local_ai_runtime_v1_2_2 import LocalAIRuntimeError, test_local_runtime
-from .ai_router_v1_2_1 import (
+from .ai_router import (
     AIModelError,
     AIModelSlot,
     AIProviderSecrets,
@@ -11,7 +11,7 @@ from .ai_router_v1_2_1 import (
     _configured,
     load_provider_secrets,
 )
-from .ai_router_v1_2_2 import _invoke_limited
+from .ai_router import _invoke_limited
 
 
 @dataclass(frozen=True, slots=True)

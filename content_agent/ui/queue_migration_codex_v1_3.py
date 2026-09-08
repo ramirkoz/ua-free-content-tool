@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from ..ai_router_v1_2_1 import last_ai_result_label, run_ai
+from ..ai_router import last_ai_result_label, run_ai
 from ..queue_migration import critical_fact_warnings
 from .queue_migration_dialog import QueueMigrationDialog
 

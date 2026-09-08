@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..ai_router_v1_4_rc25 import install_runtime as install_router_runtime
+from ..ai_router import install_runtime as install_router_runtime
 from ..rewrite_pipeline_v1_4_rc27 import install_runtime as install_rewrite_runtime
 from .v1_4_rc26_window import MainWindow as Rc26MainWindow
 

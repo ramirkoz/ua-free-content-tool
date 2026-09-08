@@ -7,7 +7,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .ai_router_v1_2_2 import AIRouterError, AIResult, run_ai
+from .ai_router import AIRouterError, AIResult, run_ai
 from .ai_task_profiles import REWRITE_PROFILE
 from .editorial_memory import EditorialExample, format_examples_for_prompt
 from .evidence_pack import EvidencePack, build_evidence_pack

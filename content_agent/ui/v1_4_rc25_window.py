@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..ai_router_v1_4_rc25 import install_runtime
+from ..ai_router import install_runtime
 from .v1_4_rc24_window import MainWindow as Rc24MainWindow
 
 # The inheritance chain imports historical router layers. RC25 is always applied

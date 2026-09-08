@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from . import ai_router_v1_2_1 as router
+from . import ai_router as router
 
 
 ACTIVE_AI_PROVIDERS: tuple[str, ...] = (
