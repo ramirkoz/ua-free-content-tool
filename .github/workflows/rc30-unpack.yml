@@ -1,0 +1,46 @@
+name: RC30 unpack staging
+
+on:
+  push:
+    branches:
+      - rc30-canonical-ai-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore canonical RC30 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .rc30/part1 .rc30/part2 .rc30/part3 .rc30/part4 | tr -d '\r\n' | base64 --decode > /tmp/rc30.xz
+          echo 'd126feed80791e5ef9f6a7b3e9859c2b2efe3b0dc89735ccbb69b0bcf4656a55  /tmp/rc30.xz' | sha256sum -c -
+          xz -dc /tmp/rc30.xz > /tmp/rc30.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/rc30.json').read_text(encoding='utf-8'))
+          for rel, text in data.items():
+              p = Path(rel)
+              if p.is_absolute() or '..' in p.parts:
+                  raise SystemExit(f'unsafe payload path: {rel}')
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(text, encoding='utf-8')
+          PY
+          test "$(tr -d '\r\n ' < VERSION.txt)" = '1.4.0-rc30'
+          test "$(tr -d '\r\n ' < PUBLIC_VERSION.txt)" = '1.4.0-rc30'
+          python -m compileall -q content_agent
+          rm -rf .rc30
+          rm -f .github/workflows/rc30-unpack.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'RC30: canonical AI runtime cleanup'
+          git push origin HEAD:rc30-canonical-ai-runtime
