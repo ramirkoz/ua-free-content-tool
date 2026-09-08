@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Callable, Iterable
 
-from .ai_router_v1_2_2 import AIRouterError, run_ai
+from .ai_router import AIRouterError, run_ai
 from .global_duplicates_v1_2_2_rc6 import (
     DuplicateSearchCancelled,
     _FastEdge,

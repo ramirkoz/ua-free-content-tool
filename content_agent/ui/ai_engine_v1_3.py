@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk
 
-from ..ai_router_v1_2_1 import (
+from ..ai_router import (
     AIProviderSecrets,
     AIRouterError,
     clear_router_cooldowns,
@@ -13,8 +13,8 @@ from ..ai_router_v1_2_1 import (
     save_provider_secrets,
     test_ai_router,
 )
-from ..codex_engine_v1_3 import clear_codex_status_cache, inspect_codex_cached, install_codex, login_chatgpt
-from ..ai_router_v1_2_2 import codex_router_status, router_overview_cached
+from ..codex_runtime import clear_codex_status_cache, inspect_codex_cached, install_codex, login_chatgpt
+from ..ai_router import codex_router_status, router_overview_cached
 from ..codex_news_v1_3 import rewrite_group_with_codex, run_topic_prompt_with_codex
 from ..editorial_memory import rank_editorial_examples, rank_topic_candidates
 from ..models import RewriteResult

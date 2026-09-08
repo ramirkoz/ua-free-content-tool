@@ -6,7 +6,7 @@ import re
 import time
 from collections.abc import Sequence
 
-from .ai_router_v1_2_1 import AIRouterError
+from .ai_router import AIRouterError
 from .editorial_memory import EditorialExample
 from .evidence_pack import EvidencePack
 from .models import NewsGroup

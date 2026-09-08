@@ -4,8 +4,8 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..ai_provider_diagnostics_v1_2_1 import ProviderDiagnostic, test_configured_providers
-from ..ai_router_v1_2_1 import save_provider_secrets
-from ..ai_router_v1_2_2 import test_ai_router
+from ..ai_router import save_provider_secrets
+from ..ai_router import test_ai_router
 from .v1_2_rc9_window import MainWindow as RC9Window
 
 

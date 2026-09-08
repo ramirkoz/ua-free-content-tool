@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from ..ai_router_v1_4_rc22 import (
+from ..ai_router import (
     AIRouterError,
     install_runtime,
     last_ai_result_label,
@@ -11,7 +11,7 @@ from ..ai_router_v1_4_rc22 import (
     provider_health_rows,
     provider_health_text,
 )
-from ..codex_engine_v1_3 import clear_codex_status_cache, inspect_codex_cached
+from ..codex_runtime import clear_codex_status_cache, inspect_codex_cached
 
 install_runtime()
 

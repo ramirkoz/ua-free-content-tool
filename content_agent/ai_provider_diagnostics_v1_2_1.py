@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .local_ai_runtime_v1_2_2 import LocalAIRuntimeError, test_local_runtime
-from .ai_router_v1_2_1 import (
+from .ai_router import (
     AIModelError,
     AIModelSlot,
     AIProviderSecrets,
@@ -11,7 +11,7 @@ from .ai_router_v1_2_1 import (
     _configured,
     load_provider_secrets,
 )
-from .ai_router_v1_2_2 import _invoke_limited
+from .ai_router import _invoke_limited
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +114,16 @@ def test_configured_providers() -> list[ProviderDiagnostic]:
                     continue
                 continue
             except Exception as exc:
+                kind = str(getattr(exc, "kind", "") or "")
+                if kind:
+                    failures.append(f"{slot.model}: {exc}")
+                    if kind in {"auth", "configuration"}:
+                        terminal_status = "error"
+                        break
+                    if kind == "quota":
+                        terminal_status = "warning"
+                        continue
+                    continue
                 failures.append(f"{slot.model}: тимчасова помилка перевірки: {exc}")
                 continue
 

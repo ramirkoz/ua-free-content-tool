@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Iterable
 
-from .ai_router_v1_2_2 import AIRouterError, run_ai
+from .ai_router import AIRouterError, run_ai
 from .global_duplicates_v1_3_rc6 import DuplicateCluster, _clean_title, _plain_group_text, _select_non_overlapping, _tokens
 from .models import NewsGroup
 

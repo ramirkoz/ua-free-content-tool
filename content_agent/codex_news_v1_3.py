@@ -4,8 +4,8 @@ import json
 import re
 from collections.abc import Sequence
 
-from .ai_router_v1_2_2 import AIRouterError, run_ai
-from .codex_engine_v1_3 import CodexEngineError, run_codex as _legacy_run_codex
+from .ai_router import AIRouterError, run_ai
+from .codex_runtime import CodexEngineError, run_codex as _legacy_run_codex
 from .editorial_memory import EditorialExample, format_examples_for_prompt
 from .models import NewsGroup, RewriteResult
 from .publication_text import validate_editorial_text

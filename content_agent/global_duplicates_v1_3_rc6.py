@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
-from .ai_router_v1_2_2 import AIRouterError, run_ai
+from .ai_router import AIRouterError, run_ai
 from .models import NewsGroup
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)

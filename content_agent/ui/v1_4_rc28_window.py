@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ..ai_router_v1_4_rc28 import install_runtime as install_router_runtime
-from ..codex_engine_v1_4_rc28 import install_codex as install_codex_safe
+from ..ai_router import install_runtime as install_router_runtime
+from ..codex_runtime import install_codex as install_codex_safe
 from ..rewrite_pipeline_v1_4_rc27 import install_runtime as install_rewrite_runtime
 from .v1_4_rc27_window import MainWindow as Rc27MainWindow
 
@@ -34,7 +34,7 @@ class MainWindow(Rc27MainWindow):
             # The newly installed SDK is intentionally activated on restart when
             # the current process already has Codex/Pydantic DLLs loaded.
             try:
-                from ..ai_router_v1_2_1 import clear_router_cooldowns
+                from ..ai_router import clear_router_cooldowns
                 clear_router_cooldowns()
             except Exception:
                 pass

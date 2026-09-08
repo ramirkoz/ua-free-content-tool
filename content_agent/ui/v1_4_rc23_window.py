@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..ai_router_v1_4_rc23 import install_runtime
+from ..ai_router import install_runtime
 
 # RC22 window installs its own compatibility router while importing. Re-install
 # RC23 immediately afterwards so every inherited rewrite consumer points at the

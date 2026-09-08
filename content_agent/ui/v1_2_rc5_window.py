@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from ..codex_engine_v1_3 import inspect_codex, install_codex, login_chatgpt
+from ..codex_runtime import inspect_codex, install_codex, login_chatgpt
 from ..rowboat_bridge_v1_3 import inspect_rowboat, install_rowboat
 from .ai_engine_v1_3 import AIEngineV13Mixin
 from .queue_migration_codex_v1_3 import CodexQueueMigrationDialog
