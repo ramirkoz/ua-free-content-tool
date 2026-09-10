@@ -89,6 +89,8 @@ class Database(Rc30Database):
                 if not group_row:
                     raise KeyError(group_id)
 
+                # One latest attempt per concrete destination. Old failures stay in
+                # history but are never retried after a newer sent/active attempt.
                 rows = db.execute(
                     """
                     SELECT t.id AS target_id,t.batch_id,t.platform,t.payload_text,
@@ -187,6 +189,9 @@ class Database(Rc30Database):
                         ),
                     )
 
+                    # Annotate the immutable failed attempt so History can explain
+                    # that a replacement attempt was created without changing its
+                    # actual failure status or error evidence.
                     old_progress: dict[str, Any]
                     try:
                         parsed = json.loads(str(row["progress_json"] or "{}"))
