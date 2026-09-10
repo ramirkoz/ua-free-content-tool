@@ -1,18 +1,18 @@
 # UA FREE Content Tool
 
-> **Поточний кандидат: v2.0.0-rc2.** Це обережний V2 compatibility release поверх перевіреного v1.4.0-rc30. Перед оновленням повністю закрийте RC30, розпакуйте V2 у нову папку і скопіюйте туди всю робочу папку `Data`. Деталі: [RELEASE_NOTES_v2.0.0-rc2.md](RELEASE_NOTES_v2.0.0-rc2.md).
+> **Поточний кандидат: v2.0.0-rc3.** Це обережний V2 compatibility release поверх перевіреного v1.4.0-rc30. Перед оновленням повністю закрийте RC30, розпакуйте V2 у нову папку і скопіюйте туди всю робочу папку `Data`. Деталі: [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md).
 
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
-> **Current release:** `v2.0.0-rc2`  
-> **Current version:** `v2.0.0-rc2`  
+> **Current release:** `v2.0.0-rc3`  
+> **Current version:** `v2.0.0-rc3`  
 > **Platform:** Windows 10/11, portable  
 > **Interface and output languages:** Ukrainian and English  
 > **License:** GPL-2.0-or-later
 
 UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
 
-## What is new in v2.0.0-rc2
+## What is new in v2.0.0-rc3
 
 - RC30 remains the functional compatibility baseline while V2 introduces isolated modules for AI, publishing recovery, storage compatibility, Supervisor and V2 UI.
 - A hard backend switch selects exactly one content AI backend: OpenRouter, the existing AI Router, or Agent/Codex.
@@ -23,7 +23,7 @@ UA FREE Content Tool gives a human editor one local workflow for the news-produc
 - Failed publication history can safely retry only unfinished destinations without re-running AI; Google Drive remains an upstream media prerequisite.
 - No database reset is required and the working `Data` folder remains local.
 
-See [RELEASE_NOTES_v2.0.0-rc2.md](RELEASE_NOTES_v2.0.0-rc2.md).
+See [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md).
 
 ## Core workflow
 
@@ -132,7 +132,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Use `UA_FREE_Content_Tool_v2.0.0-rc2_Windows_Portable.zip`.
+2. Use `UA_FREE_Content_Tool_v2.0.0-rc3_Windows_Portable.zip`.
 3. Verify SHA-256 against `SHA256SUMS.txt`.
 4. Extract the full ZIP into a new folder.
 5. Copy that PC's complete existing `Data` folder if updating.
@@ -167,7 +167,7 @@ The release workflow validates source, installs test dependencies, compiles and 
 
 ## Documentation
 
-- [RELEASE_NOTES_v2.0.0-rc2.md](RELEASE_NOTES_v2.0.0-rc2.md) — current candidate notes.
+- [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md) — current candidate notes.
 - [RELEASE_NOTES_v2.0.0-rc1.md](RELEASE_NOTES_v2.0.0-rc1.md) — V2 transition notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.

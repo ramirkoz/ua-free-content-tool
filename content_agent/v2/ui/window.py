@@ -40,7 +40,7 @@ class MainWindow(Rc30MainWindow):
     incrementally instead of rewritten in one risky step.
     """
 
-    VERSION_LABEL = "2.0.0-rc2"
+    VERSION_LABEL = "2.0.0-rc3"
 
     def __init__(self, root, database, config) -> None:
         self.v2_backend_settings = load_backend_settings()
@@ -76,7 +76,7 @@ class MainWindow(Rc30MainWindow):
         self._schedule_v2_status_refresh()
 
     def _apply_v2_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v2.0.0-rc2")
+        self.root.title("UA FREE Content Tool — v2.0.0-rc3")
 
     def _apply_language(self, refresh: bool = True) -> None:
         super()._apply_language(refresh=refresh)
