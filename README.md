@@ -1,5 +1,7 @@
 # UA FREE Content Tool
 
+> **Поточний кандидат: v2.0.0-rc2.** Це обережний V2 compatibility release поверх перевіреного v1.4.0-rc30. Перед оновленням повністю закрийте RC30, розпакуйте V2 у нову папку і скопіюйте туди всю робочу папку `Data`. Деталі: [RELEASE_NOTES_v2.0.0-rc2.md](RELEASE_NOTES_v2.0.0-rc2.md).
+
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
 > **Current release:** `v1.4.0-rc15`  
@@ -138,7 +140,7 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. For this candidate, use `UA_FREE_Content_Tool_v1.4.0-rc15_Windows_Portable.zip`.
+2. For this candidate, use `UA_FREE_Content_Tool_v2.0.0-rc2_Windows_Portable.zip`.
 3. Verify SHA-256 against `SHA256SUMS.txt`.
 4. Extract the full ZIP into a new folder.
 5. Copy your existing `Data` folder if updating.
@@ -169,11 +171,11 @@ Build_Portable_Windows.bat
 
 The release workflow validates source, tests the application, builds the signed portable runtime, performs GUI startup checks, runs Microsoft Defender, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
 
-v1.4.0-rc15 is the current release candidate built on the live-accepted RC14 baseline. It preserves the existing signed portable runtime, publication behavior and Data compatibility while adding the RC15 Inbox workspace and source-filter changes covered by deterministic regression tests and Windows CI.
+v2.0.0-rc2 is the current release candidate. It preserves the RC30 functional baseline and Data compatibility while introducing the V2 AI service, OpenRouter backend, multi-instance Supervisor, current-day time column and safe publication retry.
 
 ## Documentation
 
-- [RELEASE_NOTES_v1.4.0-rc15.md](RELEASE_NOTES_v1.4.0-rc15.md) — current candidate notes.
+- [RELEASE_NOTES_v2.0.0-rc2.md](RELEASE_NOTES_v2.0.0-rc2.md) — current candidate notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.
 - [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
