@@ -46,7 +46,7 @@ def read_public_version(base_dir: Path | None = None) -> str:
             value = candidate.read_text(encoding="utf-8-sig").strip()
         except OSError:
             continue
-        if re.fullmatch(r"\d+(?:\.\d+){1,3}", value):
+        if re.fullmatch(r"\d+(?:\.\d+){1,3}(?:-rc\d+)?", value):
             return value
     return "unknown"
 

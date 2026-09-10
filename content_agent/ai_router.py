@@ -818,7 +818,7 @@ def _cancelled(cancel_event: object | None) -> bool:
     return bool(cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)())
 
 
-def run_ai(
+def run_ai_router(
     prompt: str,
     *,
     validator: Callable[[str], object] | None = None,
@@ -992,7 +992,58 @@ def run_ai(
     raise _diagnostic_error(AIRouterError("Усі здорові маршрути цього завдання відмовили. " + detail))
 
 
+
+def run_ai(
+    prompt: str,
+    *,
+    validator: Callable[[str], object] | None = None,
+    max_output_tokens: int = 4096,
+    local_prompt: str | None = None,
+    local_max_output_tokens: int | None = None,
+    local_timeout_seconds: int = 120,
+    local_repair: bool = True,
+    cloud_timeout_seconds: int = 120,
+    task_timeout_seconds: int | None = None,
+    skip_providers: set[str] | frozenset[str] | tuple[str, ...] = (),
+    skip_models: set[str] | frozenset[str] | tuple[str, ...] = (),
+    suppress_provider_on_quota: bool = False,
+    cancel_event: object | None = None,
+) -> AIResult:
+    """V2 hard-switch entry point while preserving the RC30 call contract.
+
+    The legacy multi-provider implementation remains available as
+    :func:`run_ai_router` and is used only when the selected V2 backend is
+    ``router``. OpenRouter and Agent modes cannot silently fall through here.
+    """
+    from .v2.ai.service import run_ai_compat
+
+    return run_ai_compat(
+        prompt,
+        validator=validator,
+        max_output_tokens=max_output_tokens,
+        local_prompt=local_prompt,
+        local_max_output_tokens=local_max_output_tokens,
+        local_timeout_seconds=local_timeout_seconds,
+        local_repair=local_repair,
+        cloud_timeout_seconds=cloud_timeout_seconds,
+        task_timeout_seconds=task_timeout_seconds,
+        skip_providers=skip_providers,
+        skip_models=skip_models,
+        suppress_provider_on_quota=suppress_provider_on_quota,
+        cancel_event=cancel_event,
+    )
+
 def last_ai_result_label() -> str:
+    # V2 may run OpenRouter or Agent exclusively. Prefer the unified V2 result
+    # when one exists so legacy UI/history does not falsely label it as Router.
+    try:
+        from .v2.ai.service import active_backend as _v2_active_backend, last_result as _v2_last_result
+        backend = _v2_active_backend()
+        current = _v2_last_result()
+        if backend != "router" and current is not None:
+            return str(current.label or current.model or backend)
+    except Exception:
+        pass
     state = load_router_state()
     return state.last_label or "ще немає успішного виклику"
 
@@ -1224,7 +1275,7 @@ def probe_provider(provider: str) -> str:
 
 
 def test_ai_router() -> str:
-    result = run_ai(
+    result = run_ai_router(
         "Поверни коротко українською: AI Router працює.",
         validator=None,
         max_output_tokens=128,

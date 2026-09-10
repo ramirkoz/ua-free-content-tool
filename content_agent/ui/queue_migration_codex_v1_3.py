@@ -20,7 +20,7 @@ class CodexQueueMigrationDialog(QueueMigrationDialog):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
-        self.generate_button.configure(text="Переробити всі через AI Router")
+        self.generate_button.configure(text="Переробити всі через активний AI backend")
 
     @staticmethod
     def _compress_with_codex(text: str, limit: int, language: str) -> str:
@@ -61,7 +61,7 @@ class CodexQueueMigrationDialog(QueueMigrationDialog):
 
     def _generate_all(self) -> None:
         self._save_current()
-        self._set_busy(True, "AI Router послідовно стискає тексти. Черга та планувальник залишаються вимкненими.")
+        self._set_busy(True, "Активний AI backend послідовно стискає тексти. Черга та планувальник залишаються вимкненими.")
 
         def runner() -> None:
             results: dict[int, tuple[str, str, bool]] = {}
@@ -100,7 +100,7 @@ class CodexQueueMigrationDialog(QueueMigrationDialog):
                     self._load_candidate(self.current_batch_id)
                 self._set_busy(
                     False,
-                    "Стискання через AI Router завершено. Перегляньте кожен текст і за потреби виправте вручну.",
+                    "Стискання через активний AI backend завершено. Перегляньте кожен текст і за потреби виправте вручну.",
                 )
 
             self.parent.after(0, finish)
