@@ -5,9 +5,9 @@
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
 > **Current release:** `v2.0.0-rc2`  
-> **Current version:** `v2.0.0-rc2`
-> **Platform:** Windows 10/11, portable
-> **Interface and output languages:** Ukrainian and English
+> **Current version:** `v2.0.0-rc2`  
+> **Platform:** Windows 10/11, portable  
+> **Interface and output languages:** Ukrainian and English  
 > **License:** GPL-2.0-or-later
 
 UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
