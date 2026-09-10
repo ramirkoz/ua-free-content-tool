@@ -7,7 +7,7 @@ import pytest
 
 from content_agent.google_drive import GoogleDriveError
 from content_agent.media_candidates import ValidatedMedia
-from content_agent.strict_media_drive import validate_decodable_image
+from content_agent.strict_media_drive import normalize_decodable_image, validate_decodable_image
 
 
 def _image_bytes(size: tuple[int, int], image_format: str = "PNG") -> bytes:
@@ -31,9 +31,16 @@ def test_valid_publication_image_is_fully_decoded() -> None:
     assert validate_decodable_image(_media(_image_bytes((1200, 800)))) == (1200, 800)
 
 
-def test_small_image_is_rejected_before_drive_upload() -> None:
+def test_telegram_320x175_preview_is_upscaled_instead_of_rejected() -> None:
+    source = _media(_image_bytes((320, 175)))
+    normalized = normalize_decodable_image(source)
+    with Image.open(BytesIO(normalized.data)) as image:
+        assert image.size == (329, 180)
+
+
+def test_truly_tiny_image_is_rejected_before_drive_upload() -> None:
     with pytest.raises(GoogleDriveError, match="надто мале"):
-        validate_decodable_image(_media(_image_bytes((179, 900))))
+        validate_decodable_image(_media(_image_bytes((95, 900))))
 
 
 def test_corrupt_image_with_valid_signature_is_rejected() -> None:

@@ -323,13 +323,21 @@ class GoogleDriveClient:
         if not self.client_id or not self.refresh_token:
             raise GoogleDriveError("Google Drive не підключено в налаштуваннях.")
         self._access_token = ""
+        self._access_token_at = 0.0
+        self._token_lock = threading.Lock()
 
-    def _token(self) -> str:
-        if not self._access_token:
-            self._access_token = refresh_access_token(
-                self.client_id, self.client_secret, self.refresh_token, timeout=15
-            )
-        return self._access_token
+    def _token(self, *, force_refresh: bool = False) -> str:
+        # Google access tokens normally expire around one hour. RC30 cached one
+        # forever, which eventually turned a healthy refresh token into a dead
+        # long-running Drive client. Refresh proactively after 45 minutes.
+        with self._token_lock:
+            stale = not self._access_token or (time.monotonic() - self._access_token_at) >= 45 * 60
+            if force_refresh or stale:
+                self._access_token = refresh_access_token(
+                    self.client_id, self.client_secret, self.refresh_token, timeout=15
+                )
+                self._access_token_at = time.monotonic()
+            return self._access_token
 
     def inspect_media(self, file_id: str, *, probe_public: bool = True) -> DriveMediaInfo:
         file_id = _validate_file_id(file_id)

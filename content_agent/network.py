@@ -151,7 +151,6 @@ def fetch_url(
             raise NetworkError("Only ports 80 and 443 are allowed.")
         host = parts.hostname.lower().rstrip(".")
         addresses = _resolve_with_timeout(resolver, host, port, timeout)
-        pinned_ip = addresses[0]
         path = parts.path or "/"
         if parts.query:
             path += "?" + parts.query
@@ -159,11 +158,32 @@ def fetch_url(
         outgoing_headers = dict(request_headers)
         outgoing_headers["Host"] = host_header
 
-        connection: http.client.HTTPConnection
-        if parts.scheme == "https":
-            connection = _PinnedHTTPSConnection(host, pinned_ip, port, timeout)
-        else:
-            connection = _PinnedHTTPConnection(host, pinned_ip, port, timeout)
+        # Do not pin the whole request to only the first DNS answer. Google and
+        # other large endpoints often return both IPv6 and IPv4 addresses; a
+        # Windows host may have IPv6 DNS answers while the actual route is broken.
+        # Connect to the first reachable public address *before* sending the HTTP
+        # request. Once any bytes may have been sent, we deliberately do not retry
+        # another address here because POST uploads must not be duplicated after an
+        # ambiguous transport failure.
+        connection: http.client.HTTPConnection | None = None
+        connect_errors: list[BaseException] = []
+        for pinned_ip in addresses:
+            if parts.scheme == "https":
+                candidate: http.client.HTTPConnection = _PinnedHTTPSConnection(host, pinned_ip, port, timeout)
+            else:
+                candidate = _PinnedHTTPConnection(host, pinned_ip, port, timeout)
+            try:
+                candidate.connect()
+            except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+                connect_errors.append(exc)
+                candidate.close()
+                continue
+            connection = candidate
+            break
+        if connection is None:
+            raise NetworkError(
+                f"Network connection failed for {host}: no reachable address among {len(addresses)} DNS result(s)."
+            ) from (connect_errors[-1] if connect_errors else None)
         try:
             connection.request(method, path, body=body, headers=outgoing_headers)
             response = connection.getresponse()

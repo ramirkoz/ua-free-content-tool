@@ -79,20 +79,32 @@ class ManagedGoogleDriveClient(GoogleDriveClient):
         }
         if headers:
             request_headers.update(headers)
-        try:
-            response = fetch_url(
-                url,
-                method=method,
-                headers=request_headers,
-                body=body,
-                max_bytes=2 * 1024 * 1024,
-                allowed_content_types={"application/json"},
-                timeout=timeout,
-                max_redirects=0,
-                allow_http_errors=True,
-            )
-        except NetworkError as exc:
-            raise GoogleDriveError(str(exc)) from exc
+        attempts = 2 if method.upper() in {"GET", "HEAD"} else 1
+        response = None
+        last_network_error: NetworkError | None = None
+        for attempt in range(attempts):
+            try:
+                response = fetch_url(
+                    url,
+                    method=method,
+                    headers=request_headers,
+                    body=body,
+                    max_bytes=2 * 1024 * 1024,
+                    allowed_content_types={"application/json"},
+                    timeout=timeout,
+                    max_redirects=0,
+                    allow_http_errors=True,
+                )
+                break
+            except NetworkError as exc:
+                last_network_error = exc
+                if attempt + 1 < attempts:
+                    import time
+                    time.sleep(0.35)
+                    continue
+        if response is None:
+            assert last_network_error is not None
+            raise GoogleDriveError(str(last_network_error)) from last_network_error
         payload = response.json() if response.body else {}
         if response.status >= 400 or not isinstance(payload, dict):
             message = "Google Drive відхилив запит."
