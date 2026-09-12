@@ -110,6 +110,30 @@ _ENTITY_ALIAS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
 }
 
 
+_RECORD_QUANTITY_SUPPORT = re.compile(
+    r"(?iu)(?:\bрекордн\w*\b.{0,48}\b(?:кільк\w*|числ\w*|количеств\w*|number|count|amount|total)\b|"
+    r"\b(?:кільк\w*|числ\w*|количеств\w*|number|count|amount|total)\b.{0,48}\bрекордн\w*\b|"
+    r"\brecord[- ]breaking\b.{0,48}\b(?:number|count|amount|total)\b|"
+    r"\b(?:number|count|amount|total)\b.{0,48}\brecord[- ]breaking\b)"
+)
+_RECORD_LOW = re.compile(r"(?iu)\b(?:record\s+low|рекордн\w*\s+(?:низк|низьк)\w*|антирекорд\w*|мінімальн\w*|минимальн\w*)\b")
+
+
+def _semantic_high_risk_supported(source: str, issue: str) -> bool:
+    """Allow only narrow, one-way semantic equivalents that do not add facts.
+
+    RC5 rejected ``рекордное количество`` -> ``найбільша кількість`` merely
+    because the surface words differed.  A record-high quantity supports the
+    largest quantity wording, unless the source explicitly describes a low/min.
+    This is deliberately NOT a generic synonym bypass for Fact Guard.
+    """
+    if issue != "непідтверджене посилення: найбільший":
+        return False
+    if _RECORD_LOW.search(source):
+        return False
+    return bool(_RECORD_QUANTITY_SUPPORT.search(source))
+
+
 def extract_supported_entity_aliases(value: str) -> set[str]:
     text = str(value or "")
     found: set[str] = set()
@@ -135,25 +159,35 @@ def guard_rewrite_rc17(
     """
 
     result = guard_rewrite(evidence, headline, rewrite, language=language)
-    if result.allowed or not result.unsupported_entities or not language.casefold().startswith("uk"):
+    if result.allowed:
         return result
 
     source = _factual_evidence(evidence)
-    supported_aliases = extract_supported_entity_aliases(source)
-    remaining_entities = tuple(
-        entity for entity in result.unsupported_entities if entity.casefold() not in supported_aliases
-    )
-    if remaining_entities == result.unsupported_entities:
-        return result
+    issues = list(result.issues)
+    remaining_entities = result.unsupported_entities
 
-    issues = [
-        issue for issue in result.issues
-        if not str(issue).startswith("назви/моделі відсутні у поточних джерелах:")
-    ]
-    if remaining_entities:
-        issues.append(
-            "назви/моделі відсутні у поточних джерелах: " + ", ".join(remaining_entities[:8])
+    # Curated brand aliases from RC17.
+    if result.unsupported_entities and language.casefold().startswith("uk"):
+        supported_aliases = extract_supported_entity_aliases(source)
+        remaining_entities = tuple(
+            entity for entity in result.unsupported_entities if entity.casefold() not in supported_aliases
         )
+        if remaining_entities != result.unsupported_entities:
+            issues = [
+                issue for issue in issues
+                if not str(issue).startswith("назви/моделі відсутні у поточних джерелах:")
+            ]
+            if remaining_entities:
+                issues.append(
+                    "назви/моделі відсутні у поточних джерелах: " + ", ".join(remaining_entities[:8])
+                )
+
+    # RC6: semantic equivalence for a record quantity.  Keep every other
+    # strengthening rule strict.
+    issues = [
+        issue for issue in issues
+        if not _semantic_high_risk_supported(source, str(issue))
+    ]
 
     allowed = not issues
     score = _quality_score(source, headline, rewrite, language) if allowed else 0
