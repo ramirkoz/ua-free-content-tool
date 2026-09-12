@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import faulthandler
+import os
 import queue
 import threading
 import time
@@ -17,6 +18,42 @@ from .portable import PortableMigrationError, ensure_portable_data_migrated
 from .v2.ui.window import MainWindow
 
 
+def _raise_windows_stdio_limit(logger: object | None = None) -> int:
+    """Raise the MSVCRT stdio descriptor ceiling on Windows.
+
+    This is containment, not permission to leak descriptors. RC6 also bounds
+    resolver threads and stops a collection cycle on EMFILE. Raising the CRT
+    ceiling gives the long-running portable app more headroom for legitimate
+    simultaneous SQLite/log/media/network activity while live telemetry makes
+    a growing handle count visible.
+    """
+    if os.name != "nt":
+        return -1
+    try:
+        import ctypes
+        msvcrt = ctypes.CDLL("msvcrt")
+        getmax = msvcrt._getmaxstdio
+        getmax.restype = ctypes.c_int
+        setmax = msvcrt._setmaxstdio
+        setmax.argtypes = [ctypes.c_int]
+        setmax.restype = ctypes.c_int
+        current = int(getmax())
+        if current < 8192:
+            updated = int(setmax(8192))
+            if updated > 0:
+                current = updated
+        if logger is not None:
+            logger.info("Windows CRT stdio limit=%s", current)  # type: ignore[attr-defined]
+        return current
+    except Exception as exc:
+        if logger is not None:
+            try:
+                logger.warning("Could not raise Windows CRT stdio limit: %s", exc)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return -1
+
+
 def _show_startup_error(root: tk.Tk, message: str) -> None:
     try:
         messagebox.showerror("UA FREE Content Tool", message, parent=root)
@@ -25,14 +62,14 @@ def _show_startup_error(root: tk.Tk, message: str) -> None:
 
 
 def _run_ui_startup(root: tk.Tk, logger: object) -> int:
-    root.title("UA FREE Content Tool — v2.0.0-rc3 · запуск")
+    root.title("UA FREE Content Tool — v2.0.0-rc6 · запуск")
     root.geometry("560x150")
     root.minsize(520, 140)
 
     frame = ttk.Frame(root, padding=18)
     frame.pack(fill="both", expand=True)
     status_var = tk.StringVar(value="Запуск: підготовка…")
-    ttk.Label(frame, text="UA FREE Content Tool v2.0.0-rc3", font="TkHeadingFont").pack(anchor="w")
+    ttk.Label(frame, text="UA FREE Content Tool v2.0.0-rc6", font="TkHeadingFont").pack(anchor="w")
     ttk.Label(frame, textvariable=status_var, wraplength=500).pack(anchor="w", pady=(10, 8))
     progress = ttk.Progressbar(frame, mode="indeterminate")
     progress.pack(fill="x")
@@ -176,6 +213,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
 
 def main() -> int:
     logger = configure_logging()
+    _raise_windows_stdio_limit(logger)
     try:
         with InstanceLock():
             try:
