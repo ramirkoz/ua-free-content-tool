@@ -153,6 +153,19 @@ class MainWindow(Rc20MainWindow):
             except Exception as exc:
                 record_source_error(self.db, source_id, exc)
                 errors.append(f"{source.name}: {exc}")
+                detail = str(exc).casefold()
+                resource_exhausted = (
+                    (isinstance(exc, OSError) and getattr(exc, "errno", None) == 24)
+                    or "too many open files" in detail
+                    or "local resource exhaustion" in detail
+                )
+                if resource_exhausted:
+                    # Continuing through all 80 sources only converts one local
+                    # process failure into an artificial 80-source outage. Stop
+                    # the cycle immediately; the operator/Supervisor sees one
+                    # actionable process-level failure instead.
+                    errors.append("Збір зупинено: вичерпано локальні файлові/процесні ресурси.")
+                    break
 
         try:
             save_coverage_state(coverage)
