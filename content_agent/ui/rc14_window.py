@@ -38,9 +38,9 @@ class MainWindow(Rc13Window):
         button = getattr(self, "rewrite_button", None)
         if button is not None:
             button.configure(
-                text="Rewrite via AI Router + Fact Guard"
+                text="Rewrite via active AI + Fact Guard"
                 if getattr(self.config, "ui_language", "uk") == "en"
-                else "Рерайт через AI Router + Fact Guard"
+                else "Рерайт через активний AI + Fact Guard"
             )
         history_all = getattr(self, "history_refresh_all_button", None)
         if history_all is not None:
