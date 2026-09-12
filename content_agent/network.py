@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import queue
 import socket
 import ssl
 import threading
@@ -53,43 +54,104 @@ def resolve_public(host: str, port: int) -> list[str]:
         raise NetworkError(f"No usable public address for {host}.")
     return addresses
 
+@dataclass(slots=True)
+class _DNSRequest:
+    resolver: Callable[[str, int], list[str]]
+    host: str
+    port: int
+    done: threading.Event
+    result: list[str] | None = None
+    error: BaseException | None = None
+
+
+_DNS_QUEUE: queue.Queue[_DNSRequest] = queue.Queue(maxsize=32)
+_DNS_WORKERS_LOCK = threading.Lock()
+_DNS_WORKERS_STARTED = False
+_DNS_WORKER_COUNT = 4
+_DNS_STATS_LOCK = threading.Lock()
+_DNS_TIMEOUTS = 0
+_DNS_REJECTIONS = 0
+
+
+def _dns_worker() -> None:
+    while True:
+        request = _DNS_QUEUE.get()
+        try:
+            try:
+                request.result = request.resolver(request.host, request.port)
+            except BaseException as exc:
+                request.error = exc
+            finally:
+                request.done.set()
+        finally:
+            _DNS_QUEUE.task_done()
+
+
+def _ensure_dns_workers() -> None:
+    global _DNS_WORKERS_STARTED
+    if _DNS_WORKERS_STARTED:
+        return
+    with _DNS_WORKERS_LOCK:
+        if _DNS_WORKERS_STARTED:
+            return
+        for index in range(_DNS_WORKER_COUNT):
+            threading.Thread(
+                target=_dns_worker,
+                name=f"dns-worker-{index + 1}",
+                daemon=True,
+            ).start()
+        _DNS_WORKERS_STARTED = True
+
+
+def dns_resolver_stats() -> dict[str, int]:
+    with _DNS_STATS_LOCK:
+        return {
+            "workers": _DNS_WORKER_COUNT if _DNS_WORKERS_STARTED else 0,
+            "queued": _DNS_QUEUE.qsize(),
+            "timeouts": _DNS_TIMEOUTS,
+            "rejections": _DNS_REJECTIONS,
+        }
+
+
 def _resolve_with_timeout(
     resolver: Callable[[str, int], list[str]],
     host: str,
     port: int,
     timeout: float,
 ) -> list[str]:
-    """Bound DNS resolution without letting a stuck resolver freeze the worker.
+    """Bound DNS without creating one abandoned thread per timed-out lookup.
 
-    ``socket.getaddrinfo`` has no portable per-call timeout. Running it in a
-    daemon thread gives the publication pipeline a real upper bound while a
-    pathological OS resolver can finish (or die) in the background.
+    Windows ``getaddrinfo`` cannot be cancelled portably. RC5 spawned an
+    unbounded daemon thread for every lookup, so pathological resolver stalls
+    could accumulate native thread/handle resources. RC6 uses four fixed daemon
+    workers and a bounded queue. At worst DNS service degrades; the process no
+    longer creates an unlimited number of resolver threads.
     """
+    global _DNS_TIMEOUTS, _DNS_REJECTIONS
+    _ensure_dns_workers()
+    request = _DNSRequest(resolver=resolver, host=host, port=port, done=threading.Event())
+    try:
+        _DNS_QUEUE.put(request, timeout=0.1)
+    except queue.Full as exc:
+        with _DNS_STATS_LOCK:
+            _DNS_REJECTIONS += 1
+        raise NetworkError(f"DNS resolver busy for {host}; bounded queue is full.") from exc
 
-    done = threading.Event()
-    result: list[list[str]] = []
-    errors: list[BaseException] = []
-
-    def runner() -> None:
-        try:
-            result.append(resolver(host, port))
-        except BaseException as exc:  # preserve the resolver's useful error
-            errors.append(exc)
-        finally:
-            done.set()
-
-    threading.Thread(target=runner, name=f"dns-{host}", daemon=True).start()
     dns_timeout = max(0.05, min(float(timeout), 12.0))
-    if not done.wait(dns_timeout):
+    if not request.done.wait(dns_timeout):
+        with _DNS_STATS_LOCK:
+            _DNS_TIMEOUTS += 1
         raise NetworkError(f"DNS resolution timed out for {host} after {dns_timeout:.0f} seconds.")
-    if errors:
-        error = errors[0]
+    if request.error is not None:
+        error = request.error
         if isinstance(error, NetworkError):
             raise error
+        if isinstance(error, OSError) and getattr(error, "errno", None) == 24:
+            raise NetworkError("Local resource exhaustion: too many open files.") from error
         raise NetworkError(f"DNS resolution failed for {host}.") from error
-    if not result:
+    if not request.result:
         raise NetworkError(f"No DNS result for {host}.")
-    return result[0]
+    return request.result
 
 
 class _PinnedHTTPConnection(http.client.HTTPConnection):
@@ -211,6 +273,8 @@ def fetch_url(
                     raise NetworkError(f"Unexpected content type: {actual or '<missing>'}.")
             return HttpResponse(response.status, response_headers, data, current)
         except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+            if isinstance(exc, OSError) and getattr(exc, "errno", None) == 24:
+                raise NetworkError("Local resource exhaustion: too many open files.") from exc
             raise NetworkError(f"Network request failed: {redact_url(current)}") from exc
         finally:
             connection.close()
