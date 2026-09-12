@@ -38,6 +38,16 @@ def infer_task(prompt: str, *, max_output_tokens: int = 800) -> AITask:
     New V2 call sites may pass an explicit task later without changing backends.
     """
     text = str(prompt or "").casefold()
+    # RC6: explicit rewrite intent MUST win over every generic word that may
+    # legitimately occur inside the source article or metadata. RC5 checked
+    # supervisor/duplicate/topic first, so an article mentioning one of those
+    # words could silently route public-copy generation to a classifier.
+    if any(token in text for token in (
+        "рерайт", "rewrite", "перепиши", "готовий текст", "готовий публічний текст",
+        "public copy", "news rewrite", "публічний текст", "rewrite candidate",
+        "редакційний рерайт", "безпечний рерайт",
+    )):
+        return AITask.REWRITE
     if any(token in text for token in ("supervisor", "diagnostic", "інцидент", "діагност", "health snapshot")):
         return AITask.SUPERVISOR
     if any(token in text for token in ("дублікат", "duplicate", "одна й та сама подія", "same event")):
@@ -48,7 +58,7 @@ def infer_task(prompt: str, *, max_output_tokens: int = 800) -> AITask:
         return AITask.FACT
     if any(token in text for token in ("quality", "qa", "виправ", "repair", "редактор", "фінальн")):
         return AITask.QUALITY
-    if any(token in text for token in ("рерайт", "rewrite", "перепиши", "готовий текст", "напиши", "автор")):
+    if any(token in text for token in ("напиши", "автор")):
         return AITask.REWRITE
     if any(token in text for token in ("classif", "класиф", "визнач категор", "оцін", "score")):
         return AITask.CLASSIFY
@@ -96,7 +106,10 @@ def route_for(
         start = QualityTier.STRONG
         ceiling = QualityTier.PREMIUM
     elif resolved_task == AITask.REWRITE:
-        start = QualityTier.BALANCED if score < 3 else QualityTier.STRONG
+        # Public-copy generation is not a cheap classification task.  RC4 could
+        # start at BALANCED and select tiny/nano models that were inexpensive but
+        # repeatedly exhausted their output budget or failed post-AI QA.
+        start = QualityTier.STRONG
         ceiling = QualityTier.PREMIUM
     else:
         start = QualityTier.BALANCED
