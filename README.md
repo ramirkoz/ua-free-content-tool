@@ -1,29 +1,28 @@
 # UA FREE Content Tool
 
-> **Поточний кандидат: v2.0.0-rc3.** Це обережний V2 compatibility release поверх перевіреного v1.4.0-rc30. Перед оновленням повністю закрийте RC30, розпакуйте V2 у нову папку і скопіюйте туди всю робочу папку `Data`. Деталі: [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md).
+> **Поточний кандидат: v2.0.0-rc6.** Це обережний V2 compatibility release поверх перевіреного v1.4.0-rc30. Перед оновленням повністю закрийте попередню версію, розпакуйте RC6 у нову папку і скопіюйте туди всю робочу папку `Data`. Деталі: [RELEASE_NOTES_v2.0.0-rc6.md](RELEASE_NOTES_v2.0.0-rc6.md).
 
 **Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
 
-> **Current release:** `v2.0.0-rc3`  
-> **Current version:** `v2.0.0-rc3`  
-> **Platform:** Windows 10/11, portable  
-> **Interface and output languages:** Ukrainian and English  
+> **Current release:** `v2.0.0-rc6`  
+> **Current version:** `v2.0.0-rc6`
+> **Platform:** Windows 10/11, portable
+> **Interface and output languages:** Ukrainian and English
 > **License:** GPL-2.0-or-later
 
 UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
 
-## What is new in v2.0.0-rc3
+## What is new in v2.0.0-rc6
 
-- RC30 remains the functional compatibility baseline while V2 introduces isolated modules for AI, publishing recovery, storage compatibility, Supervisor and V2 UI.
-- A hard backend switch selects exactly one content AI backend: OpenRouter, the existing AI Router, or Agent/Codex.
-- OpenRouter selects task class, complexity tier and suitable model automatically, with QA escalation and a maximum of three fallback models per OpenRouter request.
-- OpenRouter token usage, cost, latency and failures are recorded locally; a local monthly budget can be enforced.
-- Multi-instance Supervisor keeps separate identities for two Content Tool installations and exports diagnostic summaries to Google Drive without becoming a dependency of the editorial pipeline.
-- Inbox shows independent `Джерел` and current-day `Час` columns.
-- Failed publication history can safely retry only unfinished destinations without re-running AI; Google Drive remains an upstream media prerequisite.
-- No database reset is required and the working `Data` folder remains local.
+- Fact Guard now accepts the narrow semantic equivalent `record quantity` → `largest quantity`; unrelated factual strengthening remains blocked.
+- Explicit rewrite intent has absolute routing precedence over generic words such as `topic`, `duplicate`, or `supervisor` that may occur inside source text.
+- OpenRouter models that return `404 No endpoints found` are quarantined for 12 hours and skipped across restarts without blocking healthy sibling models.
+- DNS resolution uses four fixed daemon workers and a bounded queue instead of one new thread per lookup, preventing unbounded resolver-thread/handle accumulation.
+- Windows startup raises the MSVCRT stdio ceiling to 8192 and Supervisor reports process handle/thread/DNS pressure.
+- A local `Too many open files` condition aborts the current collection cycle instead of falsely marking every enabled source as broken; Supervisor also backs off rather than hammering status files every minute.
+- RC5 model-quality, reasoning-budget, current-process telemetry, and V2 data compatibility are preserved.
 
-See [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md).
+See [RELEASE_NOTES_v2.0.0-rc6.md](RELEASE_NOTES_v2.0.0-rc6.md).
 
 ## Core workflow
 
@@ -31,24 +30,28 @@ See [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md).
 2. **Select manually.** Use `Shift`, `Ctrl`, or `Ctrl+A` where supported.
 3. **Find candidates.** Global topic search proposes likely related blocks without merging them.
 4. **Confirm grouping.** Only the editor decides which blocks are combined.
-5. **Rewrite.** The active V2 AI backend performs the requested AI task; only one backend is active at a time.
+5. **Rewrite.** The selected V2 AI backend performs the rewrite; OpenRouter uses bounded model-level fallback while Router/Agent keep their own explicit runtime rules.
 6. **Edit and approve.** A human verifies facts, wording, and length.
-7. **Attach media.** Media is prepared through the Google Drive-backed publication flow where required.
+7. **Attach media.** Media can be selected from Google Drive according to the selected publication targets.
 8. **Schedule.** The package is added to the publication queue.
 9. **Publish sequentially.** Every platform keeps its own target status.
-10. **Retry safely.** Failed targets can be retried without repeating successful publications or AI work.
+10. **Retry safely.** Failed targets can be retried without repeating successful publications.
 
-## V2 AI backends
+## AI Router and local fallback
 
-The **Нейронки** tab contains three isolated content backends:
+Production AI tasks use one priority chain. Provider or model failures such as quota, HTTP 429, timeout, temporary errors, or invalid output are handled automatically according to router policy.
 
-- **OpenRouter**: automatic task routing, complexity tiers and model selection inside OpenRouter;
-- **AI Router**: the existing direct NVIDIA, Gemini, Groq, Cloudflare, local and Codex-capable routing pool;
-- **Agent**: the locally authenticated Codex/ChatGPT-account runtime.
+The local emergency path is designed to reuse what is already installed on the Windows machine:
 
-The active backend is a hard switch. If OpenRouter is selected, content work cannot silently fall back to AI Router or Agent. OpenRouter chooses models automatically; the operator does not maintain a per-task model table.
+- running Ollama at `127.0.0.1:11434` is preferred;
+- installed but stopped Ollama can be started hidden;
+- already installed generative models are enumerated and reused;
+- embedding-only models are skipped for generation;
+- no Ollama reinstall is performed;
+- no model pull/download is performed automatically;
+- a manually configured OpenAI-compatible llama.cpp endpoint remains a secondary local fallback.
 
-The local emergency path inside AI Router is designed to reuse what is already installed on the Windows machine. Ollama and model files are not bundled into the portable archive.
+Small local models receive compact prompts and smaller output budgets instead of the heavier cloud prompt format.
 
 ## Duplicate grouping
 
@@ -66,13 +69,16 @@ Global duplicate search is intentionally human-in-the-loop.
 
 ## Publishing and media
 
-Supported publication targets include Facebook Pages, Threads, LinkedIn, Telegram and optional Instagram workflows present in the current application branch. Google Drive is private upstream media storage, not a publication destination.
+Supported publication targets include:
 
-The queue stores platform targets independently, preserves attempts and remote IDs, and retries only safe failed targets. If Drive/media preparation fails, external publication does not start. A manual history retry reuses the saved payload and does not re-run AI. Unknown or possibly partial external writes fail closed to avoid duplicates.
+- Facebook Pages;
+- Threads;
+- LinkedIn;
+- Telegram;
+- optional Instagram workflows present in the current application branch;
+- private Google Drive media.
 
-## Supervisor
-
-V2 Supervisor is operational monitoring, not a content AI backend. Each installation gets a stable instance identity, so two PCs do not overwrite one another. It collects local health, incident and diagnostic information, can summarize incidents through OpenRouter independently of the content backend, and exports reports to the dedicated `CONTENT_TOOL_SUPERVISOR` Drive area. A Supervisor, OpenRouter-analyzer or Drive-export failure must not stop Content Tool.
+The queue stores platform targets independently, preserves attempts and remote IDs, and retries only failed targets. Existing queued materials keep their assigned targets when settings change.
 
 ## Editorial memory
 
@@ -80,7 +86,7 @@ The application keeps editorial learning and working data locally. Approved exam
 
 ## Portable data
 
-The `Data` folder next to the executable contains the working installation state, including the database, portable configuration, platform tokens, queue state, editorial memory, exclusions and operational data.
+The `Data` folder next to the executable contains the working installation state, including the database, portable configuration, platform tokens, queue state, editorial memory, exclusions, and operational data.
 
 For every update:
 
@@ -94,7 +100,7 @@ For every update:
 
 Do not replace only the EXE. The portable package depends on the accompanying signed Python runtime and application directories.
 
-`Data\config.portable` and `Data\portable.key` form one pair. Do not delete, rename, or move them separately. Do not copy one PC's `Data` over another PC's live installation; each Supervisor instance and operational database must remain distinct.
+`Data\config.portable` and `Data\portable.key` form one pair. Do not delete, rename, or move them separately.
 
 See [PORTABLE_MODE.md](PORTABLE_MODE.md) for details.
 
@@ -106,7 +112,9 @@ See [PORTABLE_MODE.md](PORTABLE_MODE.md) for details.
 - internet access for collection and configured cloud/platform integrations;
 - credentials only for the services you use;
 - Google Cloud OAuth Desktop client when Google Drive is enabled;
-- Ollama is optional as an AI Router local reserve.
+- Ollama is optional but recommended as the local emergency AI reserve.
+
+Ollama and model files are **not bundled** into the portable archive.
 
 ### Development from source
 
@@ -132,24 +140,22 @@ python -m content_agent.main
 ## Windows quick start
 
 1. Open the latest GitHub Release.
-2. Use `UA_FREE_Content_Tool_v2.0.0-rc3_Windows_Portable.zip`.
+2. For this candidate, use `UA_FREE_Content_Tool_v2.0.0-rc6_Windows_Portable.zip`.
 3. Verify SHA-256 against `SHA256SUMS.txt`.
 4. Extract the full ZIP into a new folder.
-5. Copy that PC's complete existing `Data` folder if updating.
+5. Copy your existing `Data` folder if updating.
 6. Run `UA_FREE_Content_Tool.exe` without administrator rights.
-7. Open **Нейронки**, test the intended backend, then explicitly select it.
-8. Verify Google Drive and publication targets before live publishing.
+7. Open **Settings** and verify the AI Router, local AI, Google Drive, and publication targets you use.
 
 ## Security
 
-UA FREE Content Tool is a local application with no built-in cloud telemetry about editorial work except the explicitly configured operational Supervisor reports.
+UA FREE Content Tool is a local application with no built-in telemetry about editorial work.
 
 - Portable configuration is encrypted.
 - Secrets are masked in the interface and normal errors.
 - Google Drive uses OAuth.
 - Temporary public media access is limited to the technical publication workflow that requires it.
 - Local editorial learning stays on the operator’s machine unless explicitly exported.
-- OpenRouter keys and platform credentials are not stored in GitHub or release archives.
 
 Never publish a real `Data` folder, portable keys, SQLite databases, tokens, secrets, private Drive links, or logs/screenshots containing credentials.
 
@@ -163,15 +169,16 @@ Build the portable package with:
 Build_Portable_Windows.bat
 ```
 
-The release workflow validates source, installs test dependencies, compiles and tests the application, builds the Windows portable runtime, performs startup and Microsoft Defender checks, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
+The release workflow validates source, tests the application, builds the signed portable runtime, performs GUI startup checks, runs Microsoft Defender, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
+
+v2.0.0-rc6 is the current release candidate. It preserves the RC30 functional baseline and Data compatibility while hardening OpenRouter model selection, reasoning budgets and Supervisor diagnosis.
 
 ## Documentation
 
-- [RELEASE_NOTES_v2.0.0-rc3.md](RELEASE_NOTES_v2.0.0-rc3.md) — current candidate notes.
-- [RELEASE_NOTES_v2.0.0-rc1.md](RELEASE_NOTES_v2.0.0-rc1.md) — V2 transition notes.
+- [RELEASE_NOTES_v2.0.0-rc6.md](RELEASE_NOTES_v2.0.0-rc6.md) — current candidate notes.
 - [CHANGELOG.md](CHANGELOG.md) — version history.
 - [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.
-- [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration and backups.
+- [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
 - [SECURITY_NOTES.md](SECURITY_NOTES.md) — security boundaries.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution rules.
 - [docs/MAINTAINER_RELEASE_GUIDE.md](docs/MAINTAINER_RELEASE_GUIDE.md) — release procedure.
