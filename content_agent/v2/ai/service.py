@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime
 from typing import Callable
 
 from .contracts import UnifiedAIResult
-from .openrouter_backend import OpenRouterBackend, OpenRouterError
+from .openrouter_backend import OpenRouterBackend, OpenRouterError, recent_events
 from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_backend_settings
 
 
@@ -19,6 +20,7 @@ class AIServiceError(RuntimeError):
 
 _LOCK = threading.RLock()
 _LAST_RESULT: UnifiedAIResult | None = None
+_PROCESS_STARTED_AT = datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def _legacy_result_to_unified(result: object, backend: str) -> UnifiedAIResult:
@@ -66,6 +68,7 @@ def execute(
             validator=validator,
             max_output_tokens=max_output_tokens,
             timeout_seconds=timeout,
+            skip_models=tuple(skip_models or ()),
         )
     elif backend == BACKEND_AGENT:
         # Agent mode intentionally bypasses every token-key provider. In RC1 the
@@ -146,6 +149,7 @@ def backend_status() -> dict[str, object]:
     settings = load_backend_settings()
     status: dict[str, object] = {
         "active_backend": settings.active_backend,
+        "process_started_at": _PROCESS_STARTED_AT,
         "openrouter_configured": OpenRouterBackend(settings).configured(),
         "openrouter_strategy": settings.openrouter_strategy,
         "openrouter_budget_usd": settings.openrouter_monthly_budget_usd,
@@ -167,6 +171,10 @@ def backend_status() -> dict[str, object]:
         status["openrouter_usage"] = usage_summary(backend="openrouter")
     except Exception:
         status["openrouter_usage"] = {}
+    try:
+        status["openrouter_recent_events"] = recent_events(16)
+    except Exception:
+        status["openrouter_recent_events"] = []
     current = last_result()
     if current is not None:
         status["last_backend"] = current.backend
