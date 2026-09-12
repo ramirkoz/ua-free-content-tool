@@ -16,9 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from ...paths import data_dir, database_path, logs_dir
+from ...network import dns_resolver_stats
 from ...source_health import source_health_map
 from ..ai.service import backend_status
 from ..ai.settings import load_backend_settings
+
+
+_PROCESS_STARTED_AT = datetime.now().astimezone()
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,9 +57,6 @@ def instance_identity() -> InstanceIdentity:
                     str(raw["instance_name"]),
                     stored_host or host,
                 )
-            # If a complete Data folder was cloned to another PC, the machine
-            # must get a new identity so two installations never overwrite the
-            # same Drive status files.
         except Exception:
             pass
     uid = uuid.uuid4().hex
@@ -91,15 +92,25 @@ def _log_tail_summary() -> dict[str, Any]:
     warnings = 0
     errors = 0
     signatures: Counter[str] = Counter()
+    cutoff = max(datetime.now().astimezone() - timedelta(hours=2), _PROCESS_STARTED_AT)
+    local_tz = datetime.now().astimezone().tzinfo
     for line in raw.splitlines():
+        stamp = re.match(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:[+-]\d{2}:?\d{2})?)", line)
+        if stamp:
+            try:
+                moment = datetime.fromisoformat(stamp.group(1).replace(",", "."))
+                if moment.tzinfo is None:
+                    moment = moment.replace(tzinfo=local_tz)
+                if moment.astimezone(cutoff.tzinfo) < cutoff:
+                    continue
+            except ValueError:
+                pass
         if " WARNING " in line:
             warnings += 1
         if " ERROR " in line or " CRITICAL " in line:
             errors += 1
         if " WARNING " not in line and " ERROR " not in line and " CRITICAL " not in line:
             continue
-        # Strip timestamp and volatile ids/numbers so a retry storm collapses to
-        # one useful signature instead of hundreds of almost-identical lines.
         message = re.sub(r"^\d{4}-\d{2}-\d{2}[^ ]*\s+", "", line)
         message = re.sub(r"\b\d+(?:\.\d+)?\b", "#", message)
         message = re.sub(r"\s+", " ", message).strip()[:280]
@@ -120,6 +131,38 @@ def _failed_targets_recent(database, hours: int = 24) -> int:
         return int(row["n"] if row else 0)
     except Exception:
         return 0
+
+
+def _windows_process_handle_count() -> int:
+    if os.name != "nt":
+        return -1
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.restype = wintypes.HANDLE
+        get_handle_count = kernel32.GetProcessHandleCount
+        get_handle_count.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        count = wintypes.DWORD()
+        if not get_handle_count(get_current_process(), ctypes.byref(count)):
+            return -1
+        return int(count.value)
+    except Exception:
+        return -1
+
+
+def _windows_stdio_limit() -> int:
+    if os.name != "nt":
+        return -1
+    try:
+        import ctypes
+        msvcrt = ctypes.CDLL("msvcrt")
+        getmax = msvcrt._getmaxstdio
+        getmax.restype = ctypes.c_int
+        return int(getmax())
+    except Exception:
+        return -1
 
 
 def collect_status(window, database, *, version: str) -> dict[str, Any]:
@@ -221,6 +264,10 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
             "python": platform.python_version(),
             "hostname": socket.gethostname(),
             "disk_free_bytes": disk_free,
+            "thread_count": len(threading.enumerate()),
+            "process_handle_count": _windows_process_handle_count(),
+            "stdio_limit": _windows_stdio_limit(),
+            "dns_resolver": dns_resolver_stats(),
         },
     }
 
@@ -239,6 +286,20 @@ def detect_incidents(status: dict[str, Any]) -> list[dict[str, str]]:
         out.append({"severity": "CRITICAL" if lag >= 30 else "WARNING", "code": "UI_STALLED", "detail": f"UI heartbeat lag {lag:.1f}s."})
     system = status.get("system", {}) if isinstance(status.get("system"), dict) else {}
     free = int(system.get("disk_free_bytes") or -1)
+    handle_count = int(system.get("process_handle_count") or -1)
+    if handle_count >= 6000:
+        out.append({
+            "severity": "CRITICAL" if handle_count >= 12000 else "WARNING",
+            "code": "PROCESS_HANDLE_PRESSURE",
+            "detail": f"Windows process handle count is {handle_count}; resource leak/exhaustion risk.",
+        })
+    dns = system.get("dns_resolver", {}) if isinstance(system.get("dns_resolver"), dict) else {}
+    if int(dns.get("queued") or 0) >= 24:
+        out.append({
+            "severity": "WARNING",
+            "code": "DNS_RESOLVER_PRESSURE",
+            "detail": f"Bounded DNS resolver queue is {int(dns.get('queued') or 0)}/32.",
+        })
     if 0 <= free < 512 * 1024 * 1024:
         out.append({"severity": "CRITICAL", "code": "DISK_LOW", "detail": f"Free disk space {free} bytes."})
     content = status.get("content", {}) if isinstance(status.get("content"), dict) else {}
@@ -249,11 +310,50 @@ def detect_incidents(status: dict[str, Any]) -> list[dict[str, str]]:
     publishing = status.get("publishing", {}) if isinstance(status.get("publishing"), dict) else {}
     failed_targets = int(publishing.get("failed_targets_24h") or 0)
     if failed_targets >= 5:
-        out.append({"severity": "WARNING", "code": "PUBLISH_FAILURES", "detail": f"Failed publication targets in 24h: {failed_targets}."})
+        out.append({"severity": "WARNING", "code": "PUBLISH_FAILURES", "detail": f"Aggregate failed publication targets in previous 24h: {failed_targets}. This counter is independent from the current AI operation unless separate evidence links them."})
     ai = status.get("ai", {}) if isinstance(status.get("ai"), dict) else {}
     active = str(ai.get("active_backend") or "")
     if active == "openrouter" and not bool(ai.get("openrouter_configured")):
         out.append({"severity": "CRITICAL", "code": "OPENROUTER_NOT_CONFIGURED", "detail": "OpenRouter is the active backend but its API key is missing."})
+    if active == "openrouter":
+        events = ai.get("openrouter_recent_events") if isinstance(ai.get("openrouter_recent_events"), list) else []
+        cutoff = datetime.now().astimezone() - timedelta(hours=2)
+        process_stamp = str(ai.get("process_started_at") or "").strip()
+        if process_stamp:
+            try:
+                process_start = datetime.fromisoformat(process_stamp.replace("Z", "+00:00"))
+                if process_start.tzinfo is None:
+                    process_start = process_start.replace(tzinfo=cutoff.tzinfo)
+                cutoff = max(cutoff, process_start.astimezone(cutoff.tzinfo))
+            except ValueError:
+                pass
+
+        def fresh_failure(item: object) -> bool:
+            if not isinstance(item, dict) or str(item.get("outcome") or "") not in {"failed", "qa_fail"}:
+                return False
+            stamp = str(item.get("timestamp") or "").strip()
+            if not stamp:
+                return False
+            try:
+                moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                if moment.tzinfo is None:
+                    moment = moment.replace(tzinfo=cutoff.tzinfo)
+                return moment.astimezone(cutoff.tzinfo) >= cutoff
+            except ValueError:
+                return False
+
+        recent_failures = [item for item in events[-16:] if fresh_failure(item)]
+        if len(recent_failures) >= 3:
+            chain = " | ".join(
+                f"{item.get('model','?')}:{item.get('kind') or item.get('outcome','failed')}"
+                + (f"/finish={item.get('finish_reason')}" if item.get("finish_reason") else "")
+                for item in recent_failures[-5:]
+            )
+            out.append({
+                "severity": "WARNING",
+                "code": "OPENROUTER_MODEL_FAILURES",
+                "detail": f"OpenRouter model-level failures in current process window: {len(recent_failures)}. {chain}"[:1200],
+            })
     if active == "router":
         router = ai.get("router") if isinstance(ai.get("router"), dict) else {}
         configured = int(router.get("configured_providers") or 0)
@@ -289,7 +389,11 @@ def diagnostic_bundle(status: dict[str, Any], incidents: list[dict[str, str]]) -
             except OSError:
                 continue
             archive.writestr(f"logs/{log_path.name}", data[-256 * 1024:])
-        for extra in (data_dir() / "ui_freeze_trace.log", data_dir() / "ui_startup_freeze_trace.log"):
+        for extra in (
+            data_dir() / "ui_freeze_trace.log",
+            data_dir() / "ui_startup_freeze_trace.log",
+            data_dir() / "v2" / "openrouter_events.jsonl",
+        ):
             if extra.exists():
                 try:
                     archive.writestr(extra.name, extra.read_bytes()[-256 * 1024:])
