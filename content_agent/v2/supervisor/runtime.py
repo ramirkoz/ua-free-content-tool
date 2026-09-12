@@ -35,6 +35,7 @@ class SupervisorRuntime:
         self._last_report = ""
         self._last_error = ""
         self._hooks_installed = False
+        self._resource_exhaustion_until = 0.0
 
     def start(self) -> None:
         if self.thread is not None and self.thread.is_alive():
@@ -204,15 +205,26 @@ class SupervisorRuntime:
             self.run_once(force_report=False)
         except Exception as exc:
             self._last_error = str(exc)
+            detail = str(exc).casefold()
+            if (isinstance(exc, OSError) and getattr(exc, "errno", None) == 24) or "too many open files" in detail:
+                self._resource_exhaustion_until = time.monotonic() + 10 * 60
             logger.exception("Supervisor initial cycle failed: %s", exc)
             self._post_status()
         while not self.stop_event.is_set():
             interval = load_backend_settings().supervisor_interval_seconds
             if self.stop_event.wait(interval):
                 break
+            if time.monotonic() < self._resource_exhaustion_until:
+                continue
             try:
                 self.run_once()
             except Exception as exc:
                 self._last_error = str(exc)
+                detail = str(exc).casefold()
+                if (isinstance(exc, OSError) and getattr(exc, "errno", None) == 24) or "too many open files" in detail:
+                    # Do not add one failed status/tmp open every minute while
+                    # the process is already out of handles. A ten-minute quiet
+                    # period reduces further pressure and log spam.
+                    self._resource_exhaustion_until = time.monotonic() + 10 * 60
                 logger.exception("Supervisor cycle failed: %s", exc)
                 self._post_status()
