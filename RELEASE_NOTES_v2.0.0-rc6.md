@@ -17,3 +17,7 @@ RC6 is a focused stabilization release based on live Supervisor evidence from 12
 - Existing `Data` is compatible. Do not delete or rebuild the database.
 - Close the previous build, extract RC6 into a new folder, then copy the working `Data` folder into it.
 - Windows GUI runtime was not executed inside the Linux build environment; live Windows burn-in is still required.
+
+## Release synchronization
+
+- RC6 release artifacts are published from the current canonical `main` branch after the final repository synchronization pass.
