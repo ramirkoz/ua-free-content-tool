@@ -1,0 +1,31 @@
+name: KONTUR RC42 Temporary Public Transfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kontur-rc42-public-transfer.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified RC42 temp copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 https://tempfile.org/qwZQH2ofNGB/download -o KONTUR_RF_10.3.0rc42_Windows_Portable.zip
+          echo 'efed02358fd7530d52c1a4ce2daa2c0950b85fe6267a2deb5546e46ce4f69c80  KONTUR_RF_10.3.0rc42_Windows_Portable.zip' | sha256sum -c -
+      - name: Publish temporary release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete kontur-rc42-transfer --cleanup-tag -y 2>/dev/null || true
+          gh release create kontur-rc42-transfer KONTUR_RF_10.3.0rc42_Windows_Portable.zip \
+            --title 'Temporary KONTUR RC42 transfer' \
+            --notes 'Temporary transport asset for canonical Drive delivery. Delete after transfer.'
