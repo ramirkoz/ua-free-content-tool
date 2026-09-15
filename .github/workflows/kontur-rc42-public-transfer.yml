@@ -7,25 +7,32 @@ on:
       - ".github/workflows/kontur-rc42-public-transfer.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Download verified RC42 temp copy
+      - name: Download and verify RC42
         shell: bash
         run: |
           set -euo pipefail
-          curl -fL --retry 3 https://tempfile.org/qwZQH2ofNGB/download -o KONTUR_RF_10.3.0rc42_Windows_Portable.zip
-          echo 'efed02358fd7530d52c1a4ce2daa2c0950b85fe6267a2deb5546e46ce4f69c80  KONTUR_RF_10.3.0rc42_Windows_Portable.zip' | sha256sum -c -
-      - name: Publish temporary release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
+          curl -fL --retry 3 https://tempfile.org/qwZQH2ofNGB/download -o rc42.zip
+          echo 'efed02358fd7530d52c1a4ce2daa2c0950b85fe6267a2deb5546e46ce4f69c80  rc42.zip' | sha256sum -c -
+          mkdir payload
+          unzip -q rc42.zip -d payload
+          test -f payload/KONTUR_RF.exe
+          test -f payload/KONTUR_UpdateWatch_RC26.exe
+          test -f payload/KONTUR_TransactionRunner_RC26.exe
+      - name: Upload updater-ready artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC42_DRIVE_BRIDGE
+          path: payload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Print artifact digest
         shell: bash
-        run: |
-          set -euo pipefail
-          gh release create kontur-rc42-transfer-2 KONTUR_RF_10.3.0rc42_Windows_Portable.zip \
-            --repo ramirkoz/ua-free-content-tool \
-            --title 'Temporary KONTUR RC42 transfer' \
-            --notes 'Temporary transport asset for canonical Drive delivery.'
+        run: echo "RC42_ARTIFACT_SHA256=${{ steps.upload.outputs.artifact-digest }}"
