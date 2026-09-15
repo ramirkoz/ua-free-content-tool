@@ -1,0 +1,36 @@
+name: KONTUR RC41 Temporary Transfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kontur-rc41-transfer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download RC41 release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          curl -fL --retry 3 'https://release-assets.githubusercontent.com/github-production-release-asset/1362388503/e41068bf-782f-42e8-adb8-852cca27ec42?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-09-15T20%3A42%3A37Z&rscd=attachment%3B+filename%3DKONTUR_RF_10.3.0rc41_Windows_Portable.zip&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-09-15T19%3A42%3A30Z&ske=2026-09-15T20%3A42%3A37Z&sks=b&skv=2018-11-09&sig=xYYMXW1LTxSHsaUmUzgRJrUd4eaz%2FaaO2XmUxkGiL88%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc4OTUwMzMxNywibmJmIjoxNzg5NTAxNTE3LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.wfp3CUKwnhHxoRHtt2jfZCiksDm0P_PAU7Pq-q7f1CQ&response-content-disposition=attachment%3B%20filename%3DKONTUR_RF_10.3.0rc41_Windows_Portable.zip&response-content-type=application%2Foctet-stream' -o rc41.zip
+          sha256sum rc41.zip
+          unzip -q rc41.zip -d payload
+          test -f payload/KONTUR_RF.exe
+          test -f payload/KONTUR_UpdateWatch_RC26.exe
+          test -f payload/KONTUR_TransactionRunner_RC26.exe
+      - name: Upload updater-ready transfer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC41_TRANSFER
+          path: payload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
