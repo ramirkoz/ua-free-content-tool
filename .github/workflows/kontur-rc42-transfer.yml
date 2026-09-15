@@ -1,0 +1,39 @@
+name: KONTUR RC42 Temporary Transfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kontur-rc42-transfer.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download official RC42 release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          curl -fL --retry 3 'https://release-assets.githubusercontent.com/github-production-release-asset/1362388503/575e6852-babc-4fa1-9648-8514016bc907?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-09-15T21%3A14%3A16Z&rscd=attachment%3B+filename%3DKONTUR_RF_10.3.0rc42_Windows_Portable.zip&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-09-15T20%3A13%3A40Z&ske=2026-09-15T21%3A14%3A16Z&sks=b&skv=2018-11-09&sig=uehNph1E00WDT7%2Bo2K6sSRnL77p4EYdkylgXv0JTIpU%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc4OTUwNTY5NywibmJmIjoxNzg5NTAzODk3LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.SAnOVbKdTQ3Ic3UHgJFJk6GoOmLKSzXaED9aWZi3dUA&response-content-disposition=attachment%3B%20filename%3DKONTUR_RF_10.3.0rc42_Windows_Portable.zip&response-content-type=application%2Foctet-stream' -o rc42.zip
+          echo 'efed02358fd7530d52c1a4ce2daa2c0950b85fe6267a2deb5546e46ce4f69c80  rc42.zip' | sha256sum -c -
+          unzip -q rc42.zip -d payload
+          test -f payload/KONTUR_RF.exe
+          test -f payload/KONTUR_UpdateWatch_RC26.exe
+          test -f payload/KONTUR_TransactionRunner_RC26.exe
+      - name: Upload updater-ready transfer artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC42_TRANSFER
+          path: payload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Print transfer digest
+        shell: bash
+        run: echo "RC42_TRANSFER_SHA256=${{ steps.upload.outputs.artifact-digest }}"
