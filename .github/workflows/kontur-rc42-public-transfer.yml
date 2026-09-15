@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release delete kontur-rc42-transfer --cleanup-tag -y 2>/dev/null || true
-          gh release create kontur-rc42-transfer KONTUR_RF_10.3.0rc42_Windows_Portable.zip \
+          gh release create kontur-rc42-transfer-2 KONTUR_RF_10.3.0rc42_Windows_Portable.zip \
+            --repo ramirkoz/ua-free-content-tool \
             --title 'Temporary KONTUR RC42 transfer' \
-            --notes 'Temporary transport asset for canonical Drive delivery. Delete after transfer.'
+            --notes 'Temporary transport asset for canonical Drive delivery.'
