@@ -68,7 +68,7 @@ class RemoteCommand:
 class RemoteControlManager:
     """Narrow Google Drive control plane.
 
-    The Drive account is already authenticated by the application.  A remote file
+    The Drive account is already authenticated by the application. A remote file
     may request only three fixed operations: report, restart, update-to-version.
     There is intentionally no shell/command/path/URL field in the protocol.
     """
@@ -264,7 +264,11 @@ class RemoteControlManager:
 
         def worker() -> None:
             try:
-                prepared = prepare_update(command.target_version, current_version=self.version)
+                prepared = prepare_update(
+                    command.target_version,
+                    current_version=self.version,
+                    control_request_id=command.request_id,
+                )
                 ready, detail = wait_for_preflight(prepared, timeout_seconds=150)
                 if not ready:
                     self._result(command.request_id, command.command, "PRECHECK_FAILED", detail)
@@ -277,9 +281,10 @@ class RemoteControlManager:
                     transaction_id=prepared.request_id,
                     target_version=prepared.target_version,
                 )
-                # The detached PowerShell runner has already verified the release.
-                # It now waits for this exact process to exit, replaces everything
-                # except Data, validates startup health and rolls back on failure.
+                # Detached runner has already downloaded, SHA/signature checked and
+                # staged the release. It waits for this exact process to exit,
+                # replaces everything except Data, validates startup health and
+                # rolls back the old runtime if the new version cannot prove health.
                 self._post_ui(lambda: getattr(self.window, "root").destroy())
             except Exception as exc:
                 self._result(command.request_id, command.command, "FAILED", str(exc))
