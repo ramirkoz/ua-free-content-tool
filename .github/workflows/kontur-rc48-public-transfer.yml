@@ -1,0 +1,32 @@
+name: KONTUR RC48 Temporary Public Transfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kontur-rc48-public-transfer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify RC48
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://tempfile.org/2JLKRJ3tXCW/download'
+          expected_size=44465361
+          curl -fL --connect-timeout 20 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 "$url" -o rc48.zip
+          test "$(stat -c%s rc48.zip)" -eq "$expected_size"
+          echo '3c46e7cf1db20865aaca3e5d93cbb726ea0d4e13b466e2471647d3087a1e32e8  rc48.zip' | sha256sum -c -
+      - name: Upload exact RC48 release ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC48_EXACT_ZIP
+          path: rc48.zip
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
