@@ -7,11 +7,16 @@ from datetime import datetime
 from typing import Callable
 
 from .contracts import UnifiedAIResult
-from .openrouter_backend import OpenRouterBackend, OpenRouterError, recent_events
+from .direct_router_runtime import install_direct_router_runtime
+from .openrouter_backend import OpenRouterBackend, recent_events
 from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_backend_settings
 
 
 logger = logging.getLogger("content_agent.v2.ai_service")
+
+# The V2 shell imports this module before rendering AI health. Install the direct
+# provider recovery layer here so UI, supervisor and runtime all see one router.
+install_direct_router_runtime()
 
 
 class AIServiceError(RuntimeError):
@@ -52,9 +57,10 @@ def execute(
 ) -> UnifiedAIResult:
     """Single V2 execution gate.
 
-    The active backend is exclusive. OpenRouter never falls through to the legacy
-    router or Codex; Router never falls through to OpenRouter; Agent runs only
-    Codex. This is the hard switch promised by the V2 contract.
+    Backend choice remains explicit. RC8 changes the direct Router itself: direct
+    Gemini/Groq/NVIDIA/Cloudflare calls now use paced transport, short retry and
+    reviewed model fallbacks rather than treating one transient response as a dead
+    provider.
     """
     global _LAST_RESULT
     settings = load_backend_settings()
@@ -71,8 +77,6 @@ def execute(
             skip_models=tuple(skip_models or ()),
         )
     elif backend == BACKEND_AGENT:
-        # Agent mode intentionally bypasses every token-key provider. In RC1 the
-        # agent backend is the authenticated Codex/ChatGPT account runtime.
         from ...codex_runtime import run_codex
         if cancel_event is not None and bool(getattr(cancel_event, "is_set", lambda: False)()):
             raise AIServiceError("AI-завдання скасовано.")
@@ -94,8 +98,6 @@ def execute(
             attempted=("codex:codex-chatgpt",),
         )
     else:
-        # Import lazily to avoid a module cycle: content_agent.ai_router owns the
-        # stable RC30 provider implementation; V2 owns only backend selection.
         from ... import ai_router as legacy
         result = _legacy_result_to_unified(
             legacy.run_ai_router(
@@ -122,7 +124,6 @@ def execute(
 
 
 def run_ai_compat(*args, **kwargs):
-    """Return the legacy AIResult type so all RC30 consumers stay binary-compatible."""
     unified = execute(*args, **kwargs)
     from ...ai_router import AIResult
     priority = 0 if unified.backend == BACKEND_OPENROUTER else 1 if unified.backend == BACKEND_AGENT else 2
