@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from content_agent.google_drive import GoogleDriveClient, GoogleDriveError, extract_drive_file_id, public_download_url
@@ -18,6 +20,11 @@ def test_rejects_non_drive_media_link() -> None:
         extract_drive_file_id("https://t.me/c/1117030092/125430")
 
 
+def _inject_access_token(client: GoogleDriveClient) -> None:
+    client._access_token = "access"
+    client._access_token_at = time.monotonic()
+
+
 def test_delete_file_uses_permanent_drive_delete(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -27,7 +34,7 @@ def test_delete_file_uses_permanent_drive_delete(monkeypatch) -> None:
         return HttpResponse(204, {}, b"", url)
 
     client = GoogleDriveClient("client.apps.googleusercontent.com", "secret", "refresh")
-    client._access_token = "access"
+    _inject_access_token(client)
     monkeypatch.setattr("content_agent.google_drive.fetch_url", fake_fetch)
     client.delete_file("1AbCdEfGhIjKlMnOpQrStUvWxYz_12345")
     assert captured["method"] == "DELETE"
@@ -37,7 +44,7 @@ def test_delete_file_uses_permanent_drive_delete(monkeypatch) -> None:
 
 def test_delete_file_fails_closed_on_drive_error(monkeypatch) -> None:
     client = GoogleDriveClient("client.apps.googleusercontent.com", "secret", "refresh")
-    client._access_token = "access"
+    _inject_access_token(client)
     monkeypatch.setattr(
         "content_agent.google_drive.fetch_url",
         lambda *args, **kwargs: HttpResponse(403, {"content-type": "application/json"}, b"{}", str(args[0])),
