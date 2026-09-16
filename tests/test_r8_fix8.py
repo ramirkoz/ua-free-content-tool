@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -93,6 +94,7 @@ def test_drive_creates_and_revokes_temporary_threads_permission(monkeypatch) -> 
     monkeypatch.setattr("content_agent.google_drive.probe_public_media", lambda _file_id: next(probes))
     client = GoogleDriveClient("client.apps.googleusercontent.com", "secret", "refresh")
     client._access_token = "access"
+    client._access_token_at = time.monotonic()
     info = DriveMediaInfo(
         file_id="1AbCdEfGhIjKlMnOpQrStUvWxYz_12345",
         name="photo.jpg",
