@@ -226,9 +226,11 @@ try {
 
     Wait-Parent ([int]$req.parent_pid) 45
     Copy-Runtime $root $backup
+    # From this point onward the installed runtime is about to be mutated. Arm
+    # rollback before the first delete/copy so a partial replacement is recoverable.
+    $applied = $true
     Clear-Runtime $root
     Copy-Runtime $stage $root
-    $applied = $true
     Remove-Item -LiteralPath $health -Force -ErrorAction SilentlyContinue
 
     $exe = Join-Path $root "UA_FREE_Content_Tool.exe"
