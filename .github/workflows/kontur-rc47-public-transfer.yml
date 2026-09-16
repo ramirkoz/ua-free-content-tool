@@ -1,0 +1,42 @@
+name: KONTUR RC47 Temporary Public Transfer
+
+on:
+  push:
+    branches: [kontur-rc47-transfer]
+    paths:
+      - '.github/workflows/kontur-rc47-public-transfer.yml'
+
+permissions:
+  contents: read
+
+env:
+  RC47_URL: https://tempfile.org/Zz8tUNTC4wZ/download
+  RC47_SHA256: 0deab85eb2b040fbd3e26a89b2bd83d44d4f1f42c9d5c9cd2be2a8d1b2c6d9ea
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify RC47
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 2 "$RC47_URL" -o rc47.zip
+          echo "$RC47_SHA256  rc47.zip" | sha256sum -c -
+          mkdir payload
+          unzip -q rc47.zip -d payload
+          test -f payload/KONTUR_RF.exe
+          test -f payload/KONTUR_UpdateWatch_RC26.exe
+          test -f payload/KONTUR_TransactionRunner_RC26.exe
+          test -f payload/PORTABLE_README.txt
+      - name: Upload updater-ready artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC47_DRIVE_BRIDGE
+          path: payload/
+          if-no-files-found: error
+          retention-days: 2
+      - name: Print artifact digest
+        run: |
+          echo "RC47_ARTIFACT_ID=${{ steps.upload.outputs.artifact-id }}"
+          echo "RC47_ARTIFACT_DIGEST=${{ steps.upload.outputs.artifact-digest }}"
