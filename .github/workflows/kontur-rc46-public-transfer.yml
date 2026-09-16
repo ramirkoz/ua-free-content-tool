@@ -1,0 +1,38 @@
+name: KONTUR RC46 Temporary Public Transfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kontur-rc46-public-transfer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify RC46
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 https://tempfile.org/9Hbds8CmDKE/download -o rc46.zip
+          echo 'e0ba9ed9abacc54e62912956a20985b8f2d913331615b534457bc66d4688d246  rc46.zip' | sha256sum -c -
+          mkdir payload
+          unzip -q rc46.zip -d payload
+          test -f payload/KONTUR_RF.exe
+          test -f payload/KONTUR_UpdateWatch_RC26.exe
+          test -f payload/KONTUR_TransactionRunner_RC26.exe
+      - name: Upload updater-ready artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC46_DRIVE_BRIDGE
+          path: payload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Print artifact digest
+        shell: bash
+        run: echo "RC46_ARTIFACT_SHA256=${{ steps.upload.outputs.artifact-digest }}"
