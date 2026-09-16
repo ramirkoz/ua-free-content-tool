@@ -11,10 +11,11 @@ from ...network import fetch_url
 
 
 class SupervisorDriveExporter:
-    """Small Drive client for diagnostics, isolated from the media registry.
+    """Small Drive client for diagnostics and narrow supervisor control.
 
-    It reuses the already-authorized Google Drive account but never changes media
-    permissions and never deletes user files.
+    It reuses the already-authorized Google Drive account, never changes file
+    permissions and never executes arbitrary remote content.  Control consumers
+    may read JSON from the dedicated per-instance CONTROL folder only.
     """
 
     def __init__(self, config) -> None:
@@ -69,8 +70,9 @@ class SupervisorDriveExporter:
             parts.append("mimeType!='application/vnd.google-apps.folder'")
         url = "https://www.googleapis.com/drive/v3/files?" + urlencode({
             "q": " and ".join(parts),
-            "fields": "files(id,name,mimeType)",
+            "fields": "files(id,name,mimeType,modifiedTime,size)",
             "pageSize": "10",
+            "orderBy": "modifiedTime desc",
             "spaces": "drive",
         })
         data = self._json_request(url)
@@ -98,6 +100,34 @@ class SupervisorDriveExporter:
         if not folder_id:
             raise GoogleDriveError(f"Не вдалося створити папку {name}.")
         return folder_id
+
+    def download_bytes(self, file_id: str, *, max_bytes: int = 512 * 1024) -> bytes:
+        candidate = str(file_id or "").strip()
+        if not candidate or len(candidate) > 256:
+            raise GoogleDriveError("Неправильний Google Drive file id.")
+        response = fetch_url(
+            f"https://www.googleapis.com/drive/v3/files/{quote(candidate, safe='')}?alt=media",
+            method="GET",
+            headers={"Authorization": f"Bearer {self._token()}", "Accept": "application/json, text/plain, */*"},
+            max_bytes=max(1024, int(max_bytes)),
+            allowed_content_types=None,
+            timeout=30,
+            max_redirects=0,
+            allow_http_errors=True,
+        )
+        if response.status >= 400:
+            raise GoogleDriveError(f"Не вдалося прочитати файл Google Drive: HTTP {response.status}.")
+        return bytes(response.body)
+
+    def download_json(self, file_id: str, *, max_bytes: int = 256 * 1024) -> dict:
+        raw = self.download_bytes(file_id, max_bytes=max_bytes)
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except Exception as exc:
+            raise GoogleDriveError("Керуючий файл Google Drive не є валідним JSON.") from exc
+        if not isinstance(value, dict):
+            raise GoogleDriveError("Керуючий JSON повинен бути об'єктом.")
+        return value
 
     def upload_bytes(self, name: str, data: bytes, parent_id: str, *, mime_type: str = "application/octet-stream", replace: bool = False) -> str:
         existing = self.find_child(parent_id, name, folder=False) if replace else ""
@@ -138,6 +168,15 @@ class SupervisorDriveExporter:
         if not file_id:
             raise GoogleDriveError(f"Google Drive не повернув ID для {name}.")
         return file_id
+
+    def upload_json(self, name: str, payload: dict, parent_id: str, *, replace: bool = True) -> str:
+        return self.upload_bytes(
+            name,
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8"),
+            parent_id,
+            mime_type="application/json",
+            replace=replace,
+        )
 
     def upload_path(self, path: Path, parent_id: str, *, replace: bool = False) -> str:
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
