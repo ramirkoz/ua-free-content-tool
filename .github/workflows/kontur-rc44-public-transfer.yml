@@ -1,0 +1,38 @@
+name: KONTUR RC44 Temporary Public Transfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kontur-rc44-public-transfer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify RC44
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 https://tempfile.org/17AGYQa3KMG/download -o rc44.zip
+          echo 'a8204387696e4c146d26c243444674f5362a39a0bb1a84aaea83612442f3b3af  rc44.zip' | sha256sum -c -
+          mkdir payload
+          unzip -q rc44.zip -d payload
+          test -f payload/KONTUR_RF.exe
+          test -f payload/KONTUR_UpdateWatch_RC26.exe
+          test -f payload/KONTUR_TransactionRunner_RC26.exe
+      - name: Upload updater-ready artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: KONTUR_RC44_DRIVE_BRIDGE
+          path: payload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Print artifact digest
+        shell: bash
+        run: echo "RC44_ARTIFACT_SHA256=${{ steps.upload.outputs.artifact-digest }}"
