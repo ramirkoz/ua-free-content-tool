@@ -17,6 +17,7 @@ from ...paths import data_dir, runtime_dir
 _REPO = "ramirkoz/ua-free-content-tool"
 _VERSION_RE = re.compile(r"^2\.0\.0-rc(?P<rc>[1-9]\d*)$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_REQUEST_RE = re.compile(r"^[A-Za-z0-9._-]{8,96}$")
 
 
 def _now_iso() -> str:
@@ -60,6 +61,7 @@ class ReleaseAsset:
 @dataclass(frozen=True, slots=True)
 class PreparedUpdate:
     request_id: str
+    control_request_id: str
     target_version: str
     request_path: Path
     preflight_path: Path
@@ -105,8 +107,8 @@ def resolve_release(target_version: str, *, current_version: str) -> ReleaseAsse
 
 
 def _runner_script() -> str:
-    # This script is generated locally. Remote control can select only a validated
-    # version; URL/hash/runtime paths come from the fixed GitHub release resolver.
+    # Generated locally. Remote control selects only a validated release version;
+    # it cannot inject a URL, path, executable, script or shell command.
     return r'''param([Parameter(Mandatory=$true)][string]$RequestPath)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -123,8 +125,10 @@ $preflight = Join-Path $work "preflight.json"
 $pending = Join-Path $supervisor "control_result_pending.json"
 $health = Join-Path $supervisor "startup_healthy.json"
 $applied = $false
+$new = $null
 $oldVersion = [string]$req.current_version
 $targetVersion = [string]$req.target_version
+$controlRequestId = [string]$req.control_request_id
 
 function Write-JsonAtomic([string]$Path, [hashtable]$Payload) {
     $dir = Split-Path -Parent $Path
@@ -137,7 +141,8 @@ function Write-JsonAtomic([string]$Path, [hashtable]$Payload) {
 function Write-Pending([string]$State, [string]$Detail) {
     Write-JsonAtomic $pending @{
         schema = "ua-free-content-tool-control-result-v1"
-        request_id = [string]$req.request_id
+        request_id = $controlRequestId
+        transaction_id = [string]$req.request_id
         command = "update"
         state = $State
         detail = $Detail
@@ -204,9 +209,17 @@ try {
         throw "UPDATE_INTERNAL_VERSION_MISMATCH"
     }
 
+    $stagedExe = Join-Path $stage "UA_FREE_Content_Tool.exe"
+    $signature = Get-AuthenticodeSignature -LiteralPath $stagedExe
+    if ($signature.Status -ne "Valid") { throw ("UPDATE_LAUNCHER_SIGNATURE_INVALID: " + [string]$signature.Status) }
+    if ([string]$signature.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+        throw ("UPDATE_LAUNCHER_SIGNER_INVALID: " + [string]$signature.SignerCertificate.Subject)
+    }
+
     Write-JsonAtomic $preflight @{
         ready = $true
         request_id = [string]$req.request_id
+        control_request_id = $controlRequestId
         target_version = $targetVersion
         generated_at = (Get-Date).ToString("o")
     }
@@ -240,7 +253,10 @@ catch {
     $detail = [string]$_.Exception.Message
     if ($applied -and (Test-Path -LiteralPath $backup)) {
         try {
-            Get-Process | Where-Object { $_.Path -eq (Join-Path $root "UA_FREE_Content_Tool.exe") } | Stop-Process -Force -ErrorAction SilentlyContinue
+            if ($null -ne $new -and -not $new.HasExited) {
+                Stop-Process -Id $new.Id -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 1
+            }
         } catch {}
         try {
             Clear-Runtime $root
@@ -259,9 +275,17 @@ catch {
 '''
 
 
-def prepare_update(target_version: str, *, current_version: str) -> PreparedUpdate:
+def prepare_update(
+    target_version: str,
+    *,
+    current_version: str,
+    control_request_id: str = "",
+) -> PreparedUpdate:
     asset = resolve_release(target_version, current_version=current_version)
     request_id = uuid.uuid4().hex
+    control_id = str(control_request_id or request_id).strip()
+    if not _REQUEST_RE.fullmatch(control_id):
+        raise ValueError("UPDATE_CONTROL_REQUEST_ID_INVALID")
     root = data_dir() / "supervisor" / "updates" / request_id
     root.mkdir(parents=True, exist_ok=True)
     request_path = root / "request.json"
@@ -271,6 +295,7 @@ def prepare_update(target_version: str, *, current_version: str) -> PreparedUpda
     _atomic_json(request_path, {
         "schema": "ua-free-content-tool-update-v1",
         "request_id": request_id,
+        "control_request_id": control_id,
         "current_version": str(current_version),
         "target_version": asset.version,
         "sha256": asset.sha256,
@@ -296,7 +321,7 @@ def prepare_update(target_version: str, *, current_version: str) -> PreparedUpda
         creationflags=flags,
         close_fds=(os.name != "nt"),
     )
-    return PreparedUpdate(request_id, asset.version, request_path, preflight_path, pending_result_path, process)
+    return PreparedUpdate(request_id, control_id, asset.version, request_path, preflight_path, pending_result_path, process)
 
 
 def wait_for_preflight(prepared: PreparedUpdate, *, timeout_seconds: int = 120) -> tuple[bool, str]:
@@ -306,7 +331,7 @@ def wait_for_preflight(prepared: PreparedUpdate, *, timeout_seconds: int = 120) 
             try:
                 value = json.loads(prepared.preflight_path.read_text(encoding="utf-8-sig"))
                 if isinstance(value, dict) and bool(value.get("ready")):
-                    return True, "package downloaded, verified and staged"
+                    return True, "package downloaded, SHA256/signature verified and staged"
             except Exception:
                 pass
         if prepared.pending_result_path.is_file():
@@ -314,7 +339,7 @@ def wait_for_preflight(prepared: PreparedUpdate, *, timeout_seconds: int = 120) 
                 value = json.loads(prepared.pending_result_path.read_text(encoding="utf-8-sig"))
             except Exception:
                 value = {}
-            if isinstance(value, dict) and str(value.get("request_id") or "") == prepared.request_id:
+            if isinstance(value, dict) and str(value.get("request_id") or "") == prepared.control_request_id:
                 return False, str(value.get("detail") or value.get("state") or "update preflight failed")
         if prepared.process.poll() is not None and not prepared.preflight_path.is_file():
             return False, f"update runner exited before preflight: {prepared.process.returncode}"
