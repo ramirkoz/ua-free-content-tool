@@ -11,8 +11,10 @@ from pathlib import Path
 
 from ...paths import data_dir
 from .analyzer import analyze_with_openrouter
+from .control import RemoteControlManager
 from .diagnostics import collect_status, detect_incidents, diagnostic_bundle, instance_identity, write_json
 from .drive_export import SupervisorDriveExporter
+from .updater import mark_startup_healthy
 from ..ai.settings import load_backend_settings
 
 logger = logging.getLogger("content_agent.v2.supervisor")
@@ -26,10 +28,8 @@ class SupervisorRuntime:
         self.version = version
         self.stop_event = getattr(window, "stop_event", threading.Event())
         self.thread: threading.Thread | None = None
+        self.control = RemoteControlManager(window, config, version=version)
         self._last_signature: tuple[tuple[str, str], ...] = ()
-        # A clean startup writes status immediately, but should not spend an
-        # OpenRouter call on a HEALTHY report every time the operator restarts.
-        # Incidents still generate a report on the first cycle.
         self._last_summary_at = time.monotonic()
         self._last_drive_status_at = 0.0
         self._last_report = ""
@@ -44,9 +44,11 @@ class SupervisorRuntime:
         if not settings.supervisor_enabled:
             return
         self._install_exception_hooks()
+        # Update rollback waits for this marker. It is written only after the V2
+        # window and SupervisorRuntime were constructed successfully.
+        mark_startup_healthy(self.version)
         self.thread = threading.Thread(target=self._loop, name="content-v2-supervisor", daemon=True)
         self.thread.start()
-
 
     def _install_exception_hooks(self) -> None:
         if self._hooks_installed:
@@ -97,6 +99,9 @@ class SupervisorRuntime:
         if self.thread is None or not self.thread.is_alive():
             return "Supervisor: не запущено"
         suffix = f" · звіт: {self._last_report}" if self._last_report else ""
+        control = self.control.status()
+        if control.get("busy"):
+            suffix += " · remote update"
         return "Supervisor: працює" + suffix
 
     def _post_status(self) -> None:
@@ -166,8 +171,15 @@ class SupervisorRuntime:
 
     def run_once(self, *, force_report: bool = False) -> dict:
         status = collect_status(self.window, self.database, version=self.version)
+        status["remote_control"] = self.control.status()
         incidents = detect_incidents(status)
         signature = self._signature(incidents)
+
+        command = self.control.poll()
+        remote_report = bool(command is not None and command.command == "report")
+        if remote_report:
+            force_report = True
+
         write_json("status.json", status)
         write_json("incident.json", {"generated_at": status.get("generated_at"), "incidents": incidents})
 
@@ -177,7 +189,9 @@ class SupervisorRuntime:
         periodic = now - self._last_summary_at >= settings.supervisor_summary_interval_minutes * 60
         event = "STATUS"
         should_report = force_report or changed or periodic
-        if changed:
+        if remote_report:
+            event = "REMOTE_REPORT"
+        elif changed:
             if signature and not self._last_signature:
                 event = "INCIDENT"
             elif not signature and self._last_signature:
@@ -189,12 +203,23 @@ class SupervisorRuntime:
         elif periodic:
             event = "HEALTH_SNAPSHOT"
 
+        report_path: Path | None = None
         if should_report:
             bundle = diagnostic_bundle(status, incidents) if incidents or changed else None
-            self._write_report(status, incidents, event, bundle)
+            report_path = self._write_report(status, incidents, event, bundle)
             self._last_summary_at = now
         elif now - self._last_drive_status_at >= 5 * 60:
             self._upload_status_only(status, incidents)
+
+        if remote_report and command is not None:
+            self.control.complete_report(command, report_name=report_path.name if report_path else self._last_report)
+        elif command is not None and command.command == "restart":
+            # Push an immediate final status before the remote restart.
+            self._upload_status_only(status, incidents)
+            self.control.execute_restart(command)
+        elif command is not None and command.command == "update":
+            self._upload_status_only(status, incidents)
+            self.control.execute_update(command)
 
         self._last_signature = signature
         self._post_status()
@@ -222,9 +247,6 @@ class SupervisorRuntime:
                 self._last_error = str(exc)
                 detail = str(exc).casefold()
                 if (isinstance(exc, OSError) and getattr(exc, "errno", None) == 24) or "too many open files" in detail:
-                    # Do not add one failed status/tmp open every minute while
-                    # the process is already out of handles. A ten-minute quiet
-                    # period reduces further pressure and log spam.
                     self._resource_exhaustion_until = time.monotonic() + 10 * 60
                 logger.exception("Supervisor cycle failed: %s", exc)
                 self._post_status()
