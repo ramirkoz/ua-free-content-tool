@@ -10,13 +10,13 @@ from datetime import datetime
 from tkinter import messagebox, ttk
 
 from .config import AppConfig, ConfigError, load_config
-from .v2.storage.compat import Database
 from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
 from .portable import PortableMigrationError, ensure_portable_data_migrated
 from .readable_media_names import install_runtime as install_readable_media_names_runtime
-from .v2.ui.window_rc8 import MainWindow
+from .v2.storage.reliable import Database
+from .v2.ui.window_rc9 import MainWindow
 
 
 def _raise_windows_stdio_limit(logger: object | None = None) -> int:
@@ -63,14 +63,14 @@ def _show_startup_error(root: tk.Tk, message: str) -> None:
 
 
 def _run_ui_startup(root: tk.Tk, logger: object) -> int:
-    root.title("UA FREE Content Tool — v2.0.0-rc8 · запуск")
+    root.title("UA FREE Content Tool — v2.0.0-rc9 · запуск")
     root.geometry("560x150")
     root.minsize(520, 140)
 
     frame = ttk.Frame(root, padding=18)
     frame.pack(fill="both", expand=True)
     status_var = tk.StringVar(value="Запуск: підготовка…")
-    ttk.Label(frame, text="UA FREE Content Tool v2.0.0-rc8", font="TkHeadingFont").pack(anchor="w")
+    ttk.Label(frame, text="UA FREE Content Tool v2.0.0-rc9", font="TkHeadingFont").pack(anchor="w")
     ttk.Label(frame, textvariable=status_var, wraplength=500).pack(anchor="w", pady=(10, 8))
     progress = ttk.Progressbar(frame, mode="indeterminate")
     progress.pack(fill="x")
