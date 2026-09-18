@@ -68,34 +68,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python - <<'PY'
-          from pathlib import Path
-          must = {
-              "content_agent/v2/supervisor/control.py": [
-                  "raise", "RemoteControlManager", "poll"
-              ],
-              "content_agent/v2/supervisor/resilient_runtime.py": [
-                  "CONTROL_POLL_INTERVAL", "_last_control_poll", "_drive_auth_required",
-                  "_is_drive_auth_error"
-              ],
-              "content_agent/v2/supervisor/diagnostics.py": [
-                  "auto_collect_scheduled", "auto_collect_enabled",
-                  "failed_targets_15m", "failed_targets_60m",
-                  "PUBLISH_FAILURES_ACTIVE", "DRIVE_REAUTH_REQUIRED",
-                  "PROCESS_HANDLE_SOFT_LIMIT = 16000"
-              ],
-              "content_agent/v2/ui/window_rc11.py": [
-                  "_rc11_schedule_autocollect_watchdog"
-              ],
+          $checks = @{
+            "content_agent/v2/supervisor/control.py" = @("RemoteControlManager", "def poll", "raise")
+            "content_agent/v2/supervisor/resilient_runtime.py" = @("CONTROL_POLL_INTERVAL", "_last_control_poll", "_drive_auth_required", "_is_drive_auth_error")
+            "content_agent/v2/supervisor/diagnostics.py" = @("auto_collect_scheduled", "auto_collect_enabled", "failed_targets_15m", "failed_targets_60m", "PUBLISH_FAILURES_ACTIVE", "DRIVE_REAUTH_REQUIRED", "PROCESS_HANDLE_SOFT_LIMIT = 16000")
+            "content_agent/v2/ui/window_rc11.py" = @("_rc11_schedule_autocollect_watchdog")
           }
-          for name, needles in must.items():
-              text = Path(name).read_text(encoding="utf-8")
-              for needle in needles:
-                  assert needle in text, f"{name}: missing {needle}"
-          assert Path("VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc12"
-          assert Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc12"
-          print("RC12_CANONICAL_GATES_OK")
-          PY
+          foreach ($path in $checks.Keys) {
+            $text = Get-Content $path -Raw
+            foreach ($needle in $checks[$path]) {
+              if (-not $text.Contains($needle)) { throw "$path missing $needle" }
+            }
+          }
+          if ((Get-Content VERSION.txt -Raw).Trim() -ne "2.0.0-rc12") { throw "VERSION mismatch" }
+          if ((Get-Content PUBLIC_VERSION.txt -Raw).Trim() -ne "2.0.0-rc12") { throw "PUBLIC_VERSION mismatch" }
+          Write-Host "RC12_CANONICAL_GATES_OK"
 
       - name: Commit clean canonical RC12
         shell: pwsh
