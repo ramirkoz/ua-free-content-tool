@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ...version import APP_VERSION
 from ..supervisor.resilient_runtime import ResilientSupervisorRuntime
 from . import window as base_window
 from .window_rc8 import MainWindow as Rc8MainWindow
@@ -8,7 +9,7 @@ from .window_rc8 import MainWindow as Rc8MainWindow
 class MainWindow(Rc8MainWindow):
     """RC11: Drive circuit breaker, durable History, self-healing collection."""
 
-    VERSION_LABEL = "2.0.0-rc11"
+    VERSION_LABEL = APP_VERSION
 
     def __init__(self, root, database, config) -> None:
         base_window.SupervisorRuntime = ResilientSupervisorRuntime
@@ -17,7 +18,7 @@ class MainWindow(Rc8MainWindow):
         self._rc11_schedule_autocollect_watchdog()
 
     def _apply_v2_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v2.0.0-rc11")
+        self.root.title(f"UA FREE Content Tool — v{APP_VERSION}")
 
     def _rc11_schedule_autocollect_watchdog(self) -> None:
         try:
