@@ -123,6 +123,11 @@ class RemoteControlManager:
             self._exporter = SupervisorDriveExporter(self.config)
         return self._exporter
 
+    def reset_drive(self) -> None:
+        """Drop cached Drive/auth state after a transport/auth failure."""
+        self._exporter = None
+        self._control_folder_id = ""
+
     def _control_folder(self) -> str:
         if self._control_folder_id:
             return self._control_folder_id
@@ -157,7 +162,7 @@ class RemoteControlManager:
                 self._last_error = f"result upload: {exc}"
             logger.warning("Remote control result upload failed: %s", exc)
 
-    def flush_pending_result(self) -> None:
+    def flush_pending_result(self, *, raise_transport_errors: bool = False) -> None:
         path = _pending_result_path()
         if not path.is_file():
             return
@@ -171,8 +176,11 @@ class RemoteControlManager:
                 self._last_result = f"{payload.get('command','?')}:{payload.get('state','?')}"
                 self._last_error = ""
         except Exception as exc:
+            self.reset_drive()
             with self._lock:
                 self._last_error = f"pending result upload: {exc}"
+            if raise_transport_errors:
+                raise
 
     def _validate(self, raw: dict[str, Any]) -> RemoteCommand:
         if str(raw.get("schema") or "") != "ua-free-content-tool-control-v1":
@@ -201,10 +209,17 @@ class RemoteControlManager:
         return RemoteCommand(request_id, command, created.isoformat(), target)
 
     def poll(self) -> RemoteCommand | None:
+        """Poll the narrow control file.
+
+        Protocol/validation errors are local data problems and remain ignored.
+        Transport/auth errors MUST propagate to the supervisor circuit breaker.
+        RC9 swallowed them here, so the outer runtime falsely registered every
+        failed 401 poll as a success and hammered Drive indefinitely.
+        """
         if self._busy:
             return None
         try:
-            self.flush_pending_result()
+            self.flush_pending_result(raise_transport_errors=True)
             folder = self._control_folder()
             file_id = self._drive().find_child(folder, "command.json", folder=False)
             if not file_id:
@@ -223,10 +238,13 @@ class RemoteControlManager:
             logger.warning("Ignored invalid remote control request: %s", exc)
             return None
         except Exception as exc:
+            self.reset_drive()
             with self._lock:
                 self._last_error = str(exc)
-            logger.warning("Remote control poll failed: %s", exc)
-            return None
+            # Deliberately propagate. ResilientSupervisorRuntime owns retry cadence
+            # and auth/transient backoff; hiding the exception here recreates a
+            # retry storm and Windows handle growth.
+            raise
 
     def complete_report(self, command: RemoteCommand, *, report_name: str) -> None:
         self._mark_processed(command.request_id)

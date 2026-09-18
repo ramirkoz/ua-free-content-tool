@@ -262,6 +262,12 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
             "background_started": background_started,
             "worker_alive": worker_alive,
             "auto_collect_running": bool(getattr(window, "auto_collect_running", False)),
+            "auto_collect_scheduled": bool(getattr(window, "auto_collect_after_id", None)),
+            "auto_collect_enabled": bool(
+                background_started
+                and not getattr(window, "stop_event", threading.Event()).is_set()
+                and (bool(getattr(window, "auto_collect_running", False)) or bool(getattr(window, "auto_collect_after_id", None)))
+            ),
             "ui_lag_seconds": round(ui_lag, 3),
             "operation_running": operation_running,
             "operation_age_seconds": round(operation_age, 1),
