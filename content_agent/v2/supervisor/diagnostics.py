@@ -24,6 +24,10 @@ from ..ai.settings import load_backend_settings
 
 _PROCESS_STARTED_AT = datetime.now().astimezone()
 
+PROCESS_HANDLE_SOFT_LIMIT = 16000
+PROCESS_HANDLE_HARD_LIMIT = 20000
+PROCESS_HANDLE_GROWTH_LIMIT = 750
+
 
 @dataclass(frozen=True, slots=True)
 class InstanceIdentity:
@@ -128,17 +132,36 @@ def _log_tail_summary() -> dict[str, Any]:
     return {"warnings": warnings, "errors": errors, "top_repeated": top}
 
 
-def _failed_targets_recent(database, hours: int = 24) -> int:
+def _failed_target_metrics(database) -> dict[str, Any]:
+    """Separate active publication failures from the 24h historical tail."""
+    zero = {
+        "failed_targets_15m": 0,
+        "failed_targets_60m": 0,
+        "failed_targets_24h": 0,
+        "last_failed_target_at": "",
+    }
     try:
-        threshold = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+        now = datetime.now(timezone.utc)
+        windows = {
+            "failed_targets_15m": now - timedelta(minutes=15),
+            "failed_targets_60m": now - timedelta(hours=1),
+            "failed_targets_24h": now - timedelta(hours=24),
+        }
+        result: dict[str, Any] = {}
         with database.connect() as db:
+            for key, threshold in windows.items():
+                row = db.execute(
+                    "SELECT COUNT(*) AS n FROM publication_targets WHERE status='failed' AND updated_at>=?",
+                    (threshold.isoformat(timespec="seconds"),),
+                ).fetchone()
+                result[key] = int(row["n"] if row else 0)
             row = db.execute(
-                "SELECT COUNT(*) AS n FROM publication_targets WHERE status='failed' AND updated_at>=?",
-                (threshold,),
+                "SELECT MAX(updated_at) AS stamp FROM publication_targets WHERE status='failed'"
             ).fetchone()
-        return int(row["n"] if row else 0)
+            result["last_failed_target_at"] = str(row["stamp"] or "") if row else ""
+        return result
     except Exception:
-        return 0
+        return zero
 
 
 def _windows_process_handle_count() -> int:
@@ -215,9 +238,10 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
         disk_free = -1
     ui_lag = max(0.0, time.monotonic() - float(getattr(window, "_ui_last_pulse", time.monotonic())))
     background_started = bool(getattr(window, "background_services_started", False))
+    operation_running = bool(getattr(window, "operation_running", False))
     operation_started = getattr(window, "operation_started_at", None)
     operation_age = 0.0
-    if operation_started is not None:
+    if operation_running and operation_started is not None:
         try:
             now_local = datetime.now().astimezone()
             if getattr(operation_started, "tzinfo", None) is None:
@@ -227,6 +251,7 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
             operation_age = 0.0
     worker = getattr(window, "worker_thread", None)
     worker_alive = bool(worker is not None and worker.is_alive()) if background_started else True
+    publishing_metrics = _failed_target_metrics(database)
     settings = load_backend_settings()
     return {
         "schema": "ua-free-content-tool-supervisor-v2",
@@ -238,9 +263,13 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
             "worker_alive": worker_alive,
             "auto_collect_running": bool(getattr(window, "auto_collect_running", False)),
             "ui_lag_seconds": round(ui_lag, 3),
-            "operation_running": bool(getattr(window, "operation_running", False)),
+            "operation_running": operation_running,
             "operation_age_seconds": round(operation_age, 1),
-            "operation": str(getattr(getattr(window, "operation_var", None), "get", lambda: "")() or "")[:500],
+            "operation": (
+                str(getattr(getattr(window, "operation_var", None), "get", lambda: "")() or "")[:500]
+                if operation_running
+                else ""
+            ),
             "threads": [item.name for item in threading.enumerate()],
         },
         "database": {
@@ -259,7 +288,7 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
         },
         "publishing": {
             "batches": batches,
-            "failed_targets_24h": _failed_targets_recent(database),
+            **publishing_metrics,
         },
         "ai": backend_status(),
         "logs": _log_tail_summary(),
@@ -295,11 +324,38 @@ def detect_incidents(status: dict[str, Any]) -> list[dict[str, str]]:
     system = status.get("system", {}) if isinstance(status.get("system"), dict) else {}
     free = int(system.get("disk_free_bytes") or -1)
     handle_count = int(system.get("process_handle_count") or -1)
-    if handle_count >= 6000:
+    supervisor = status.get("supervisor", {}) if isinstance(status.get("supervisor"), dict) else {}
+    handles = supervisor.get("handles", {}) if isinstance(supervisor.get("handles"), dict) else {}
+    handle_growth = int(handles.get("growth_since_supervisor_start") or 0)
+    handle_rate = float(handles.get("estimated_rate_per_hour") or 0.0)
+    if handle_count >= PROCESS_HANDLE_HARD_LIMIT:
         out.append({
-            "severity": "CRITICAL" if handle_count >= 12000 else "WARNING",
+            "severity": "CRITICAL",
             "code": "PROCESS_HANDLE_PRESSURE",
-            "detail": f"Windows process handle count is {handle_count}; resource leak/exhaustion risk.",
+            "detail": (
+                f"Content Tool process handle count is {handle_count} (hard limit {PROCESS_HANDLE_HARD_LIMIT}); "
+                f"growth since Supervisor start {handle_growth}, estimated rate {handle_rate:.1f}/h."
+            ),
+        })
+    elif handle_count >= PROCESS_HANDLE_SOFT_LIMIT and handle_growth >= PROCESS_HANDLE_GROWTH_LIMIT:
+        out.append({
+            "severity": "WARNING",
+            "code": "PROCESS_HANDLE_PRESSURE",
+            "detail": (
+                f"Content Tool process handles are high and growing: current {handle_count}, "
+                f"growth {handle_growth} (soft limit {PROCESS_HANDLE_SOFT_LIMIT}, growth trigger "
+                f"{PROCESS_HANDLE_GROWTH_LIMIT}), estimated rate {handle_rate:.1f}/h."
+            ),
+        })
+    drive_runtime = supervisor.get("drive_runtime", {}) if isinstance(supervisor.get("drive_runtime"), dict) else {}
+    if bool(drive_runtime.get("auth_required")):
+        out.append({
+            "severity": "WARNING",
+            "code": "DRIVE_REAUTH_REQUIRED",
+            "detail": (
+                "Google Drive authentication is no longer valid. Reconnect Google Drive in the application. "
+                "This is a Drive credential incident, not an AI/provider failure."
+            ),
         })
     dns = system.get("dns_resolver", {}) if isinstance(system.get("dns_resolver"), dict) else {}
     if int(dns.get("queued") or 0) >= 24:
@@ -316,9 +372,20 @@ def detect_incidents(status: dict[str, Any]) -> list[dict[str, str]]:
     if enabled >= 5 and errors >= max(5, int(enabled * 0.35)):
         out.append({"severity": "WARNING", "code": "SOURCE_FAILURE_WAVE", "detail": f"Active source errors {errors}/{enabled}."})
     publishing = status.get("publishing", {}) if isinstance(status.get("publishing"), dict) else {}
-    failed_targets = int(publishing.get("failed_targets_24h") or 0)
-    if failed_targets >= 5:
-        out.append({"severity": "WARNING", "code": "PUBLISH_FAILURES", "detail": f"Aggregate failed publication targets in previous 24h: {failed_targets}. This counter is independent from the current AI operation unless separate evidence links them."})
+    failed_15m = int(publishing.get("failed_targets_15m") or 0)
+    failed_60m = int(publishing.get("failed_targets_60m") or 0)
+    failed_24h = int(publishing.get("failed_targets_24h") or 0)
+    last_failed_at = str(publishing.get("last_failed_target_at") or "")
+    if failed_15m >= 3 or failed_60m >= 5:
+        out.append({
+            "severity": "WARNING",
+            "code": "PUBLISH_FAILURES_ACTIVE",
+            "detail": (
+                f"Recent failed publication targets: {failed_15m} in 15m, {failed_60m} in 60m "
+                f"({failed_24h} in 24h; last={last_failed_at or 'unknown'}). "
+                "The 24h count is historical context and is not by itself an active incident."
+            ),
+        })
     ai = status.get("ai", {}) if isinstance(status.get("ai"), dict) else {}
     active = str(ai.get("active_backend") or "")
     if active == "openrouter" and not bool(ai.get("openrouter_configured")):
