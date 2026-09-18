@@ -24,9 +24,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $size = (Get-Item ".sync/rc12_delta.zip").Length
-          if ($size -ne 24906) { throw "Unexpected delta size: $size" }
+          if ($size -ne 33046) { throw "Unexpected delta size: $size" }
           $hash = (Get-FileHash ".sync/rc12_delta.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne "068ecfdf83ade2b2ca30a761dc468746d959b37baf46e0a7aec7663ed27bc32f") {
+          if ($hash -ne "cd5b2a1a953f1c3e133a42743b5e6dbbdc129651a68d231d2b3bd66aa01dc948") {
             throw "Delta SHA mismatch: $hash"
           }
           Expand-Archive ".sync/rc12_delta.zip" -DestinationPath ".rc12_apply" -Force
@@ -76,7 +76,7 @@ jobs:
               ],
               "content_agent/v2/supervisor/resilient_runtime.py": [
                   "CONTROL_POLL_INTERVAL", "_last_control_poll", "_drive_auth_required",
-                  "HANDLE_GROWTH_LIMIT"
+                  "_is_drive_auth_error"
               ],
               "content_agent/v2/supervisor/diagnostics.py": [
                   "auto_collect_scheduled", "auto_collect_enabled",
