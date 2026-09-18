@@ -7,7 +7,16 @@ from pathlib import Path
 
 from ...paths import data_dir
 from ..ai.settings import load_backend_settings
-from .diagnostics import collect_status, detect_incidents, diagnostic_bundle, instance_identity, write_json
+from .diagnostics import (
+    PROCESS_HANDLE_GROWTH_LIMIT,
+    PROCESS_HANDLE_HARD_LIMIT,
+    PROCESS_HANDLE_SOFT_LIMIT,
+    collect_status,
+    detect_incidents,
+    diagnostic_bundle,
+    instance_identity,
+    write_json,
+)
 from .drive_export import SupervisorDriveExporter
 from .runtime import SupervisorRuntime
 
@@ -19,14 +28,16 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
 
     AUTH_BACKOFF_SECONDS = 15 * 60
     MAX_TRANSIENT_BACKOFF_SECONDS = 5 * 60
-    HANDLE_SOFT_LIMIT = 16000
-    HANDLE_HARD_LIMIT = 20000
+    HANDLE_SOFT_LIMIT = PROCESS_HANDLE_SOFT_LIMIT
+    HANDLE_HARD_LIMIT = PROCESS_HANDLE_HARD_LIMIT
+    HANDLE_GROWTH_LIMIT = PROCESS_HANDLE_GROWTH_LIMIT
 
     def __init__(self, window, database, config, *, version: str) -> None:
         super().__init__(window, database, config, version=version)
         self._drive_backoff_until = 0.0
         self._drive_failures = 0
         self._drive_last_failure = ""
+        self._drive_auth_required = False
         self._handle_baseline = -1
         self._handle_last = -1
         self._handle_last_at = time.monotonic()
@@ -52,6 +63,7 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
     def _register_drive_success(self) -> None:
         self._drive_failures = 0
         self._drive_last_failure = ""
+        self._drive_auth_required = False
         self._drive_backoff_until = 0.0
         self._last_error = ""
 
@@ -59,7 +71,9 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
         self._drive_failures += 1
         self._drive_last_failure = f"{operation}: {exc}"[:500]
         now = time.monotonic()
-        if self._is_drive_auth_error(exc):
+        auth_error = self._is_drive_auth_error(exc)
+        if auth_error:
+            self._drive_auth_required = True
             delay = float(self.AUTH_BACKOFF_SECONDS)
         else:
             delay = min(
@@ -67,7 +81,11 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
                 float(15 * (2 ** min(self._drive_failures - 1, 5))),
             )
         self._drive_backoff_until = max(self._drive_backoff_until, now + delay)
-        self._last_error = f"Drive backoff {int(delay)}s · {str(exc)[:180]}"
+        self._last_error = (
+            f"Google Drive: потрібне повторне підключення · {str(exc)[:160]}"
+            if auth_error
+            else f"Drive backoff {int(delay)}s · {str(exc)[:180]}"
+        )
         logger.warning(
             "Supervisor Drive operation failed; backoff %.0fs operation=%s failures=%s: %s",
             delay, operation, self._drive_failures, exc,
@@ -104,7 +122,7 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
         # At the observed live counts, secondary Drive polling is less important than
         # keeping the editor/publisher alive. Suppress it until the process restarts.
         if count >= self.HANDLE_HARD_LIMIT or (
-            count >= self.HANDLE_SOFT_LIMIT and self._handle_growth >= 750
+            count >= self.HANDLE_SOFT_LIMIT and self._handle_growth >= self.HANDLE_GROWTH_LIMIT
         ):
             if not self._drive_suppressed_for_handles:
                 logger.error(
@@ -120,6 +138,7 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
             "allowed": self._drive_allowed(),
             "failures": self._drive_failures,
             "last_failure": self._drive_last_failure,
+            "auth_required": self._drive_auth_required,
             "backoff_seconds_remaining": max(0, int(self._drive_backoff_until - now)),
             "suppressed_for_handles": self._drive_suppressed_for_handles,
         }
