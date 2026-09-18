@@ -133,7 +133,7 @@ def compact_feedback(assessment: SlopAssessment, limit: int = 5) -> str:
         return ""
     return "; ".join(item.name + (f" ({item.detail})" if item.detail else "") for item in assessment.findings[: max(1, int(limit))])
 
-RULES_PATH = Path(__file__).resolve().parent / "data" / "anti_slop_rules_uk.json"
+RULES_PATH = Path(__file__).resolve().parent / "anti_slop_rules_uk.json"
 
 
 def assess_ukrainian_slop(value: str, *, profile: str = "standard") -> SlopAssessment:
