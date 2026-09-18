@@ -5,12 +5,14 @@ import logging
 import re
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 
 from .ai_router import AIRouterError
 from .editorial_memory import EditorialExample
 from .evidence_pack import EvidencePack
 from .evidence_pack_v1_4_rc27 import build_evidence_pack_rc27
 from .models import NewsGroup
+from .anti_slop import assess_ukrainian_slop, compact_feedback, sanitize_text
 from . import rewrite_pipeline_v1_3 as base
 from . import rewrite_pipeline_v1_4_rc17 as rc17
 from . import rewrite_pipeline_v1_4_rc26 as rc26
@@ -259,6 +261,7 @@ def candidate_after_router_rc27(
     model_skip: set[str] = set()
     failures: list[str] = []
     fact_repair_used = False
+    slop_repair_used = False
     attempts = max(1, min(6, int(max_candidates) + 1))
 
     for _ in range(attempts):
@@ -307,7 +310,54 @@ def candidate_after_router_rc27(
             continue
 
         if candidate.guard.allowed:
-            return candidate
+            if language != "uk":
+                return candidate
+            clean_rewrite = sanitize_text(candidate.rewrite)
+            clean_headline = sanitize_text(candidate.headline)
+            if clean_rewrite != candidate.rewrite or clean_headline != candidate.headline:
+                candidate = replace(candidate, rewrite=clean_rewrite, headline=clean_headline)
+            slop = assess_ukrainian_slop(candidate.rewrite, profile="news")
+            if slop.publishable:
+                logger.info("UA Anti-Slop PASS provider=%s model=%s score=%s", candidate.route.provider, candidate.route.model, slop.score)
+                return candidate
+            failures.append(f"{route.label}: UA Anti-Slop {slop.score}/{slop.gate}: {compact_feedback(slop)}")
+            remaining = rc17._remaining(deadline)
+            if (
+                not slop_repair_used
+                and provider in rc17._FACT_REPAIR_PROVIDERS
+                and (remaining is None or remaining >= 16)
+            ):
+                slop_repair_used = True
+                repair_prompt = (
+                    "HUMAN COPY REPAIR. Re-read CURRENT SOURCE EVIDENCE in the original task. "
+                    "The draft is fact-safe but uses machine-like Ukrainian writing patterns: "
+                    + compact_feedback(slop)[:700]
+                    + ". Rewrite only for natural human newsroom prose. Preserve every fact, number, name, attribution, uncertainty and relation exactly. "
+                    "Do not add context or conclusions. Return the same requested public format only.\n\nORIGINAL TASK:\n"
+                    + prompt[:7000]
+                    + "\n\nPREVIOUS RESPONSE:\n"
+                    + str(route.text)[:2600]
+                )
+                try:
+                    repaired = rc17._same_provider_repair(
+                        route, repair_prompt, evidence, language=language,
+                        timeout=min(24, remaining) if remaining is not None else 24,
+                        cancel_event=cancel_event,
+                    )
+                    if repaired.guard.allowed:
+                        repaired_slop = assess_ukrainian_slop(repaired.rewrite, profile="news")
+                        if repaired_slop.publishable:
+                            logger.info(
+                                "UA Anti-Slop repair PASS provider=%s model=%s score=%s",
+                                repaired.route.provider, repaired.route.model, repaired_slop.score,
+                            )
+                            return repaired
+                        failures.append(
+                            f"{repaired.route.label} Anti-Slop repair {repaired_slop.score}/{repaired_slop.gate}: "
+                            + compact_feedback(repaired_slop)
+                        )
+                except Exception as repair_exc:
+                    failures.append(f"{route.label} Anti-Slop repair: {repair_exc}")
 
         guard_reason = "; ".join(candidate.guard.issues[:4])
         failures.append(f"{route.label}: Fact Guard: {guard_reason}")

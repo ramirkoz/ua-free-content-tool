@@ -4,9 +4,10 @@ from content_agent.version import APP_VERSION
 from content_agent.v2.ui.window_rc11 import MainWindow
 
 
-def test_rc13_runtime_version_matches_version_file() -> None:
+def test_runtime_version_matches_version_file() -> None:
     expected = Path("VERSION.txt").read_text(encoding="utf-8").strip()
-    assert APP_VERSION == expected == "2.0.0-rc13"
+    assert APP_VERSION == expected
+    assert expected.startswith("2.0.0-rc")
     assert MainWindow.VERSION_LABEL == expected
 
 

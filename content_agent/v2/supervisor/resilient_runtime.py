@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from .diagnostics import collect_status, detect_incidents, diagnostic_bundle, write_json
+from .auto_update import AutonomousUpdateManager
 from .drive_export import SupervisorDriveExporter
 from .runtime import SupervisorRuntime
 from ..ai.settings import load_backend_settings
@@ -42,6 +43,7 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
         self._handle_last_at = time.monotonic()
         self._drive_suppressed_for_handles = False
         self._exporter: SupervisorDriveExporter | None = None
+        self.auto_update = AutonomousUpdateManager(current_version=version)
 
     @staticmethod
     def _is_auth_error(exc: BaseException) -> bool:
@@ -161,6 +163,45 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
             "drive_suppressed": self._drive_suppressed_for_handles,
         }
 
+    def _auto_update_idle(self) -> bool:
+        if bool(self.control.status().get("busy")):
+            return False
+        if bool(getattr(self.window, "operation_running", False)):
+            return False
+        if bool(getattr(self.window, "auto_collect_running", False)):
+            return False
+        return True
+
+    def _poll_auto_update(self, status: dict) -> None:
+        if not self.auto_update.due():
+            status["auto_update"] = self.auto_update.status()
+            return
+        candidate = self.auto_update.check()
+        status["auto_update"] = self.auto_update.status()
+        if candidate is None or not self._auto_update_idle():
+            return
+        command = self.auto_update.command_for(candidate)
+        if command is None:
+            return
+        logger.info("Autonomous update accepted target=%s", candidate.version)
+        self._upload_status_only(status, detect_incidents(status), force=True)
+        self.control.execute_update(command)
+
+    def status_text(self) -> str:
+        base = super().status_text()
+        state = self.auto_update.status()
+        mode = str(state.get("state") or "")
+        latest = str(state.get("latest_checked_version") or self.version)
+        if mode == "update_available":
+            return base + f" · автооновлення: доступне {latest}"
+        if mode == "preparing_update":
+            return base + f" · автооновлення: готую {latest}"
+        if mode == "check_failed":
+            return base + " · автооновлення: перевірка не вдалася"
+        if mode == "up_to_date":
+            return base + " · автооновлення: актуальна"
+        return base + " · автооновлення: увімкнено"
+
     def _annotate_drive(self, status: dict) -> None:
         now = time.monotonic()
         status.setdefault("supervisor", {})["drive_runtime"] = {
@@ -219,6 +260,7 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
         self._track_handles(status)
         self._annotate_drive(status)
         status["remote_control"] = self.control.status()
+        self._poll_auto_update(status)
         incidents = detect_incidents(status)
         signature = self._signature(incidents)
 
