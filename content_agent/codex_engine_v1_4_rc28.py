@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import codex_engine_v1_3 as legacy
 from . import codex_engine_v1_4_rc24 as rc24
+from .paths import tools_dir
 
 CodexEngineError = legacy.CodexEngineError
 CODEX_PACKAGE = rc24.CODEX_PACKAGE
@@ -22,7 +23,7 @@ _OLD_INSTALL_CODEX = legacy.install_codex
 
 
 def _runtime_root() -> Path:
-    path = legacy.data_dir() / "ai_runtime"
+    path = tools_dir() / "Codex"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -106,6 +107,25 @@ def _verify_install(target: Path) -> None:
         raise CodexEngineError("Codex staging не містить metadata пакета; активацію скасовано.")
 
 
+
+def _prune_old_versions(*, keep: int = 2) -> None:
+    versions = _runtime_root() / _VERSIONS_DIR
+    if not versions.exists():
+        return
+    active = _read_pointer()
+    protected = {active.resolve()} if active and active.exists() else set()
+    entries = [item for item in versions.iterdir() if item.is_dir() and not item.name.startswith(".")]
+    entries.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    budget = max(0, keep - len(protected))
+    kept = 0
+    for item in entries:
+        if item.resolve() in protected:
+            continue
+        kept += 1
+        if kept <= budget:
+            continue
+        shutil.rmtree(item, ignore_errors=True)
+
 def install_codex() -> str:
     """Install Codex side-by-side; never delete DLL/PYD files used by this process."""
     root = _runtime_root()
@@ -130,6 +150,7 @@ def install_codex() -> str:
     ]
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
+    env["UA_FREE_CHILD_PROCESS"] = "1"
     try:
         completed = subprocess.run(
             command,
@@ -148,6 +169,7 @@ def install_codex() -> str:
         _verify_install(staging)
         staging.rename(target)
         _write_pointer(target)
+        _prune_old_versions(keep=2)
     except Exception:
         try:
             if staging.exists():

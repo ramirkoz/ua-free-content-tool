@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .paths import data_dir
+from .paths import cache_dir, tools_dir
 
-CODEX_PACKAGE = "openai-codex==0.147.0"
+CODEX_PACKAGE = "openai-codex==0.156.1"
 _POINTER_FILE = "codex_active.json"
 _VERSIONS_DIR = "codex_versions"
 
@@ -45,7 +45,7 @@ _CODEX_PROCESS_REAPED = 0
 
 
 def _runtime_root() -> Path:
-    path = data_dir() / "ai_runtime"
+    path = tools_dir() / "Codex"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -415,7 +415,7 @@ def run_codex(prompt: str, *, cwd: Path | None = None) -> str:
     Codex = getattr(sdk, "Codex")
     Sandbox = getattr(sdk, "Sandbox")
     ApprovalMode = getattr(sdk, "ApprovalMode")
-    workdir = Path(cwd or (data_dir() / "codex_workspace"))
+    workdir = Path(cwd or (cache_dir() / "codex_workspace"))
     workdir.mkdir(parents=True, exist_ok=True)
     try:
         with Codex() as codex:
@@ -475,6 +475,25 @@ def _verify_install(target: Path) -> None:
         raise CodexEngineError("Codex staging не містить metadata пакета; активацію скасовано.")
 
 
+
+def _prune_old_versions(*, keep: int = 2) -> None:
+    versions = _runtime_root() / _VERSIONS_DIR
+    if not versions.exists():
+        return
+    active = _read_pointer()
+    protected = {active.resolve()} if active and active.exists() else set()
+    entries = [item for item in versions.iterdir() if item.is_dir() and not item.name.startswith(".")]
+    entries.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    rollback_budget = max(0, keep - len(protected))
+    kept = 0
+    for item in entries:
+        if item.resolve() in protected:
+            continue
+        kept += 1
+        if kept <= rollback_budget:
+            continue
+        shutil.rmtree(item, ignore_errors=True)
+
 def install_codex() -> str:
     root = _runtime_root()
     versions = root / _VERSIONS_DIR
@@ -497,6 +516,7 @@ def install_codex() -> str:
     ]
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
+    env["UA_FREE_CHILD_PROCESS"] = "1"
     try:
         completed = subprocess.run(
             command,
@@ -515,6 +535,7 @@ def install_codex() -> str:
         _verify_install(staging)
         staging.rename(target)
         _write_pointer(target)
+        _prune_old_versions(keep=2)
     except Exception:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)

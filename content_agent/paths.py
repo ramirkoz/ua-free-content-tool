@@ -13,6 +13,7 @@ LEGACY_DATA_ENV = "UA_FREE_LEGACY_DATA_ROOT"
 PORTABLE_MARKER = "portable.flag"
 CLEAN_START_MARKER = "clean_start.flag"
 PORTABLE_DATA_DIR = "Data"
+TOOLS_DIR_NAME = "Tools"
 
 
 class UnsafeDataPath(RuntimeError):
@@ -62,17 +63,22 @@ def runtime_dir() -> Path:
     override = os.environ.get(PORTABLE_ROOT_ENV)
     if override:
         return Path(override).expanduser().absolute()
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+    exe = Path(sys.executable).resolve()
+    if getattr(sys, "frozen", False) or exe.name.casefold().startswith("ua_free_content_tool"):
+        return exe.parent
+    candidate = Path(__file__).resolve().parents[1]
+    if candidate.name == "_runtime":
+        return candidate.parent
     # Source/development tree: app.py sits one level above content_agent.
-    return Path(__file__).resolve().parents[1]
+    return candidate
 
 
 @lru_cache(maxsize=1)
 def portable_root() -> Path | None:
     override = os.environ.get(PORTABLE_ROOT_ENV)
     root = runtime_dir()
-    if override or (root / PORTABLE_MARKER).is_file():
+    exe_name = Path(sys.executable).name.casefold()
+    if override or (root / PORTABLE_MARKER).is_file() or exe_name.startswith("ua_free_content_tool"):
         return root
     return None
 
@@ -96,6 +102,27 @@ def data_dir() -> Path:
     _reject_reparse_chain(target)
     return target
 
+
+
+def tools_dir() -> Path:
+    """Reproducible heavy runtimes live beside the portable app, never in Data."""
+    path = runtime_dir() / TOOLS_DIR_NAME
+    _reject_reparse_chain(path.parent)
+    path.mkdir(parents=True, exist_ok=True)
+    _reject_reparse_chain(path)
+    return path
+
+
+def cache_dir() -> Path:
+    path = data_dir() / "cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def migration_dir() -> Path:
+    path = data_dir() / "migration"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 def database_path() -> Path:
     return data_dir() / "content_agent.sqlite3"

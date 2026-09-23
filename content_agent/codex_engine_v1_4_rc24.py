@@ -5,7 +5,7 @@ from pathlib import Path
 from . import codex_engine_v1_3 as legacy
 
 CodexEngineError = legacy.CodexEngineError
-CODEX_PACKAGE = "openai-codex==0.147.0"
+CODEX_PACKAGE = "openai-codex==0.156.1"
 
 
 def _model_rows(codex: object) -> list[tuple[str, bool, str]]:
