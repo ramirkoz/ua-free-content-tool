@@ -1,4 +1,4 @@
-# UA FREE Content Tool v2.0.0-rc28
+# UA FREE Content Tool v2.0.0-rc29
 
 Windows Portable інструмент для збору, редактури, підготовки й публікації контенту з AI Router, Supervisor та інтеграціями соцмереж.
 
@@ -30,4 +30,9 @@ PUBLIC_VERSION.txt
 README.txt
 ```
 
-Updater зберігає `Data` і `Tools`. Поточний реліз: **v2.0.0-rc28**.
+Updater зберігає `Data` і `Tools`. Поточний реліз: **v2.0.0-rc29**.
+
+
+## RC29 recovery
+
+RC29 виправляє Windows Portable bootstrap: root sitecustomize.py тепер запускає канонічний V2 entrypoint, а помилки раннього старту записуються в Data/logs/bootstrap_error.log і, коли Tk доступний, показуються у діалозі.
