@@ -120,7 +120,12 @@ class AIEngineV13Mixin:
                 textvariable=self.ai_provider_vars[key],
                 show="•" if secret else "",
                 width=46,
-            ).grid(row=row, column=column + 1, sticky="ew", padx=(8, 14), pady=2)
+            ).grid(row=row, column=column + 1, sticky="ew", padx=(8, 8), pady=2)
+            if secret:
+                ttk.Button(
+                    frame, text="Копіювати",
+                    command=lambda value=self.ai_provider_vars[key], title=label: self._copy_var_value(value, title),
+                ).grid(row=row, column=column + 2, sticky="w", padx=(0, 8), pady=2)
 
         ttk.Label(frame, text="Cloudflare Account ID").grid(row=5, column=0, sticky="w", pady=2)
         ttk.Entry(frame, textvariable=self.ai_provider_vars["cloudflare_account_id"], width=46).grid(
@@ -128,8 +133,12 @@ class AIEngineV13Mixin:
         )
         ttk.Label(frame, text="Cloudflare API Token").grid(row=5, column=2, sticky="w", pady=2)
         ttk.Entry(frame, textvariable=self.ai_provider_vars["cloudflare_api_token"], show="•", width=46).grid(
-            row=5, column=3, sticky="ew", padx=(8, 14), pady=2
+            row=5, column=3, sticky="ew", padx=(8, 8), pady=2
         )
+        ttk.Button(
+            frame, text="Копіювати",
+            command=lambda: self._copy_var_value(self.ai_provider_vars["cloudflare_api_token"], "Cloudflare API Token"),
+        ).grid(row=5, column=4, sticky="w", pady=2)
 
         ttk.Checkbutton(frame, text="Локальний аварійний AI · Ollama автоматично", variable=self.ai_local_enabled_var).grid(
             row=6, column=0, sticky="w", pady=(4, 2)
