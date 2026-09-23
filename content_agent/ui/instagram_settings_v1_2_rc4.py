@@ -47,8 +47,14 @@ class InstagramSettingsMixin:
         ttk.Label(box, text="Instagram Access Token").grid(row=1, column=1, sticky="w", pady=(7, 0))
         token_entry = ttk.Entry(box, textvariable=self.settings_vars["instagram_token"], show="•", width=56)  # type: ignore[attr-defined]
         token_entry.grid(row=2, column=1, sticky="ew", padx=(0, 8))
-        check_button = ttk.Button(box, text="Перевірити Instagram", command=self.connect_instagram)
-        check_button.grid(row=2, column=2, sticky="w")
+        token_actions = ttk.Frame(box)
+        token_actions.grid(row=2, column=2, sticky="w")
+        ttk.Button(
+            token_actions, text="Копіювати токен",
+            command=lambda: self._copy_var_value(self.settings_vars["instagram_token"], "Instagram Access Token"),
+        ).pack(side="left")
+        check_button = ttk.Button(token_actions, text="Перевірити Instagram", command=self.connect_instagram)
+        check_button.pack(side="left", padx=(6, 0))
         ttk.Label(box, textvariable=self.instagram_status_var, foreground="#555").grid(
             row=3, column=0, columnspan=3, sticky="ew", pady=(5, 2)
         )
