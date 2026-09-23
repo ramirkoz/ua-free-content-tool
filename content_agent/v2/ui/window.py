@@ -384,8 +384,9 @@ class MainWindow(Rc30MainWindow):
         openrouter.columnconfigure(1, weight=1)
         ttk.Label(openrouter, text="API key").grid(row=0, column=0, sticky="w")
         ttk.Entry(openrouter, textvariable=self.v2_openrouter_key_var, show="•", width=72).grid(row=0, column=1, sticky="ew", padx=(8, 8))
-        ttk.Button(openrouter, text="Зберегти", command=self.save_v2_openrouter_settings).grid(row=0, column=2, padx=(0, 6))
-        ttk.Button(openrouter, text="Тест OpenRouter", command=self.test_v2_openrouter).grid(row=0, column=3)
+        ttk.Button(openrouter, text="Копіювати", command=lambda: self._copy_var_value(self.v2_openrouter_key_var, "OpenRouter API key")).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(openrouter, text="Зберегти", command=self.save_v2_openrouter_settings).grid(row=0, column=3, padx=(0, 6))
+        ttk.Button(openrouter, text="Тест OpenRouter", command=self.test_v2_openrouter).grid(row=0, column=4)
         ttk.Label(openrouter, text="Місячний ліміт, $:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(openrouter, textvariable=self.v2_openrouter_budget_var, width=14).grid(row=1, column=1, sticky="w", padx=(8, 8), pady=(6, 0))
         ttk.Label(
@@ -396,9 +397,9 @@ class MainWindow(Rc30MainWindow):
             ),
             wraplength=1250,
             foreground="#555",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(7, 4))
+        ).grid(row=2, column=0, columnspan=5, sticky="w", pady=(7, 4))
         ttk.Label(openrouter, textvariable=self.v2_openrouter_status_var, foreground="#155724", wraplength=1250).grid(
-            row=3, column=0, columnspan=4, sticky="w", pady=(3, 0)
+            row=3, column=0, columnspan=5, sticky="w", pady=(3, 0)
         )
 
         router = ttk.LabelFrame(tab, text="2. Наш AI Router · прямі провайдери / локальний резерв", padding=10)
