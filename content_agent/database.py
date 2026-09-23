@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sqlite3
+import threading
 import uuid
 import zipfile
 from contextlib import contextmanager
@@ -29,6 +30,23 @@ from .security import redact_secrets, sha256_bytes
 
 UTC = timezone.utc
 DATABASE_SCHEMA_VERSION = 8
+
+_DB_RESOURCE_LOCK = threading.Lock()
+_DB_RESOURCE_STATS = {
+    "connections_opened": 0,
+    "connections_closed": 0,
+    "active_connections": 0,
+}
+
+
+def _db_resource_stat(key: str, delta: int = 1) -> None:
+    with _DB_RESOURCE_LOCK:
+        _DB_RESOURCE_STATS[key] = int(_DB_RESOURCE_STATS.get(key, 0)) + int(delta)
+
+
+def database_resource_stats() -> dict[str, int]:
+    with _DB_RESOURCE_LOCK:
+        return {str(k): int(v) for k, v in _DB_RESOURCE_STATS.items()}
 
 
 class LeaseLost(RuntimeError):
@@ -71,6 +89,8 @@ class Database:
     def _connect_path(self, path: Path) -> Iterator[sqlite3.Connection]:
         with DATA_MAINTENANCE_LOCK:
             connection = sqlite3.connect(path, timeout=15, isolation_level=None)
+            _db_resource_stat("connections_opened")
+            _db_resource_stat("active_connections")
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA journal_mode=WAL")
@@ -79,7 +99,11 @@ class Database:
             try:
                 yield connection
             finally:
-                connection.close()
+                try:
+                    connection.close()
+                finally:
+                    _db_resource_stat("connections_closed")
+                    _db_resource_stat("active_connections", -1)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

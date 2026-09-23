@@ -45,6 +45,7 @@ class AIProviderSecrets:
     groq_api_key: str = ""
     cloudflare_account_id: str = ""
     cloudflare_api_token: str = ""
+    codex_enabled: bool = False
     local_enabled: bool = False
     local_base_url: str = "http://127.0.0.1:8080/v1"
     local_model: str = "local-model"
@@ -56,6 +57,7 @@ class AIProviderSecrets:
             groq_api_key=self.groq_api_key.strip(),
             cloudflare_account_id=self.cloudflare_account_id.strip(),
             cloudflare_api_token=self.cloudflare_api_token.strip(),
+            codex_enabled=bool(self.codex_enabled),
             local_enabled=bool(self.local_enabled),
             local_base_url=self.local_base_url.strip() or "http://127.0.0.1:8080/v1",
             local_model=self.local_model.strip() or "local-model",
@@ -356,6 +358,8 @@ def _runtime_slot(slot: AIModelSlot, cfg: AIProviderSecrets) -> AIModelSlot:
 def _configured(slot: AIModelSlot, cfg: AIProviderSecrets) -> bool:
     try:
         if slot.provider == "codex":
+            if not bool(getattr(cfg, "codex_enabled", False)):
+                return False
             status = inspect_codex_cached(max_age_seconds=20.0)
             return bool(status.installed and status.authenticated)
         if slot.provider == "gemini":

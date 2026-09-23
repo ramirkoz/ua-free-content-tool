@@ -84,7 +84,7 @@ def effective_editorial_limit(
     """
 
     limit = EDITORIAL_TEXT_LIMIT
-    if has_media and any(str(platform) == "telegram" for platform in platforms):
+    if has_media and any(str(platform) == "telegram" or str(platform).startswith("telegram:") for platform in platforms):
         probe = compose_publication_text(
             "X",
             "telegram",
@@ -187,7 +187,7 @@ def scan_queue_for_900_migration(
         if not old_text:
             # Legacy queue packages can occasionally have only target payloads.
             preferred = next(
-                ((platform, payload) for platform, _status, payload in targets.values() if platform == "telegram"),
+                ((platform, payload) for platform, _status, payload in targets.values() if platform == "telegram" or platform.startswith("telegram:")),
                 next(((platform, payload) for platform, _status, payload in targets.values()), ("telegram", "")),
             )
             old_text = _strip_known_suffixes(
@@ -342,13 +342,14 @@ def build_target_payloads(candidate: QueueMigrationCandidate, new_text: str) -> 
     for target_id, (platform, status, _old_payload) in candidate.targets.items():
         if status == "sent":
             continue
+        logical_platform = "telegram" if platform.startswith("telegram:") else platform
         payload = compose_publication_text(
             value,
-            platform,
+            logical_platform,
             include_source_link=candidate.include_source_link,
             source_url=candidate.source_url,
         )
-        if platform == "telegram" and candidate.has_media and len(payload) > TELEGRAM_MEDIA_CAPTION_LIMIT:
+        if logical_platform == "telegram" and candidate.has_media and len(payload) > TELEGRAM_MEDIA_CAPTION_LIMIT:
             raise QueueMigrationError(
                 f"Пакет #{candidate.batch_id}: готовий підпис Telegram має {len(payload)} символів."
             )

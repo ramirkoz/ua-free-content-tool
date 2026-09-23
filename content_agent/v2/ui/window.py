@@ -11,7 +11,7 @@ from ...ai_router import (
     save_provider_secrets,
     test_ai_router,
 )
-from ...codex_runtime import inspect_codex_cached
+from ...codex_runtime import inspect_codex_cached, peek_codex_status_cache
 from ...inbox_layout_v1_3_1_rc8 import inbox_layout_path, save_widths
 from ...ui.v1_4_rc30_window import MainWindow as Rc30MainWindow
 from ..ai.openrouter_backend import OpenRouterBackend
@@ -553,6 +553,7 @@ class MainWindow(Rc30MainWindow):
         )
 
     def refresh_v2_ai_status(self) -> None:
+        status: dict[str, object] = {}
         try:
             status = backend_status()
             active = str(status.get("active_backend") or "router").upper()
@@ -572,8 +573,18 @@ class MainWindow(Rc30MainWindow):
         except Exception as exc:
             self.v2_router_status_var.set(f"AI Router status: {exc}")
         try:
-            codex = inspect_codex_cached(max_age_seconds=30.0, force=False)
-            if not codex.installed:
+            active_backend = str(status.get("active_backend") or "router").strip().casefold()
+            # RC25: a passive status refresh must not launch a Codex app-server.
+            # Probe only while Agent/Codex is the selected backend; otherwise show
+            # the last cached result (manual test/login actions can refresh it).
+            codex = (
+                inspect_codex_cached(max_age_seconds=300.0, force=False)
+                if active_backend == "agent"
+                else peek_codex_status_cache()
+            )
+            if codex is None:
+                text = "Agent/Codex: не перевіряється, backend не активний"
+            elif not codex.installed:
                 text = "Agent/Codex: не встановлено"
             elif not codex.authenticated:
                 text = f"Agent/Codex {codex.version}: потрібен вхід через ChatGPT"

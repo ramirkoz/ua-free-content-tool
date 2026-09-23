@@ -10,17 +10,21 @@ from tkinter.scrolledtext import ScrolledText
 from ..destinations_v1_4 import (
     DestinationSchedule,
     DestinationScheduleStore,
+    TelegramDestination,
     destination_labels,
     destination_ready,
     destination_specs,
     load_instagram_catalog,
+    load_telegram_catalog,
     make_display_title,
     normalize_legacy_target_keys,
     save_instagram_catalog,
+    save_telegram_catalog,
 )
 from ..google_drive import GoogleDriveError
 from ..instagram_accounts_v1_4 import discover_instagram_accounts
 from ..publication_text import TextLimitError, validate_editorial_text, validate_media_message
+from ..telegram_destinations_v2 import discover_telegram_destinations, inspect_telegram_destination
 from ..publisher_factory_v1_4 import V14PublisherFactory
 from ..scheduling import KYIV, next_publish_slot, parse_iso
 from ..worker import WorkerResult
@@ -35,6 +39,7 @@ class MainWindow(Rc14Window):
     VERSION_LABEL = "1.4.0-rc1"
 
     def __init__(self, root: tk.Tk, database, config) -> None:
+        self._telegram_catalog = load_telegram_catalog()
         self._instagram_catalog = load_instagram_catalog()
         self._destination_schedule_store = DestinationScheduleStore(config)
         self.queue_trees: dict[str, ttk.Treeview] = {}
@@ -64,6 +69,201 @@ class MainWindow(Rc14Window):
         self._install_destination_schedule_settings()
         self._refresh_destination_views(rebuild=True)
         self._apply_v14_labels()
+
+    def _upgrade_social_connections_rc6(self) -> None:
+        super()._upgrade_social_connections_rc6()
+        self._rebuild_telegram_section_v14()
+
+    def _rebuild_telegram_section_v14(self) -> None:
+        old = self._find_platform_frame("Telegram")
+        linkedin = self._find_platform_frame("LinkedIn")
+        if old is None and linkedin is None:
+            return
+        parent = old.master if old is not None else linkedin.master
+        if old is not None:
+            old.destroy()
+
+        self.settings_vars.setdefault("telegram_bot_token", tk.StringVar(value=self.config.telegram_bot_token))
+        self.settings_vars.setdefault("telegram_chat_id", tk.StringVar(value=self.config.telegram_chat_id))
+        if not hasattr(self, "telegram_status_var"):
+            self.telegram_status_var = tk.StringVar(value="")
+
+        frame = ttk.LabelFrame(parent, text="Telegram", padding=8)
+        if linkedin is not None:
+            frame.pack(fill="x", pady=4, after=linkedin)
+        else:
+            frame.pack(fill="x", pady=4)
+
+        ttk.Label(frame, text="Bot token").grid(row=0, column=0, sticky="w")
+        ttk.Entry(
+            frame,
+            textvariable=self.settings_vars["telegram_bot_token"],
+            show="•",
+            width=56,
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 8))
+
+        ttk.Label(frame, text="Додати канал вручну: @username або chat_id").grid(row=0, column=1, sticky="w")
+        ttk.Entry(
+            frame,
+            textvariable=self.settings_vars["telegram_chat_id"],
+            width=34,
+        ).grid(row=1, column=1, sticky="ew", padx=(0, 8))
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=1, column=2, sticky="w")
+        ttk.Button(actions, text="Знайти / оновити канали", command=self.discover_telegram_channels).pack(side="left")
+        ttk.Button(actions, text="Додати / перевірити", command=self.add_telegram_channel).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Вимкнути", command=lambda: self._disconnect_social("telegram")).pack(
+            side="left", padx=(6, 0)
+        )
+
+        columns = ("title", "username", "chat_id", "rights")
+        self.telegram_channels_tree = ttk.Treeview(frame, columns=columns, show="headings", height=5)
+        self.telegram_channels_tree.heading("title", text="Канал")
+        self.telegram_channels_tree.heading("username", text="Username")
+        self.telegram_channels_tree.heading("chat_id", text="Chat ID")
+        self.telegram_channels_tree.heading("rights", text="Права бота")
+        self.telegram_channels_tree.column("title", width=330, anchor="w")
+        self.telegram_channels_tree.column("username", width=180, anchor="w")
+        self.telegram_channels_tree.column("chat_id", width=180, anchor="w")
+        self.telegram_channels_tree.column("rights", width=150, anchor="w")
+        self.telegram_channels_tree.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(7, 3))
+
+        ttk.Label(frame, textvariable=self.telegram_status_var, foreground="#555").grid(
+            row=3, column=0, columnspan=3, sticky="ew", pady=(3, 2)
+        )
+        ttk.Label(
+            frame,
+            text=(
+                "Після збереження кожен канал стає окремим потоком: його можна вибрати окремо перед публікацією, "
+                "він має власну чергу та розклад. Telegram Bot API не має команди «покажи всі канали, де бот адмін»: "
+                "автопошук бачить канали з недавніх updates і раніше збережений каталог. Тихий або старий канал "
+                "достатньо один раз додати вручну за @username або chat_id."
+            ),
+            foreground="#666",
+            wraplength=1200,
+        ).grid(row=4, column=0, columnspan=3, sticky="ew")
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
+        self._refresh_telegram_channels_view()
+
+    def _refresh_telegram_channels_view(self) -> None:
+        tree = getattr(self, "telegram_channels_tree", None)
+        if tree is None:
+            return
+        tree.delete(*tree.get_children())
+        self._telegram_catalog = load_telegram_catalog()
+        for row in self._telegram_catalog:
+            username = f"@{row.username}" if row.username else "—"
+            rights = "адмін · може публікувати" if row.can_post_messages else row.member_status or "—"
+            tree.insert("", "end", iid=row.chat_id, values=(row.title, username, row.chat_id, rights))
+        if self._telegram_catalog:
+            self.telegram_status_var.set(f"Підключено Telegram-каналів: {len(self._telegram_catalog)}")
+        elif self.config.telegram_bot_token:
+            self.telegram_status_var.set("Bot token збережено; список каналів ще не сформовано.")
+        else:
+            self.telegram_status_var.set("Відключено")
+
+    def _default_telegram_key(self) -> str:
+        legacy = str(getattr(self.config, "telegram_chat_id", "") or "").strip()
+        if legacy:
+            key = f"telegram:{legacy}"
+            if key in getattr(self, "target_vars", {}):
+                return key
+        for key in getattr(self, "target_vars", {}):
+            if str(key).startswith("telegram:"):
+                return str(key)
+        return ""
+
+    def discover_telegram_channels(self) -> None:
+        token = self.settings_vars["telegram_bot_token"].get().strip()
+        if not token:
+            self.msg.showinfo("Telegram", "Вкажіть Bot token.", parent=self.root)
+            return
+        known = [row.chat_id for row in load_telegram_catalog()]
+        legacy = str(self.config.telegram_chat_id or "").strip()
+        if legacy:
+            known.append(legacy)
+        manual = self.settings_vars["telegram_chat_id"].get().strip()
+        if manual:
+            known.append(manual)
+        self.telegram_status_var.set("Шукаю канали й перевіряю права бота…")
+
+        def success(value: object) -> None:
+            result = value
+            rows = list(result.destinations)  # type: ignore[attr-defined]
+            save_telegram_catalog(
+                rows,
+                bot_id=result.bot_id,  # type: ignore[attr-defined]
+                bot_username=result.bot_username,  # type: ignore[attr-defined]
+            )
+            self._telegram_catalog = rows
+            self.config.telegram_enabled = True
+            self.config.telegram_bot_token = token
+            valid_ids = {row.chat_id for row in rows}
+            if self.config.telegram_chat_id not in valid_ids:
+                self.config.telegram_chat_id = rows[0].chat_id if rows else ""
+            if self.config.telegram_chat_id:
+                self.settings_vars["telegram_chat_id"].set(self.config.telegram_chat_id)
+            self._persist_connected_config("Telegram: список каналів оновлено")
+            self._refresh_telegram_channels_view()
+            self._rebuild_target_controls()
+            self._refresh_destination_views(rebuild=True)
+            self._rebuild_destination_schedule_rows()
+            self.worker.clear_auth_blocks()
+            detail = str(getattr(result, "note", "") or "")
+            message = f"Знайдено й підтверджено каналів: {len(rows)}."
+            if detail:
+                message += "\n\n" + detail
+            self.msg.showinfo("Telegram", message, parent=self.root)
+
+        self.run_async(
+            lambda: discover_telegram_destinations(token, known),
+            success,
+            label="Telegram: шукаю канали й перевіряю права",
+            done_label="Telegram-канали оновлено",
+        )
+
+    def add_telegram_channel(self) -> None:
+        token = self.settings_vars["telegram_bot_token"].get().strip()
+        target = self.settings_vars["telegram_chat_id"].get().strip()
+        if not token or not target:
+            self.msg.showinfo("Telegram", "Вкажіть Bot token і @username або chat_id каналу.", parent=self.root)
+            return
+        self.telegram_status_var.set("Перевіряю канал і права бота…")
+
+        def success(value: object) -> None:
+            destination, bot_id, bot_username = value  # type: ignore[misc]
+            existing = [row for row in load_telegram_catalog() if row.chat_id != destination.chat_id]
+            rows = [*existing, destination]
+            rows.sort(key=lambda row: (row.title.casefold(), row.chat_id))
+            save_telegram_catalog(rows, bot_id=bot_id, bot_username=bot_username)
+            self._telegram_catalog = rows
+            self.config.telegram_enabled = True
+            self.config.telegram_bot_token = token
+            self.config.telegram_chat_id = destination.chat_id
+            self.settings_vars["telegram_chat_id"].set(destination.chat_id)
+            self._persist_connected_config("Telegram: канал додано й перевірено")
+            self._refresh_telegram_channels_view()
+            self._rebuild_target_controls()
+            self._refresh_destination_views(rebuild=True)
+            self._rebuild_destination_schedule_rows()
+            self.worker.clear_auth_blocks()
+            self.msg.showinfo(
+                "Telegram",
+                f"Канал «{destination.title}» додано. Тепер його можна окремо вибирати перед публікацією.",
+                parent=self.root,
+            )
+
+        self.run_async(
+            lambda: inspect_telegram_destination(token, target),
+            success,
+            label="Telegram: перевіряю канал",
+            done_label="Telegram-канал перевірено",
+        )
+
+    def connect_telegram(self) -> None:
+        self.add_telegram_channel()
 
     def _apply_v14_labels(self) -> None:
         self.root.title("UA FREE Content Tool — v1.4.0-rc1")
@@ -111,10 +311,10 @@ class MainWindow(Rc14Window):
             )
             self.target_vars[spec.key] = variable
             self.target_checks[spec.key] = check
-        if "telegram" in self.target_vars and destination_ready(self.config, "telegram") and not any(
-            variable.get() for variable in self.target_vars.values()
-        ):
-            self.target_vars["telegram"].set(True)
+        if not any(variable.get() for variable in self.target_vars.values()):
+            default_telegram = self._default_telegram_key()
+            if default_telegram and destination_ready(self.config, default_telegram):
+                self.target_vars[default_telegram].set(True)
         self._layout_target_controls()
         self._update_selected_targets_summary()
 
@@ -152,11 +352,17 @@ class MainWindow(Rc14Window):
         for spec in self._destination_specs():
             if not destination_ready(self.config, spec.key):
                 continue
+            # A generic recommendation for Telegram must never select every
+            # connected channel implicitly. Only an explicit concrete key may
+            # select a non-default Telegram destination.
+            if spec.platform == "telegram" and "telegram" in wanted and spec.key not in wanted:
+                continue
             if spec.platform in wanted or spec.key in wanted:
                 self.target_vars[spec.key].set(True)
-        if not any(variable.get() for variable in self.target_vars.values()) and "telegram" in self.target_vars:
-            if destination_ready(self.config, "telegram"):
-                self.target_vars["telegram"].set(True)
+        if not any(variable.get() for variable in self.target_vars.values()):
+            default_telegram = self._default_telegram_key()
+            if default_telegram and destination_ready(self.config, default_telegram):
+                self.target_vars[default_telegram].set(True)
         self._update_selected_targets_summary()
 
     # ------------------------------------------------------------------
@@ -278,6 +484,12 @@ class MainWindow(Rc14Window):
 
     def _disconnect_social(self, platform: str) -> None:
         super()._disconnect_social(platform)
+        if platform == "telegram" and not self.config.telegram_enabled:
+            save_telegram_catalog([])
+            self._telegram_catalog = []
+            self._refresh_telegram_channels_view()
+            self._refresh_destination_views(rebuild=True)
+            self._rebuild_destination_schedule_rows()
         if platform == "instagram" and not self.config.instagram_enabled:
             save_instagram_catalog([])
             self._instagram_catalog = []
@@ -382,6 +594,7 @@ class MainWindow(Rc14Window):
                 logical = (
                     "facebook" if target.startswith("facebook:")
                     else "instagram" if target.startswith("instagram:")
+                    else "telegram" if target.startswith("telegram:")
                     else target
                 )
                 final = legacy_ui.compose_publication_text(

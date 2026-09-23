@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from .destinations_v1_4 import instagram_account_for_key, instagram_token_for
 from .instagram_target_v1_2_rc4 import InstagramTarget
-from .publisher_factory_v1_3_1_rc8 import Rc8InstagramPublisher, Rc8PublisherFactory
+from .publisher_factory_v1_3_1_rc8 import Rc8InstagramPublisher, Rc8PublisherFactory, Rc8TelegramPublisher
+from .comment_compat_v1_2_rc3 import CompatibleTelegramPublisher
 from .publishers import PublishError, Publisher
 
 
@@ -11,6 +12,20 @@ class V14PublisherFactory(Rc8PublisherFactory):
 
     def create(self, platform: str) -> Publisher:
         key = str(platform or "").strip()
+        if key.startswith("telegram:"):
+            if not self.config.telegram_enabled or not self.config.telegram_bot_token:
+                raise PublishError("Telegram вимкнено або bot token відсутній.", retryable=False, auth_error=True)
+            chat_id = key.split(":", 1)[1].strip()
+            if not chat_id:
+                raise PublishError("Telegram destination не містить chat_id.", retryable=False, auth_error=True)
+            donation_text, enabled = self._policy(key)
+            if key not in self.donation_settings.targets:
+                donation_text, enabled = self._policy("telegram")
+            return Rc8TelegramPublisher(
+                CompatibleTelegramPublisher(self.config.telegram_bot_token, chat_id),
+                donation_text=donation_text,
+                enabled=enabled,
+            )
         if key.startswith("instagram:"):
             if not self.config.instagram_enabled:
                 raise PublishError("Instagram вимкнено в налаштуваннях.", retryable=False, auth_error=True)

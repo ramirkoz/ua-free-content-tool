@@ -24,88 +24,16 @@ class MainWindow(AIEngineV13Mixin, RC4FinalWindow):
         return
 
     def refresh_ai_component_status(self) -> None:
-        if self._ai_status_running or not hasattr(self, "codex_status_var"):
-            return
-        self._ai_status_running = True
-
-        def worker() -> None:
-            codex = inspect_codex()
-            rowboat = inspect_rowboat()
-
-            def apply() -> None:
-                self._ai_status_running = False
-                if not codex.installed:
-                    self.codex_status_var.set("Codex: не встановлено")
-                elif codex.authenticated:
-                    suffix = f" · {codex.account_label}" if codex.account_label else ""
-                    self.codex_status_var.set(f"Codex {codex.version}: готовий{suffix}")
-                else:
-                    self.codex_status_var.set(f"Codex {codex.version}: потрібен вхід через ChatGPT")
-                self.rowboat_status_var.set(
-                    f"Rowboat: знайдено · {rowboat.executable}" if rowboat.installed else "Rowboat: не знайдено"
-                )
-                self.memory_graph_status_var.set(f"Пам’ять: {rowboat.memory_root}")
-
-            try:
-                self._post_ui(apply)
-            except Exception:
-                self._ai_status_running = False
-
-        threading.Thread(target=worker, name="ai-component-status", daemon=True).start()
+        return AIEngineV13Mixin.refresh_ai_component_status(self)
 
     def check_codex_ui(self) -> None:
-        status = inspect_codex()
-        if not status.installed:
-            install_now = self.msg.askyesno(
-                "Codex не встановлено",
-                "Codex не знайдено у локальному AI-runtime. Встановити офіційний openai-codex зараз?",
-                parent=self.root,
-            )
-            if install_now:
-                self.install_codex_ui()
-            return
-        if not status.authenticated:
-            login_now = self.msg.askyesno(
-                "Потрібен вхід через ChatGPT",
-                "Codex встановлено, але не авторизовано. Відкрити вхід через ChatGPT зараз?",
-                parent=self.root,
-            )
-            if login_now:
-                self.login_codex_ui()
-            return
-        self.refresh_ai_component_status()
-        self.set_status(f"Codex готовий: {status.account_label or 'ChatGPT account'}")
+        return AIEngineV13Mixin.check_codex_ui(self)
 
     def install_codex_ui(self) -> None:
-        def success(_result: object) -> None:
-            self.refresh_ai_component_status()
-            self.set_status("Codex встановлено. Потрібен вхід через ChatGPT.")
-            login_now = self.msg.askyesno(
-                "Codex встановлено",
-                "Встановлення завершено. Увійти через ChatGPT зараз?",
-                parent=self.root,
-            )
-            if login_now:
-                self.login_codex_ui()
-
-        self.run_async(
-            install_codex,
-            success,
-            label="Встановлюю Codex у локальний AI-runtime",
-            done_label="Codex встановлено",
-        )
+        return AIEngineV13Mixin.install_codex_ui(self)
 
     def login_codex_ui(self) -> None:
-        def success(_result: object) -> None:
-            self.refresh_ai_component_status()
-            self.set_status("Вхід через ChatGPT завершено. Codex готовий.")
-
-        self.run_async(
-            login_chatgpt,
-            success,
-            label="Очікую вхід через ChatGPT",
-            done_label="Codex авторизовано",
-        )
+        return AIEngineV13Mixin.login_codex_ui(self)
 
     def check_rowboat_ui(self) -> None:
         status = inspect_rowboat()

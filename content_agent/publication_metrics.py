@@ -167,14 +167,27 @@ def _linkedin_metrics(config: AppConfig, remote_id: str) -> MetricsResult:
     return MetricsResult(metrics=metrics)
 
 
-def _telegram_metrics(config: AppConfig, remote_id: str, progress: dict[str, object]) -> MetricsResult:
+def _telegram_metrics(config: AppConfig, platform: str, remote_id: str, progress: dict[str, object]) -> MetricsResult:
     raw_ids = progress.get("remote_ids")
     ids = [str(value) for value in raw_ids if value] if isinstance(raw_ids, list) else []
     message_id = ids[-1] if ids else str(remote_id or "")
     chat = str(config.telegram_chat_id or "").strip()
+    username = ""
+    if platform.startswith("telegram:"):
+        chat = platform.split(":", 1)[1].strip()
+        try:
+            from .destinations_v1_4 import telegram_destination_for_key
+            destination = telegram_destination_for_key(config, platform)
+            username = str(destination.username or "").strip() if destination is not None else ""
+        except Exception:
+            username = ""
     permalink = ""
-    if chat.startswith("@") and message_id:
+    if username and message_id:
+        permalink = f"https://t.me/{username}/{message_id}"
+    elif chat.startswith("@") and message_id:
         permalink = f"https://t.me/{chat[1:]}/{message_id}"
+    elif chat.startswith("-100") and message_id:
+        permalink = f"https://t.me/c/{chat[4:]}/{message_id}"
     return MetricsResult(
         permalink_url=permalink,
         note="Telegram Bot API не надає перегляди, реакції, пересилання й коментарі канального допису.",
@@ -195,8 +208,8 @@ def collect_publication_metrics(
         return _threads_metrics(config, value, progress)
     if platform == "linkedin":
         return _linkedin_metrics(config, value)
-    if platform == "telegram":
-        return _telegram_metrics(config, value, progress)
+    if platform == "telegram" or platform.startswith("telegram:"):
+        return _telegram_metrics(config, platform, value, progress)
     return MetricsResult(error=f"Статистика для платформи «{platform}» не підтримується.")
 
 @dataclass(slots=True)
@@ -310,7 +323,7 @@ def collect_all_publication_metrics(
 
         if progress_callback is not None:
             progress_callback(index, len(targets), summary)
-        if delay_seconds > 0 and platform != "telegram" and index < len(targets):
+        if delay_seconds > 0 and not platform.startswith("telegram") and index < len(targets):
             time.sleep(float(delay_seconds))
 
     return summary

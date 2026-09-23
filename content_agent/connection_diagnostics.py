@@ -7,6 +7,7 @@ import time
 from typing import Callable
 
 from .config import AppConfig
+from .destinations_v1_4 import load_telegram_catalog
 from .google_drive import (
     GoogleDriveError,
     GoogleDriveProfile,
@@ -253,18 +254,23 @@ def _probe_linkedin(config: AppConfig) -> _ProbeResult:
 
 
 def _probe_telegram(config: AppConfig) -> _ProbeResult:
-    if not config.telegram_bot_token.strip() or not config.telegram_chat_id.strip():
+    catalog = load_telegram_catalog()
+    target = str(config.telegram_chat_id or "").strip()
+    if not target and catalog:
+        target = catalog[0].chat_id
+    if not config.telegram_bot_token.strip() or not target:
         return _ProbeResult(
-            _not_configured("telegram", "Telegram", "Bot token або канал не налаштовано.")
+            _not_configured("telegram", "Telegram", "Bot token або жоден канал не налаштовано.")
         )
     try:
-        profile = inspect_telegram_bot(config.telegram_bot_token, config.telegram_chat_id)
+        profile = inspect_telegram_bot(config.telegram_bot_token, target)
+        suffix = f" Підключено каналів у каталозі: {len(catalog)}." if catalog else ""
         return _ProbeResult(
             ConnectionDiagnostic(
                 "telegram",
                 "Telegram",
                 STATUS_OK,
-                f"Бот @{profile.username} має право публікувати в «{profile.target_title}».",
+                f"Бот @{profile.username} має право публікувати в «{profile.target_title}»." + suffix,
             ),
             telegram_profile=profile,
         )

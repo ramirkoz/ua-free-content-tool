@@ -320,7 +320,7 @@ class PublicationWorker:
             return (1, 0, target.id)
         if platform == "linkedin":
             return (2, 0, target.id)
-        if platform == "telegram":
+        if platform == "telegram" or platform.startswith("telegram:"):
             return (3, 0, target.id)
         return (4, 0, target.id)
 

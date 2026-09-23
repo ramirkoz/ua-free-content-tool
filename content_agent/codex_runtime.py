@@ -38,6 +38,10 @@ _CODEX_PROCESS_LOCK = threading.RLock()
 _CODEX_PROCESSES: set[object] = set()
 _CODEX_STATUS_CACHE_LOCK = threading.RLock()
 _CODEX_STATUS_CACHE: tuple[float, CodexStatus] | None = None
+_CODEX_REAPER_THREAD: threading.Thread | None = None
+_CODEX_REAPER_STOP = threading.Event()
+_CODEX_PROCESS_REGISTERED = 0
+_CODEX_PROCESS_REAPED = 0
 
 
 def _runtime_root() -> Path:
@@ -107,9 +111,101 @@ def _write_pointer(target: Path) -> None:
     os.replace(temp, pointer)
 
 
+def _close_completed_process_streams(process: object) -> None:
+    # SDK app-server pipes are no longer useful once the child has exited. Closing
+    # them here makes the lifetime explicit instead of waiting for cyclic GC.
+    for name in ("stdin", "stdout", "stderr"):
+        stream = getattr(process, name, None)
+        try:
+            if stream is not None and not bool(getattr(stream, "closed", False)):
+                stream.close()
+        except Exception:
+            pass
+
+
+def _reap_completed_codex_processes() -> int:
+    """Drop completed SDK children from the strong registry immediately.
+
+    The pre-RC25 registry kept every historical ``Popen`` alive forever.  On
+    Windows each retained object owns a Process handle plus pipe/semaphore handles,
+    which matched the overnight RC24 leak signature almost exactly.
+    """
+    global _CODEX_PROCESS_REAPED
+    with _CODEX_PROCESS_LOCK:
+        processes = list(_CODEX_PROCESSES)
+    reaped = 0
+    for process in processes:
+        try:
+            poll = getattr(process, "poll", None)
+            if not callable(poll) or poll() is None:
+                continue
+            wait = getattr(process, "wait", None)
+            if callable(wait):
+                try:
+                    wait(timeout=0)
+                except Exception:
+                    pass
+            _close_completed_process_streams(process)
+        except Exception:
+            continue
+        with _CODEX_PROCESS_LOCK:
+            if process in _CODEX_PROCESSES:
+                _CODEX_PROCESSES.discard(process)
+                reaped += 1
+    if reaped:
+        with _CODEX_PROCESS_LOCK:
+            _CODEX_PROCESS_REAPED += reaped
+    return reaped
+
+
+def _codex_process_reaper_loop() -> None:
+    while not _CODEX_REAPER_STOP.wait(0.75):
+        _reap_completed_codex_processes()
+
+
+def _ensure_codex_process_reaper() -> None:
+    global _CODEX_REAPER_THREAD
+    with _CODEX_PROCESS_LOCK:
+        thread = _CODEX_REAPER_THREAD
+        if thread is not None and thread.is_alive():
+            return
+        _CODEX_REAPER_STOP.clear()
+        thread = threading.Thread(target=_codex_process_reaper_loop, name="codex-process-reaper", daemon=True)
+        _CODEX_REAPER_THREAD = thread
+    thread.start()
+
+
 def _register_codex_process(process: object) -> None:
+    global _CODEX_PROCESS_REGISTERED
+    _reap_completed_codex_processes()
     with _CODEX_PROCESS_LOCK:
         _CODEX_PROCESSES.add(process)
+        _CODEX_PROCESS_REGISTERED += 1
+    _ensure_codex_process_reaper()
+
+
+def codex_process_registry_stats() -> dict[str, int]:
+    _reap_completed_codex_processes()
+    with _CODEX_PROCESS_LOCK:
+        active = 0
+        completed_retained = 0
+        for process in list(_CODEX_PROCESSES):
+            try:
+                poll = getattr(process, "poll", None)
+                if callable(poll) and poll() is None:
+                    active += 1
+                else:
+                    completed_retained += 1
+            except Exception:
+                completed_retained += 1
+        return {
+            "registered_total": int(_CODEX_PROCESS_REGISTERED),
+            "reaped_total": int(_CODEX_PROCESS_REAPED),
+            "registry_size": len(_CODEX_PROCESSES),
+            "active": active,
+            "completed_retained": completed_retained,
+            "reaper_alive": int(bool(_CODEX_REAPER_THREAD and _CODEX_REAPER_THREAD.is_alive())),
+        }
 
 
 def terminate_active_codex_processes() -> int:
@@ -120,6 +216,7 @@ def terminate_active_codex_processes() -> int:
         try:
             poll = getattr(process, "poll", None)
             if callable(poll) and poll() is not None:
+                _close_completed_process_streams(process)
                 continue
             terminate = getattr(process, "terminate", None)
             if callable(terminate):

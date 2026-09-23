@@ -136,6 +136,9 @@ class AppConfig:
         self.facebook_page_2_token = second["access_token"] if second else ""
 
     def platform_ready(self, platform: str) -> bool:
+        if platform.startswith("telegram:"):
+            chat_id = platform.split(":", 1)[1].strip()
+            return bool(self.telegram_enabled and self.telegram_bot_token and chat_id)
         if platform == "telegram":
             return bool(self.telegram_enabled and self.telegram_bot_token and self.telegram_chat_id)
         if platform.startswith("facebook:"):

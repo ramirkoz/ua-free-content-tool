@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from ...paths import data_dir, database_path, logs_dir
-from ...network import dns_resolver_stats
+from ...database import database_resource_stats
+from ...network import dns_resolver_stats, network_resource_stats
+from ...codex_runtime import codex_process_registry_stats
 from ...source_health import source_health_map
 from ..ai.service import backend_status
 from ..ai.settings import load_backend_settings
@@ -164,13 +166,30 @@ def _failed_target_metrics(database) -> dict[str, Any]:
         return zero
 
 
+_WINDOWS_LIBS: dict[str, object] = {}
+
+
+def _windows_library(name: str):
+    if os.name != "nt":
+        return None
+    cached = _WINDOWS_LIBS.get(name)
+    if cached is not None:
+        return cached
+    import ctypes
+    value = ctypes.WinDLL(name, use_last_error=True)
+    _WINDOWS_LIBS[name] = value
+    return value
+
+
 def _windows_process_handle_count() -> int:
     if os.name != "nt":
         return -1
     try:
         import ctypes
         from ctypes import wintypes
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _windows_library("kernel32")
+        if kernel32 is None:
+            return -1
         get_current_process = kernel32.GetCurrentProcess
         get_current_process.restype = wintypes.HANDLE
         get_handle_count = kernel32.GetProcessHandleCount
@@ -183,12 +202,162 @@ def _windows_process_handle_count() -> int:
         return -1
 
 
+
+_WINDOWS_HANDLE_TYPE_NAMES: dict[int, str] = {}
+_WINDOWS_HANDLE_SNAPSHOT_CACHE: tuple[float, dict[str, int]] = (0.0, {})
+
+
+def _windows_handle_type_snapshot(*, cache_seconds: float = 45.0) -> dict[str, int]:
+    """Best-effort kernel handle census for the current Windows process.
+
+    RC23 proved that the leak is not our tracked HTTP/SQLite connection lifecycle,
+    but GetProcessHandleCount alone cannot say what *kind* of kernel object grows.
+    RC24 samples SystemExtendedHandleInformation and resolves one type name per
+    ObjectTypeIndex.  The result is telemetry only: no handles are duplicated,
+    closed or modified.
+    """
+    global _WINDOWS_HANDLE_SNAPSHOT_CACHE
+    if os.name != "nt":
+        return {}
+    now = time.monotonic()
+    cached_at, cached = _WINDOWS_HANDLE_SNAPSHOT_CACHE
+    if cached and now - cached_at < max(5.0, float(cache_seconds)):
+        return dict(cached)
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        ntdll = _windows_library("ntdll")
+        if ntdll is None:
+            return {}
+        nt_query_system = ntdll.NtQuerySystemInformation
+        nt_query_system.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+        nt_query_system.restype = ctypes.c_long
+        nt_query_object = ntdll.NtQueryObject
+        nt_query_object.argtypes = [wintypes.HANDLE, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+        nt_query_object.restype = ctypes.c_long
+
+        class HandleEntry(ctypes.Structure):
+            _fields_ = [
+                ("Object", ctypes.c_void_p),
+                ("UniqueProcessId", ctypes.c_size_t),
+                ("HandleValue", ctypes.c_size_t),
+                ("GrantedAccess", ctypes.c_ulong),
+                ("CreatorBackTraceIndex", ctypes.c_ushort),
+                ("ObjectTypeIndex", ctypes.c_ushort),
+                ("HandleAttributes", ctypes.c_ulong),
+                ("Reserved", ctypes.c_ulong),
+            ]
+
+        class UnicodeString(ctypes.Structure):
+            _fields_ = [
+                ("Length", ctypes.c_ushort),
+                ("MaximumLength", ctypes.c_ushort),
+                ("Buffer", ctypes.c_void_p),
+            ]
+
+        class ObjectTypeInfoHead(ctypes.Structure):
+            _fields_ = [("TypeName", UnicodeString)]
+
+        size = 1 << 20
+        required = ctypes.c_ulong(0)
+        buffer = None
+        for _ in range(8):
+            buffer = ctypes.create_string_buffer(size)
+            status = int(nt_query_system(64, buffer, size, ctypes.byref(required)))
+            if status == 0:
+                break
+            unsigned = status & 0xFFFFFFFF
+            if unsigned != 0xC0000004:  # STATUS_INFO_LENGTH_MISMATCH
+                return {}
+            size = max(size * 2, int(required.value) + 65536)
+        else:
+            return {}
+        if buffer is None:
+            return {}
+
+        total = int(ctypes.c_size_t.from_buffer(buffer, 0).value)
+        offset = ctypes.sizeof(ctypes.c_size_t) * 2
+        entry_size = ctypes.sizeof(HandleEntry)
+        pid = os.getpid()
+        by_index: Counter[int] = Counter()
+        sample_handle: dict[int, int] = {}
+        max_entries = min(total, max(0, (len(buffer) - offset) // max(1, entry_size)))
+        for index in range(max_entries):
+            entry = HandleEntry.from_buffer(buffer, offset + index * entry_size)
+            if int(entry.UniqueProcessId) != pid:
+                continue
+            type_index = int(entry.ObjectTypeIndex)
+            by_index[type_index] += 1
+            sample_handle.setdefault(type_index, int(entry.HandleValue))
+
+        counts: Counter[str] = Counter()
+        for type_index, count in by_index.items():
+            name = _WINDOWS_HANDLE_TYPE_NAMES.get(type_index, "")
+            if not name:
+                handle_value = sample_handle.get(type_index, 0)
+                try:
+                    out_size = 4096
+                    type_buffer = ctypes.create_string_buffer(out_size)
+                    needed = ctypes.c_ulong(0)
+                    status = int(nt_query_object(wintypes.HANDLE(handle_value), 2, type_buffer, out_size, ctypes.byref(needed)))
+                    if status != 0 and int(needed.value) > out_size and int(needed.value) < 65536:
+                        out_size = int(needed.value) + 512
+                        type_buffer = ctypes.create_string_buffer(out_size)
+                        status = int(nt_query_object(wintypes.HANDLE(handle_value), 2, type_buffer, out_size, ctypes.byref(needed)))
+                    if status == 0:
+                        head = ObjectTypeInfoHead.from_buffer(type_buffer)
+                        length = int(head.TypeName.Length)
+                        if head.TypeName.Buffer and 0 < length < 1024:
+                            name = ctypes.wstring_at(head.TypeName.Buffer, length // 2).strip()
+                except Exception:
+                    name = ""
+                name = name or f"type_{type_index}"
+                _WINDOWS_HANDLE_TYPE_NAMES[type_index] = name
+            counts[name] += int(count)
+        result = dict(sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:24])
+        _WINDOWS_HANDLE_SNAPSHOT_CACHE = (now, result)
+        return dict(result)
+    except Exception:
+        return {}
+
+
+def _windows_stdio_open_count() -> int:
+    if os.name != "nt":
+        return -1
+    try:
+        import ctypes
+        msvcrt = _WINDOWS_LIBS.get("msvcrt")
+        if msvcrt is None:
+            msvcrt = ctypes.CDLL("msvcrt")
+            _WINDOWS_LIBS["msvcrt"] = msvcrt
+        getmax = msvcrt._getmaxstdio
+        getmax.restype = ctypes.c_int
+        get_osfhandle = msvcrt._get_osfhandle
+        get_osfhandle.argtypes = [ctypes.c_int]
+        get_osfhandle.restype = ctypes.c_int64
+        maximum = max(0, min(int(getmax()), 8192))
+        opened = 0
+        for fd in range(maximum):
+            try:
+                if int(get_osfhandle(fd)) != -1:
+                    opened += 1
+            except Exception:
+                pass
+        return opened
+    except Exception:
+        return -1
+
+
 def _windows_stdio_limit() -> int:
     if os.name != "nt":
         return -1
     try:
         import ctypes
-        msvcrt = ctypes.CDLL("msvcrt")
+        msvcrt = _WINDOWS_LIBS.get("msvcrt")
+        if msvcrt is None:
+            msvcrt = ctypes.CDLL("msvcrt")
+            _WINDOWS_LIBS["msvcrt"] = msvcrt
         getmax = msvcrt._getmaxstdio
         getmax.restype = ctypes.c_int
         return int(getmax())
@@ -265,7 +434,7 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
             "auto_collect_scheduled": bool(getattr(window, "auto_collect_after_id", None)),
             "auto_collect_enabled": bool(
                 background_started
-                and not getattr(window, "stop_event", threading.Event()).is_set()
+                and not bool(getattr(getattr(window, "stop_event", None), "is_set", lambda: False)())
                 and (bool(getattr(window, "auto_collect_running", False)) or bool(getattr(window, "auto_collect_after_id", None)))
             ),
             "ui_lag_seconds": round(ui_lag, 3),
@@ -309,8 +478,13 @@ def collect_status(window, database, *, version: str) -> dict[str, Any]:
             "disk_free_bytes": disk_free,
             "thread_count": len(threading.enumerate()),
             "process_handle_count": _windows_process_handle_count(),
+            "process_handle_types": _windows_handle_type_snapshot(),
             "stdio_limit": _windows_stdio_limit(),
+            "stdio_open_count": _windows_stdio_open_count(),
             "dns_resolver": dns_resolver_stats(),
+            "network_resources": network_resource_stats(),
+            "database_resources": database_resource_stats(),
+            "codex_process_registry": codex_process_registry_stats(),
         },
     }
 

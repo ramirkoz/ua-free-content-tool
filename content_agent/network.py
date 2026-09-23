@@ -18,6 +18,34 @@ class NetworkError(RuntimeError):
     pass
 
 
+# RC22: network resource lifecycle must be explicit on Windows.  The collector
+# performs hundreds of HTTPS requests per hour; relying on HTTPResponse/SSLContext
+# finalizers made process handle growth observable during long unattended runs.
+# A single client TLS context is safe to reuse across independent HTTPS connections
+# and avoids repeatedly opening the Windows certificate infrastructure.
+_TLS_CONTEXT = ssl.create_default_context()
+_NETWORK_STATS_LOCK = threading.Lock()
+_NETWORK_STATS = {
+    "connections_opened": 0,
+    "connections_closed": 0,
+    "responses_opened": 0,
+    "responses_closed": 0,
+    "active_connections": 0,
+    "active_responses": 0,
+    "connect_failures": 0,
+}
+
+
+def _network_stat(key: str, delta: int = 1) -> None:
+    with _NETWORK_STATS_LOCK:
+        _NETWORK_STATS[key] = int(_NETWORK_STATS.get(key, 0)) + int(delta)
+
+
+def network_resource_stats() -> dict[str, int]:
+    with _NETWORK_STATS_LOCK:
+        return {str(k): int(v) for k, v in _NETWORK_STATS.items()}
+
+
 @dataclass(slots=True)
 class HttpResponse:
     status: int
@@ -71,6 +99,8 @@ _DNS_WORKER_COUNT = 4
 _DNS_STATS_LOCK = threading.Lock()
 _DNS_TIMEOUTS = 0
 _DNS_REJECTIONS = 0
+_DNS_SUBMITTED = 0
+_DNS_COMPLETED = 0
 
 
 def _dns_worker() -> None:
@@ -83,6 +113,9 @@ def _dns_worker() -> None:
                 request.error = exc
             finally:
                 request.done.set()
+                global _DNS_COMPLETED
+                with _DNS_STATS_LOCK:
+                    _DNS_COMPLETED += 1
         finally:
             _DNS_QUEUE.task_done()
 
@@ -110,6 +143,9 @@ def dns_resolver_stats() -> dict[str, int]:
             "queued": _DNS_QUEUE.qsize(),
             "timeouts": _DNS_TIMEOUTS,
             "rejections": _DNS_REJECTIONS,
+            "submitted": _DNS_SUBMITTED,
+            "completed": _DNS_COMPLETED,
+            "inflight": max(0, _DNS_SUBMITTED - _DNS_COMPLETED - _DNS_QUEUE.qsize()),
         }
 
 
@@ -127,11 +163,13 @@ def _resolve_with_timeout(
     workers and a bounded queue. At worst DNS service degrades; the process no
     longer creates an unlimited number of resolver threads.
     """
-    global _DNS_TIMEOUTS, _DNS_REJECTIONS
+    global _DNS_TIMEOUTS, _DNS_REJECTIONS, _DNS_SUBMITTED
     _ensure_dns_workers()
     request = _DNSRequest(resolver=resolver, host=host, port=port, done=threading.Event())
     try:
         _DNS_QUEUE.put(request, timeout=0.1)
+        with _DNS_STATS_LOCK:
+            _DNS_SUBMITTED += 1
     except queue.Full as exc:
         with _DNS_STATS_LOCK:
             _DNS_REJECTIONS += 1
@@ -167,8 +205,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, host: str, pinned_ip: str, port: int, timeout: float):
-        context = ssl.create_default_context()
-        super().__init__(host=host, port=port, timeout=timeout, context=context)
+        super().__init__(host=host, port=port, timeout=timeout, context=_TLS_CONTEXT)
         self._pinned_ip = pinned_ip
         self._server_hostname = host
 
@@ -238,17 +275,23 @@ def fetch_url(
                 candidate.connect()
             except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
                 connect_errors.append(exc)
+                _network_stat("connect_failures")
                 candidate.close()
                 continue
             connection = candidate
+            _network_stat("connections_opened")
+            _network_stat("active_connections")
             break
         if connection is None:
             raise NetworkError(
                 f"Network connection failed for {host}: no reachable address among {len(addresses)} DNS result(s)."
             ) from (connect_errors[-1] if connect_errors else None)
+        response: http.client.HTTPResponse | None = None
         try:
             connection.request(method, path, body=body, headers=outgoing_headers)
             response = connection.getresponse()
+            _network_stat("responses_opened")
+            _network_stat("active_responses")
             response_headers = {key.lower(): value for key, value in response.getheaders()}
             if response.status in {301, 302, 303, 307, 308}:
                 location = response_headers.get("location")
@@ -277,5 +320,15 @@ def fetch_url(
                 raise NetworkError("Local resource exhaustion: too many open files.") from exc
             raise NetworkError(f"Network request failed: {redact_url(current)}") from exc
         finally:
-            connection.close()
+            if response is not None:
+                try:
+                    response.close()
+                finally:
+                    _network_stat("responses_closed")
+                    _network_stat("active_responses", -1)
+            try:
+                connection.close()
+            finally:
+                _network_stat("connections_closed")
+                _network_stat("active_connections", -1)
     raise NetworkError("Unreachable redirect state.")

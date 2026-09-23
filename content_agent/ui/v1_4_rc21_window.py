@@ -172,4 +172,13 @@ class MainWindow(Rc20MainWindow):
         except Exception as exc:
             errors.append(f"Не вдалося зберегти стан покриття джерел: {exc}")
 
+        # RC22: one bounded collection cycle is a natural resource barrier.
+        # Explicit HTTP response/socket closure is the primary fix; this collection
+        # only reclaims any third-party cyclic wrappers that survived refcounting.
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+
         return total_inserted, errors

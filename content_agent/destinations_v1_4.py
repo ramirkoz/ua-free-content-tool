@@ -36,6 +36,27 @@ class InstagramDestination:
 
 
 @dataclass(slots=True, frozen=True)
+class TelegramDestination:
+    chat_id: str
+    title: str
+    username: str = ""
+    chat_type: str = "channel"
+    member_status: str = "administrator"
+    can_post_messages: bool = True
+
+    @property
+    def key(self) -> str:
+        return f"telegram:{self.chat_id}"
+
+    @property
+    def label(self) -> str:
+        name = self.title or (f"@{self.username}" if self.username else self.chat_id)
+        if self.username and f"@{self.username}" not in name:
+            name = f"{name} (@{self.username})"
+        return f"{name} (Telegram)"
+
+
+@dataclass(slots=True, frozen=True)
 class DestinationSpec:
     key: str
     label: str
@@ -74,6 +95,88 @@ def _atomic_json_write(path: Path, payload: object) -> None:
 
 def instagram_catalog_path() -> Path:
     return data_dir() / "instagram_destinations_v1_4.json"
+
+
+def telegram_catalog_path() -> Path:
+    return data_dir() / "telegram_destinations_v2.json"
+
+
+def save_telegram_catalog(
+    rows: Iterable[TelegramDestination],
+    *,
+    bot_id: str = "",
+    bot_username: str = "",
+    path: Path | None = None,
+) -> Path:
+    target = path or telegram_catalog_path()
+    normalized: list[TelegramDestination] = []
+    seen: set[str] = set()
+    for row in rows:
+        chat_id = str(row.chat_id or "").strip()
+        if not chat_id or chat_id in seen:
+            continue
+        seen.add(chat_id)
+        normalized.append(row)
+    _atomic_json_write(
+        target,
+        {
+            "version": 1,
+            "updated_at": datetime.now(KYIV).isoformat(timespec="seconds"),
+            "bot_id": str(bot_id or "").strip(),
+            "bot_username": str(bot_username or "").strip(),
+            "channels": [asdict(row) for row in normalized],
+        },
+    )
+    return target
+
+
+def load_telegram_catalog(path: Path | None = None) -> list[TelegramDestination]:
+    target = path or telegram_catalog_path()
+    if not target.exists():
+        return []
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict) or int(payload.get("version") or 0) != 1:
+        return []
+    rows = payload.get("channels")
+    if not isinstance(rows, list):
+        return []
+    result: list[TelegramDestination] = []
+    seen: set[str] = set()
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        chat_id = str(raw.get("chat_id") or "").strip()
+        if not chat_id or chat_id in seen:
+            continue
+        seen.add(chat_id)
+        result.append(
+            TelegramDestination(
+                chat_id=chat_id,
+                title=str(raw.get("title") or chat_id).strip(),
+                username=str(raw.get("username") or "").strip().lstrip("@"),
+                chat_type=str(raw.get("chat_type") or "channel").strip(),
+                member_status=str(raw.get("member_status") or "administrator").strip(),
+                can_post_messages=bool(raw.get("can_post_messages", True)),
+            )
+        )
+    return result
+
+
+def telegram_destination_for_key(config, key: str) -> TelegramDestination | None:
+    value = str(key or "").strip()
+    if not value.startswith("telegram:"):
+        return None
+    chat_id = value.split(":", 1)[1]
+    for row in load_telegram_catalog():
+        if row.chat_id == chat_id:
+            return row
+    legacy = str(getattr(config, "telegram_chat_id", "") or "").strip()
+    if chat_id and chat_id == legacy:
+        return TelegramDestination(chat_id=chat_id, title=chat_id)
+    return None
 
 
 def destination_schedules_path() -> Path:
@@ -218,14 +321,19 @@ def destination_specs(config) -> list[DestinationSpec]:
                 "linkedin",
             )
         )
-    if getattr(config, "telegram_chat_id", ""):
-        result.append(
-            DestinationSpec(
-                "telegram",
-                str(getattr(config, "telegram_chat_id", "") or "Telegram"),
-                "telegram",
-            )
-        )
+    telegram_rows = load_telegram_catalog()
+    for row in telegram_rows:
+        if row.key in seen:
+            continue
+        seen.add(row.key)
+        result.append(DestinationSpec(row.key, row.label, "telegram"))
+
+    legacy_chat = str(getattr(config, "telegram_chat_id", "") or "").strip()
+    if legacy_chat:
+        legacy_key = f"telegram:{legacy_chat}"
+        if legacy_key not in seen:
+            result.append(DestinationSpec(legacy_key, f"{legacy_chat} (Telegram)", "telegram"))
+            seen.add(legacy_key)
     return result
 
 
@@ -235,6 +343,14 @@ def destination_labels(config) -> dict[str, str]:
 
 def destination_ready(config, key: str) -> bool:
     value = str(key or "").strip()
+    if value.startswith("telegram:"):
+        destination = telegram_destination_for_key(config, value)
+        return bool(
+            destination
+            and getattr(config, "telegram_enabled", False)
+            and getattr(config, "telegram_bot_token", "")
+            and destination.chat_id
+        )
     if value.startswith("instagram:"):
         account = instagram_account_for_key(config, value)
         return bool(
@@ -249,10 +365,21 @@ def destination_ready(config, key: str) -> bool:
 def normalize_legacy_target_keys(config, keys: Iterable[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
-    instagram_keys = [row.key for row in destination_specs(config) if row.platform == "instagram"]
+    specs = destination_specs(config)
+    instagram_keys = [row.key for row in specs if row.platform == "instagram"]
+    telegram_keys = [row.key for row in specs if row.platform == "telegram"]
+    legacy_chat = str(getattr(config, "telegram_chat_id", "") or "").strip()
+    preferred_telegram = f"telegram:{legacy_chat}" if legacy_chat else ""
+    if preferred_telegram not in telegram_keys:
+        preferred_telegram = telegram_keys[0] if telegram_keys else ""
     for raw in keys:
         key = str(raw or "").strip()
-        expanded = instagram_keys if key == "instagram" else [key]
+        if key == "instagram":
+            expanded = instagram_keys
+        elif key == "telegram":
+            expanded = [preferred_telegram] if preferred_telegram else []
+        else:
+            expanded = [key]
         for item in expanded:
             if item and item not in seen:
                 seen.add(item)

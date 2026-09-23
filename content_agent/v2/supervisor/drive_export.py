@@ -35,24 +35,31 @@ class SupervisorDriveExporter:
 
     def _json_request(self, url: str, *, method: str = "GET", payload: dict | None = None) -> dict:
         body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        headers = {"Authorization": f"Bearer {self._token()}", "Accept": "application/json"}
-        if body is not None:
-            headers["Content-Type"] = "application/json; charset=utf-8"
-        response = fetch_url(
-            url,
-            method=method,
-            headers=headers,
-            body=body,
-            max_bytes=3 * 1024 * 1024,
-            allowed_content_types={"application/json"},
-            timeout=30,
-            max_redirects=0,
-            allow_http_errors=True,
-        )
-        data = response.json() if response.body else {}
-        if response.status >= 400 or not isinstance(data, dict):
-            raise GoogleDriveError(f"Google Drive API HTTP {response.status}.")
-        return data
+        for attempt in range(2):
+            headers = {"Authorization": f"Bearer {self._token()}", "Accept": "application/json"}
+            if body is not None:
+                headers["Content-Type"] = "application/json; charset=utf-8"
+            response = fetch_url(
+                url,
+                method=method,
+                headers=headers,
+                body=body,
+                max_bytes=3 * 1024 * 1024,
+                allowed_content_types={"application/json"},
+                timeout=30,
+                max_redirects=0,
+                allow_http_errors=True,
+            )
+            if response.status == 401 and attempt == 0:
+                # Access tokens expire. RC22 cached one forever, so the first 401
+                # permanently silenced the heartbeat despite a valid refresh token.
+                self._access_token = ""
+                continue
+            data = response.json() if response.body else {}
+            if response.status >= 400 or not isinstance(data, dict):
+                raise GoogleDriveError(f"Google Drive API HTTP {response.status}.")
+            return data
+        raise GoogleDriveError("Google Drive API authentication retry failed.")
 
     @staticmethod
     def _escape_q(value: str) -> str:
@@ -105,19 +112,24 @@ class SupervisorDriveExporter:
         candidate = str(file_id or "").strip()
         if not candidate or len(candidate) > 256:
             raise GoogleDriveError("Неправильний Google Drive file id.")
-        response = fetch_url(
-            f"https://www.googleapis.com/drive/v3/files/{quote(candidate, safe='')}?alt=media",
-            method="GET",
-            headers={"Authorization": f"Bearer {self._token()}", "Accept": "application/json, text/plain, */*"},
-            max_bytes=max(1024, int(max_bytes)),
-            allowed_content_types=None,
-            timeout=30,
-            max_redirects=0,
-            allow_http_errors=True,
-        )
-        if response.status >= 400:
-            raise GoogleDriveError(f"Не вдалося прочитати файл Google Drive: HTTP {response.status}.")
-        return bytes(response.body)
+        for attempt in range(2):
+            response = fetch_url(
+                f"https://www.googleapis.com/drive/v3/files/{quote(candidate, safe='')}?alt=media",
+                method="GET",
+                headers={"Authorization": f"Bearer {self._token()}", "Accept": "application/json, text/plain, */*"},
+                max_bytes=max(1024, int(max_bytes)),
+                allowed_content_types=None,
+                timeout=30,
+                max_redirects=0,
+                allow_http_errors=True,
+            )
+            if response.status == 401 and attempt == 0:
+                self._access_token = ""
+                continue
+            if response.status >= 400:
+                raise GoogleDriveError(f"Не вдалося прочитати файл Google Drive: HTTP {response.status}.")
+            return bytes(response.body)
+        raise GoogleDriveError("Не вдалося оновити Google Drive access token.")
 
     def download_json(self, file_id: str, *, max_bytes: int = 256 * 1024) -> dict:
         raw = self.download_bytes(file_id, max_bytes=max_bytes)
@@ -146,28 +158,33 @@ class SupervisorDriveExporter:
         else:
             url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink"
             method = "POST"
-        response = fetch_url(
-            url,
-            method=method,
-            headers={
-                "Authorization": f"Bearer {self._token()}",
-                "Accept": "application/json",
-                "Content-Type": f"multipart/related; boundary={boundary}",
-            },
-            body=body,
-            max_bytes=3 * 1024 * 1024,
-            allowed_content_types={"application/json"},
-            timeout=45,
-            max_redirects=0,
-            allow_http_errors=True,
-        )
-        payload = response.json() if response.body else {}
-        if response.status >= 400 or not isinstance(payload, dict):
-            raise GoogleDriveError(f"Не вдалося вивантажити {name}: HTTP {response.status}.")
-        file_id = str(payload.get("id") or existing)
-        if not file_id:
-            raise GoogleDriveError(f"Google Drive не повернув ID для {name}.")
-        return file_id
+        for attempt in range(2):
+            response = fetch_url(
+                url,
+                method=method,
+                headers={
+                    "Authorization": f"Bearer {self._token()}",
+                    "Accept": "application/json",
+                    "Content-Type": f"multipart/related; boundary={boundary}",
+                },
+                body=body,
+                max_bytes=3 * 1024 * 1024,
+                allowed_content_types={"application/json"},
+                timeout=45,
+                max_redirects=0,
+                allow_http_errors=True,
+            )
+            if response.status == 401 and attempt == 0:
+                self._access_token = ""
+                continue
+            payload = response.json() if response.body else {}
+            if response.status >= 400 or not isinstance(payload, dict):
+                raise GoogleDriveError(f"Не вдалося вивантажити {name}: HTTP {response.status}.")
+            file_id = str(payload.get("id") or existing)
+            if not file_id:
+                raise GoogleDriveError(f"Google Drive не повернув ID для {name}.")
+            return file_id
+        raise GoogleDriveError(f"Не вдалося оновити Google Drive access token для {name}.")
 
     def upload_json(self, name: str, payload: dict, parent_id: str, *, replace: bool = True) -> str:
         return self.upload_bytes(

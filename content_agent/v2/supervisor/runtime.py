@@ -26,7 +26,8 @@ class SupervisorRuntime:
         self.database = database
         self.config = config
         self.version = version
-        self.stop_event = getattr(window, "stop_event", threading.Event())
+        existing_stop_event = getattr(window, "stop_event", None)
+        self.stop_event = existing_stop_event if existing_stop_event is not None else threading.Event()
         self.thread: threading.Thread | None = None
         self.control = RemoteControlManager(window, config, version=version)
         self._last_signature: tuple[tuple[str, str], ...] = ()

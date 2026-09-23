@@ -21,7 +21,7 @@ def donation_enabled_for_destination(settings, key: str, platform: str) -> bool:
     kind = str(platform or "").strip()
     if settings.enabled_for(target):
         return True
-    return kind == "instagram" and settings.enabled_for("instagram")
+    return kind in {"instagram", "telegram"} and settings.enabled_for(kind)
 
 
 class MainWindow(Rc7MainWindow):

@@ -29,6 +29,8 @@ def _logical_platform(key: str) -> str:
         return "facebook"
     if value.startswith("instagram:"):
         return "instagram"
+    if value.startswith("telegram:"):
+        return "telegram"
     return value
 
 

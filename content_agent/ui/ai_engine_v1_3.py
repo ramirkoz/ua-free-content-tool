@@ -103,6 +103,7 @@ class AIEngineV13Mixin:
             "local_base_url": tk.StringVar(value=secrets.local_base_url),
             "local_model": tk.StringVar(value=secrets.local_model),
         }
+        self.ai_codex_enabled_var = tk.BooleanVar(value=bool(getattr(secrets, "codex_enabled", False)))
         self.ai_local_enabled_var = tk.BooleanVar(value=secrets.local_enabled)
 
         rows = [
@@ -145,19 +146,32 @@ class AIEngineV13Mixin:
             row=7, column=0, columnspan=5, sticky="w", pady=(2, 4)
         )
 
-        actions = ttk.Frame(frame)
-        actions.grid(row=8, column=0, columnspan=5, sticky="w", pady=(7, 4))
-        ttk.Button(actions, text="Зберегти AI-провайдери", command=self.save_ai_provider_settings).pack(side="left")
-        ttk.Button(actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Перевірити локальний AI", command=self.test_local_ai_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Перевірити Codex", command=self.check_codex_ui).pack(side="left", padx=(16, 0))
-        ttk.Button(actions, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Увійти через ChatGPT", command=self.login_codex_ui).pack(side="left", padx=(6, 0))
+        provider_actions = ttk.Frame(frame)
+        provider_actions.grid(row=8, column=0, columnspan=5, sticky="w", pady=(7, 5))
+        ttk.Button(provider_actions, text="Зберегти AI-провайдери", command=self.save_ai_provider_settings).pack(side="left")
+        ttk.Button(provider_actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(provider_actions, text="Перевірити локальний AI", command=self.test_local_ai_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(provider_actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
 
-        ttk.Label(frame, textvariable=self.codex_status_var, foreground="#155724", wraplength=1180).grid(
-            row=9, column=0, columnspan=5, sticky="w", pady=(2, 5)
+        codex_box = ttk.LabelFrame(frame, text="Codex / ChatGPT", padding=7)
+        codex_box.grid(row=9, column=0, columnspan=5, sticky="ew", pady=(5, 5))
+        self.codex_route_status_var = tk.StringVar(value="У маршрутизації AI: ВИМКНЕНО")
+        ttk.Checkbutton(
+            codex_box, text="Дозволити автоматичне використання Codex у AI Router",
+            variable=self.ai_codex_enabled_var, command=self.save_codex_router_preference_ui,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(codex_box, textvariable=self.codex_route_status_var, font="TkHeadingFont").grid(
+            row=0, column=1, sticky="w", padx=(14, 0)
         )
+        ttk.Label(codex_box, textvariable=self.codex_status_var, foreground="#555", wraplength=1100).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 5)
+        )
+        codex_actions = ttk.Frame(codex_box)
+        codex_actions.grid(row=2, column=0, columnspan=2, sticky="w")
+        ttk.Button(codex_actions, text="Перевірити Codex", command=self.check_codex_ui).pack(side="left")
+        ttk.Button(codex_actions, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(6, 0))
+        ttk.Button(codex_actions, text="Увійти / змінити акаунт", command=self.login_codex_ui).pack(side="left", padx=(6, 0))
+
         ttk.Separator(frame, orient="horizontal").grid(row=10, column=0, columnspan=5, sticky="ew", pady=6)
         ttk.Label(frame, text="Rowboat / локальний граф пам’яті", font="TkHeadingFont").grid(row=11, column=0, sticky="w")
         ttk.Label(frame, textvariable=self.rowboat_status_var, foreground="#555").grid(
@@ -182,10 +196,33 @@ class AIEngineV13Mixin:
             groq_api_key=values["groq_api_key"].get(),
             cloudflare_account_id=values["cloudflare_account_id"].get(),
             cloudflare_api_token=values["cloudflare_api_token"].get(),
+            codex_enabled=self.ai_codex_enabled_var.get(),
             local_enabled=self.ai_local_enabled_var.get(),
             local_base_url=values["local_base_url"].get(),
             local_model=values["local_model"].get(),
         )
+
+    def _update_codex_route_status_ui(self) -> None:
+        if not hasattr(self, "codex_route_status_var"):
+            return
+        enabled = bool(self.ai_codex_enabled_var.get())
+        self.codex_route_status_var.set(
+            "У маршрутизації AI: УВІМКНЕНО" if enabled else "У маршрутизації AI: ВИМКНЕНО"
+        )
+
+    def save_codex_router_preference_ui(self) -> None:
+        """Persist only the Codex routing switch; do not rewrite other edited keys."""
+        try:
+            cfg = load_provider_secrets()
+            cfg.codex_enabled = bool(self.ai_codex_enabled_var.get())
+            save_provider_secrets(cfg)
+        except Exception as exc:
+            self._show_error(exc)  # type: ignore[attr-defined]
+            return
+        self._update_codex_route_status_ui()
+        self.refresh_ai_component_status()
+        state = "увімкнено" if cfg.codex_enabled else "вимкнено"
+        self.set_status(f"Автоматичне використання Codex {state}.")  # type: ignore[attr-defined]
 
     def save_ai_provider_settings(self) -> None:
         try:
@@ -245,31 +282,40 @@ class AIEngineV13Mixin:
     def refresh_ai_component_status(self) -> None:
         if not hasattr(self, "ai_router_status_var"):
             return
+        self._update_codex_route_status_ui()
         codex = codex_router_status(live_probe=False)
         version = str(codex.get("version") or "")
         account = str(codex.get("account_label") or "")
-        cooldown = int(codex.get("cooldown_seconds") or 0)
-        reason = str(codex.get("cooldown_reason") or "").strip()
-        outcome = str(codex.get("last_outcome") or "").strip()
-        elapsed = float(codex.get("last_elapsed") or 0.0)
-        last_attempt = float(codex.get("last_attempt_at") or 0.0)
+        enabled = bool(self.ai_codex_enabled_var.get())
         if not codex.get("checked"):
-            self.codex_status_var.set("⚪ CODEX · статус сесії ще не перевірено · натисніть «Перевірити Codex»")
+            install_part = "стан установки ще не перевірено"
         elif not codex.get("installed"):
-            self.codex_status_var.set("🔴 CODEX · не встановлено")
+            install_part = "не встановлено"
         elif not codex.get("authenticated"):
-            self.codex_status_var.set(f"🟠 CODEX {version} · встановлено · потрібен вхід через ChatGPT")
+            install_part = f"встановлено{(' · версія ' + version) if version else ''} · потрібен вхід через ChatGPT"
         else:
-            account_part = f" · {account}" if account else ""
+            install_part = "встановлено · авторизовано"
+            if account:
+                install_part += f" · акаунт: {account}"
+            if version:
+                install_part += f" · версія {version}"
+
+        if not enabled:
+            self.codex_status_var.set(f"Стан Codex: {install_part} · автоматичне використання ВИМКНЕНО")
+        elif not codex.get("checked") or not codex.get("installed") or not codex.get("authenticated"):
+            self.codex_status_var.set(f"Стан Codex: {install_part} · автоматичне використання УВІМКНЕНО")
+        else:
+            cooldown = int(codex.get("cooldown_seconds") or 0)
+            reason = str(codex.get("cooldown_reason") or "").strip()
+            outcome = str(codex.get("last_outcome") or "").strip()
+            elapsed = float(codex.get("last_elapsed") or 0.0)
+            last_attempt = float(codex.get("last_attempt_at") or 0.0)
+            route_part = "доступний для Router"
             if cooldown > 0:
                 minutes, seconds = divmod(cooldown, 60)
-                route_part = f"Router: cooldown {minutes:02d}:{seconds:02d}"
+                route_part = f"Router cooldown {minutes:02d}:{seconds:02d}"
                 if reason:
                     route_part += f" · {reason[:180]}"
-                icon = "🟠"
-            else:
-                route_part = "Router: доступний · PRIMARY"
-                icon = "🟢"
             last_part = ""
             if last_attempt:
                 stamp = datetime.fromtimestamp(last_attempt).strftime("%H:%M:%S")
@@ -277,9 +323,7 @@ class AIEngineV13Mixin:
                 last_part = f" · останній: {readable} {stamp}"
                 if elapsed > 0:
                     last_part += f" · {elapsed:.1f} с"
-            self.codex_status_var.set(
-                f"{icon} CODEX {version} · авторизований{account_part} · {route_part}{last_part}"
-            )
+            self.codex_status_var.set(f"Стан Codex: {install_part} · {route_part}{last_part}")
         try:
             rows = router_overview_cached()
             configured = [row for row in rows if row["configured"]]
@@ -347,7 +391,7 @@ class AIEngineV13Mixin:
         def success(_result: object) -> None:
             clear_router_cooldowns()
             self.refresh_ai_component_status()
-            self.set_status("Вхід через ChatGPT завершено. Codex знову доступний для AI Router.")  # type: ignore[attr-defined]
+            self.set_status("Вхід через ChatGPT завершено. Стан Codex оновлено; участь у AI Router визначає окремий перемикач.")  # type: ignore[attr-defined]
 
         self.run_async(login_chatgpt, success, label="Очікую вхід через ChatGPT", done_label="Codex авторизовано")  # type: ignore[attr-defined]
 

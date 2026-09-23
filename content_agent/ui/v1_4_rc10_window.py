@@ -116,6 +116,7 @@ class MainWindow(Rc9MainWindow):
                 logical = (
                     "facebook" if target.startswith("facebook:")
                     else "instagram" if target.startswith("instagram:")
+                    else "telegram" if target.startswith("telegram:")
                     else target
                 )
                 final = legacy_ui.compose_publication_text(

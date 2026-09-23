@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from ...paths import runtime_dir
+
 from ...network import fetch_url
 from .control import RemoteCommand
 
@@ -61,12 +63,13 @@ class AutonomousUpdateManager:
         self._last_checked_version = self.current_version
         self._last_error = ""
         self._last_triggered = ""
-        self._state = "starting"
+        self._manual_test = (runtime_dir() / "MANUAL_TEST_BUILD.txt").is_file()
+        self._state = "disabled_manual_test" if self._manual_test else "starting"
 
     def status(self) -> dict[str, Any]:
         return {
-            "enabled": True,
-            "mode": "github-release-auto",
+            "enabled": not self._manual_test,
+            "mode": "manual-test-disabled" if self._manual_test else "github-release-auto",
             "current_version": self.current_version,
             "latest_checked_version": self._last_checked_version,
             "state": self._state,
@@ -75,9 +78,14 @@ class AutonomousUpdateManager:
         }
 
     def due(self) -> bool:
+        if self._manual_test:
+            return False
         return self._last_check_at <= 0 or time.monotonic() - self._last_check_at >= self.CHECK_INTERVAL_SECONDS
 
     def check(self) -> ReleaseCandidate | None:
+        if self._manual_test:
+            self._state = "disabled_manual_test"
+            return None
         self._last_check_at = time.monotonic()
         try:
             response = fetch_url(
@@ -108,6 +116,8 @@ class AutonomousUpdateManager:
             return None
 
     def command_for(self, candidate: ReleaseCandidate) -> RemoteCommand | None:
+        if self._manual_test:
+            return None
         if candidate.version == self._last_triggered:
             return None
         self._last_triggered = candidate.version
