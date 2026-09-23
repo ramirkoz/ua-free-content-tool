@@ -63,7 +63,7 @@ class AutonomousUpdateManager:
         self._last_checked_version = self.current_version
         self._last_error = ""
         self._last_triggered = ""
-        self._manual_test = (runtime_dir() / "MANUAL_TEST_BUILD.txt").is_file()
+        self._manual_test = ((runtime_dir() / "MANUAL_TEST_BUILD.txt").is_file() or (runtime_dir() / "_runtime" / "MANUAL_TEST_BUILD.txt").is_file())
         self._state = "disabled_manual_test" if self._manual_test else "starting"
 
     def status(self) -> dict[str, Any]:

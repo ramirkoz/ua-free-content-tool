@@ -71,10 +71,6 @@ class SocialConnectionsRC6Mixin:
         )
         actions = ttk.Frame(frame)
         actions.grid(row=1, column=2, sticky="w")
-        ttk.Button(
-            actions, text="Копіювати токен",
-            command=lambda: self._copy_var_value(self.settings_vars["instagram_token"], "Instagram Access Token"),
-        ).pack(side="left")
         ttk.Button(actions, text="Підключити / перевірити", command=self.connect_instagram).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Вимкнути", command=lambda: self._disconnect_social("instagram")).pack(
             side="left", padx=(6, 0)

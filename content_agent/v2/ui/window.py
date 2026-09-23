@@ -13,7 +13,12 @@ from ...ai_router import (
 )
 from ...codex_runtime import inspect_codex_cached, peek_codex_status_cache
 from ...inbox_layout_v1_3_1_rc8 import inbox_layout_path, save_widths
-from ...ui.v1_4_rc30_window import MainWindow as Rc30MainWindow
+from ...ui.v1_4_rc30_window import MainWindow as LegacyMainWindow
+from ...google_drive import DriveMediaInfo, GoogleDriveError
+from ...managed_media_drive import ManagedGoogleDriveClient
+from ...readable_media_names import readable_post_media_filename
+from ...ui.media_workflow import format_media_size
+from ...version import APP_VERSION
 from ..ai.openrouter_backend import OpenRouterBackend
 from ..ai.service import backend_status, test_active_backend
 from ..ai.settings import (
@@ -28,19 +33,19 @@ from ..ai.settings import (
 )
 from ..ai.usage import usage_summary
 from ..supervisor.diagnostics import instance_identity
-from ..supervisor.runtime import SupervisorRuntime
+from ..supervisor.resilient_runtime import ResilientSupervisorRuntime
 from ..publishing.retry import assess_failed_target
+from .media_drive import ReadableMediaDriveClient
 
 
-class MainWindow(Rc30MainWindow):
-    """V2 compatibility shell: RC30 behavior plus isolated V2 services.
+class MainWindow(LegacyMainWindow):
+    """Canonical V2 window.
 
-    The old UI/runtime remains the functional baseline in rc1. New functionality
-    is attached only through explicit V2 modules so the legacy chain can be retired
-    incrementally instead of rewritten in one risky step.
+    Legacy UI behavior is isolated behind one compatibility boundary; current V2
+    services, media naming, supervisor and watchdog live here instead of in an RC chain.
     """
 
-    VERSION_LABEL = "2.0.0-rc6"
+    VERSION_LABEL = APP_VERSION
 
     def __init__(self, root, database, config) -> None:
         self.v2_backend_settings = load_backend_settings()
@@ -55,7 +60,7 @@ class MainWindow(Rc30MainWindow):
         self._v2_refresh_after_id: str | None = None
         self._v2_inbox_reset_button = None
         self.history_retry_button = None
-        self.v2_supervisor: SupervisorRuntime | None = None
+        self.v2_supervisor: ResilientSupervisorRuntime | None = None
 
         try:
             self.v2_openrouter_key_var.set(load_openrouter_api_key())
@@ -71,12 +76,84 @@ class MainWindow(Rc30MainWindow):
         self._apply_v2_labels()
         self.refresh_v2_ai_status()
 
-        self.v2_supervisor = SupervisorRuntime(self, database, config, version=self.VERSION_LABEL)
+        self.v2_supervisor = ResilientSupervisorRuntime(self, database, config, version=self.VERSION_LABEL)
         self.v2_supervisor.start()
         self._schedule_v2_status_refresh()
+        self._autocollect_watchdog_id = None
+        self._schedule_autocollect_watchdog()
+
+    def _schedule_autocollect_watchdog(self) -> None:
+        try:
+            if self.stop_event.is_set():
+                return
+            if getattr(self, "background_services_started", False):
+                running = bool(getattr(self, "auto_collect_running", False))
+                scheduled = getattr(self, "auto_collect_after_id", None)
+                if not running and scheduled is None:
+                    self._schedule_next_auto_collect()
+            self._autocollect_watchdog_id = self.root.after(60000, self._schedule_autocollect_watchdog)
+        except Exception:
+            self._autocollect_watchdog_id = None
+
+    def _media_name_context(self) -> tuple[int, str]:
+        group_id = int(getattr(self, "current_group_id", 0) or 0)
+        title = ""
+        headline_var = getattr(self, "headline_var", None)
+        if headline_var is not None:
+            try:
+                title = str(headline_var.get() or "").strip()
+            except Exception:
+                title = ""
+        if not title and group_id:
+            try:
+                group = self.db.get_group(group_id)
+                title = str(group.headline or group.canonical_title or "").strip()
+            except Exception:
+                title = ""
+        return group_id, title
+
+    def _managed_drive_client(self) -> ManagedGoogleDriveClient:
+        if not self.config.platform_ready("google_drive"):
+            raise GoogleDriveError("Спочатку підключіть Google Drive у налаштуваннях.")
+        group_id, title = self._media_name_context()
+        return ReadableMediaDriveClient(
+            self.config.google_client_id, self.config.google_client_secret, self.config.google_refresh_token,
+            post_title=title, group_id=group_id,
+        )
+
+    def load_group(self, group_id: int) -> None:
+        super().load_group(group_id)
+        try:
+            group = self.db.get_group(group_id)
+        except Exception:
+            return
+        if not group.media_file_id or not group.media_mime:
+            return
+        desired = readable_post_media_filename(str(group.headline or group.canonical_title or ""), group_id, group.media_mime)
+        if str(group.media_name or "") == desired or not self.config.platform_ready("google_drive"):
+            return
+        file_id = str(group.media_file_id)
+
+        def action() -> object:
+            client = self._managed_drive_client()
+            if not isinstance(client, ReadableMediaDriveClient):
+                raise GoogleDriveError("Не вдалося підготувати кероване медіа Google Drive.")
+            return client.rename_media_file(file_id, desired)
+
+        def success(result: object) -> None:
+            if not isinstance(result, DriveMediaInfo):
+                return
+            drive_url = f"https://drive.google.com/file/d/{result.file_id}/view"
+            self.db.set_group_media(group_id, drive_url=drive_url, file_id=result.file_id, name=result.name, kind=result.kind, mime=result.mime_type, size=result.size)
+            if getattr(self, "current_group_id", None) != group_id:
+                return
+            self.media_url_var.set(drive_url)
+            self.media_status_var.set(f"Медіа готове ✓ {result.name} · {result.kind.upper()} · {format_media_size(result.size)} · Google Drive: перевірено ✓")
+
+        self.run_async(action, success, label="Надаю медіафайлу зрозумілу назву", done_label="Назву медіафайлу оновлено")
 
     def _apply_v2_labels(self) -> None:
-        self.root.title("UA FREE Content Tool — v2.0.0-rc6")
+        self.root.title(f"UA FREE Content Tool — v{self.VERSION_LABEL}")
 
     def _apply_language(self, refresh: bool = True) -> None:
         super()._apply_language(refresh=refresh)
@@ -384,9 +461,8 @@ class MainWindow(Rc30MainWindow):
         openrouter.columnconfigure(1, weight=1)
         ttk.Label(openrouter, text="API key").grid(row=0, column=0, sticky="w")
         ttk.Entry(openrouter, textvariable=self.v2_openrouter_key_var, show="•", width=72).grid(row=0, column=1, sticky="ew", padx=(8, 8))
-        ttk.Button(openrouter, text="Копіювати", command=lambda: self._copy_var_value(self.v2_openrouter_key_var, "OpenRouter API key")).grid(row=0, column=2, padx=(0, 6))
-        ttk.Button(openrouter, text="Зберегти", command=self.save_v2_openrouter_settings).grid(row=0, column=3, padx=(0, 6))
-        ttk.Button(openrouter, text="Тест OpenRouter", command=self.test_v2_openrouter).grid(row=0, column=4)
+        ttk.Button(openrouter, text="Зберегти", command=self.save_v2_openrouter_settings).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(openrouter, text="Перевірити", command=self.test_v2_openrouter).grid(row=0, column=3)
         ttk.Label(openrouter, text="Місячний ліміт, $:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(openrouter, textvariable=self.v2_openrouter_budget_var, width=14).grid(row=1, column=1, sticky="w", padx=(8, 8), pady=(6, 0))
         ttk.Label(
@@ -397,9 +473,9 @@ class MainWindow(Rc30MainWindow):
             ),
             wraplength=1250,
             foreground="#555",
-        ).grid(row=2, column=0, columnspan=5, sticky="w", pady=(7, 4))
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(7, 4))
         ttk.Label(openrouter, textvariable=self.v2_openrouter_status_var, foreground="#155724", wraplength=1250).grid(
-            row=3, column=0, columnspan=5, sticky="w", pady=(3, 0)
+            row=3, column=0, columnspan=4, sticky="w", pady=(3, 0)
         )
 
         router = ttk.LabelFrame(tab, text="2. Наш AI Router · прямі провайдери / локальний резерв", padding=10)
@@ -415,13 +491,13 @@ class MainWindow(Rc30MainWindow):
         ttk.Button(actions, text="Зберегти ключі Router", command=self.save_ai_provider_settings).pack(side="left")
         ttk.Button(actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
-        ttk.Label(actions, text="Ключі редагуються також у старому блоці Налаштувань RC30; це один і той самий secure store.", foreground="#666").pack(side="left", padx=(12, 0))
+        ttk.Label(actions, text="Ключі зберігаються в одному захищеному сховищі.", foreground="#666").pack(side="left", padx=(12, 0))
 
         agent = ttk.LabelFrame(tab, text="3. Agent · ChatGPT/Codex account backend", padding=10)
         agent.pack(fill="x", pady=(0, 8))
         ttk.Label(
             agent,
-            text="У цьому режимі токенові провайдери не використовуються. RC1 Agent backend = локально авторизований Codex/ChatGPT runtime.",
+            text="У цьому режимі використовується локально авторизований Codex/ChatGPT runtime.",
             foreground="#555",
         ).pack(anchor="w")
         ttk.Label(agent, textvariable=self.v2_agent_status_var, wraplength=1250).pack(anchor="w", pady=(5, 5))

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .paths import runtime_dir
+
 
 def _read_version() -> str:
     candidates = (
-        Path(__file__).resolve().parent.parent / "VERSION.txt",
+        runtime_dir() / "VERSION.txt",
         Path.cwd() / "VERSION.txt",
+        Path(__file__).resolve().parent.parent / "VERSION.txt",
     )
     for path in candidates:
         try:

@@ -165,13 +165,13 @@ function Wait-Parent([int]$Pid, [int]$Seconds) {
 
 function Copy-Runtime([string]$From, [string]$To) {
     New-Item -ItemType Directory -Path $To -Force | Out-Null
-    Get-ChildItem -LiteralPath $From -Force | Where-Object { $_.Name -ne "Data" } | ForEach-Object {
+    Get-ChildItem -LiteralPath $From -Force | Where-Object { $_.Name -notin @("Data", "Tools") } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $To $_.Name) -Recurse -Force
     }
 }
 
 function Clear-Runtime([string]$Root) {
-    Get-ChildItem -LiteralPath $Root -Force | Where-Object { $_.Name -ne "Data" } | ForEach-Object {
+    Get-ChildItem -LiteralPath $Root -Force | Where-Object { $_.Name -notin @("Data", "Tools") } | ForEach-Object {
         Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
     }
 }
@@ -199,7 +199,7 @@ try {
     } finally { $archive.Dispose() }
 
     Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
-    foreach ($required in @("UA_FREE_Content_Tool.exe", "PUBLIC_VERSION.txt", "VERSION.txt", "portable.flag")) {
+    foreach ($required in @("UA_FREE_Content_Tool.exe", "PUBLIC_VERSION.txt", "VERSION.txt")) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $required))) { throw "UPDATE_REQUIRED_FILE_MISSING: $required" }
     }
     if ((Get-Content -LiteralPath (Join-Path $stage "PUBLIC_VERSION.txt") -Raw).Trim() -ne $targetVersion) {

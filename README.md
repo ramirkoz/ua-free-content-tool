@@ -1,188 +1,33 @@
-# UA FREE Content Tool
+# UA FREE Content Tool v2.0.0-rc28
 
-> **Поточний кандидат: v2.0.0-rc6.** Це обережний V2 compatibility release поверх перевіреного v1.4.0-rc30. Перед оновленням повністю закрийте попередню версію, розпакуйте RC6 у нову папку і скопіюйте туди всю робочу папку `Data`. Деталі: [RELEASE_NOTES_v2.0.0-rc6.md](RELEASE_NOTES_v2.0.0-rc6.md).
+Windows Portable інструмент для збору, редактури, підготовки й публікації контенту з AI Router, Supervisor та інтеграціями соцмереж.
 
-**Privacy-first portable Windows application for collecting, grouping, rewriting, scheduling, and cross-posting news.**
+## Архітектура
 
-> **Current release:** `v2.0.0-rc6`  
-> **Current version:** `v2.0.0-rc6`
-> **Platform:** Windows 10/11, portable
-> **Interface and output languages:** Ukrainian and English
-> **License:** GPL-2.0-or-later
+- `content_agent/v2` — активний V2 runtime і канонічне V2-вікно.
+- `Data` — лише користувацькі дані: база, налаштування, журнали, кеш, backup/recovery state.
+- `Tools` — відтворювані важкі runtime-компоненти, зокрема Codex. Вони не повинні роздувати Data.
+- V2 більше не використовує ланцюг `window_rc7 -> rc8 -> rc11`; актуальні V2-функції зведені в канонічні модулі.
+- Старий UI-контур використовується тільки як compatibility boundary для функцій, які ще не перенесені в V2, і прихований під час побудови вікна, тому старі RC-версії не повинні мигати користувачу.
 
-UA FREE Content Tool gives a human editor one local workflow for the news-production cycle: collect materials, find reports about the same event, merge only after explicit confirmation, create one canonical publication, attach media, schedule it, and publish to selected social networks.
+## Перший запуск / міграція
 
-## What is new in v2.0.0-rc6
+Не копіюйте стару `Data` в нову папку. На першому запуску можна вибрати стару папку Content Tool або її `Data`. Read-only importer переносить тільки довготривалі джерела, групи, матеріали, publication state, editorial examples, feedback/learning та налаштування. Старі logs/cache/backups/diagnostics/Tools не переносяться.
 
-- Fact Guard now accepts the narrow semantic equivalent `record quantity` → `largest quantity`; unrelated factual strengthening remains blocked.
-- Explicit rewrite intent has absolute routing precedence over generic words such as `topic`, `duplicate`, or `supervisor` that may occur inside source text.
-- OpenRouter models that return `404 No endpoints found` are quarantined for 12 hours and skipped across restarts without blocking healthy sibling models.
-- DNS resolution uses four fixed daemon workers and a bounded queue instead of one new thread per lookup, preventing unbounded resolver-thread/handle accumulation.
-- Windows startup raises the MSVCRT stdio ceiling to 8192 and Supervisor reports process handle/thread/DNS pressure.
-- A local `Too many open files` condition aborts the current collection cycle instead of falsely marking every enabled source as broken; Supervisor also backs off rather than hammering status files every minute.
-- RC5 model-quality, reasoning-budget, current-process telemetry, and V2 data compatibility are preserved.
+## Секрети та соцмережі
 
-See [RELEASE_NOTES_v2.0.0-rc6.md](RELEASE_NOTES_v2.0.0-rc6.md).
+API/access/page tokens зберігаються як службові secrets. Інтерфейс не пропонує копіювати Facebook Page token або інші секрети в clipboard. Facebook Pages обираються як сторінки для публікації, а їхні page tokens залишаються внутрішніми даними інтеграції.
 
-## Core workflow
+## Portable layout
 
-1. **Collect materials.** Enabled sources create separate incoming blocks.
-2. **Select manually.** Use `Shift`, `Ctrl`, or `Ctrl+A` where supported.
-3. **Find candidates.** Global topic search proposes likely related blocks without merging them.
-4. **Confirm grouping.** Only the editor decides which blocks are combined.
-5. **Rewrite.** The selected V2 AI backend performs the rewrite; OpenRouter uses bounded model-level fallback while Router/Agent keep their own explicit runtime rules.
-6. **Edit and approve.** A human verifies facts, wording, and length.
-7. **Attach media.** Media can be selected from Google Drive according to the selected publication targets.
-8. **Schedule.** The package is added to the publication queue.
-9. **Publish sequentially.** Every platform keeps its own target status.
-10. **Retry safely.** Failed targets can be retried without repeating successful publications.
-
-## AI Router and local fallback
-
-Production AI tasks use one priority chain. Provider or model failures such as quota, HTTP 429, timeout, temporary errors, or invalid output are handled automatically according to router policy.
-
-The local emergency path is designed to reuse what is already installed on the Windows machine:
-
-- running Ollama at `127.0.0.1:11434` is preferred;
-- installed but stopped Ollama can be started hidden;
-- already installed generative models are enumerated and reused;
-- embedding-only models are skipped for generation;
-- no Ollama reinstall is performed;
-- no model pull/download is performed automatically;
-- a manually configured OpenAI-compatible llama.cpp endpoint remains a secondary local fallback.
-
-Small local models receive compact prompts and smaller output budgets instead of the heavier cloud prompt format.
-
-## Duplicate grouping
-
-Global duplicate search is intentionally human-in-the-loop.
-
-- A deterministic title-first prefilter creates a bounded candidate graph.
-- Candidate-pair materialization and neighbours per group are capped.
-- AI receives only a compact bounded review set.
-- AI may answer with the simple `MERGE ...` protocol or supported JSON.
-- If AI fails, strong deterministic candidates can still be shown for review.
-- Search runs outside the GUI thread and supports cancellation.
-- Global deadlines prevent provider failover from turning one scan into a multi-minute hang.
-- A late callback after cancellation or timeout is ignored.
-- The editor must explicitly approve every merge.
-
-## Publishing and media
-
-Supported publication targets include:
-
-- Facebook Pages;
-- Threads;
-- LinkedIn;
-- Telegram;
-- optional Instagram workflows present in the current application branch;
-- private Google Drive media.
-
-The queue stores platform targets independently, preserves attempts and remote IDs, and retries only failed targets. Existing queued materials keep their assigned targets when settings change.
-
-## Editorial memory
-
-The application keeps editorial learning and working data locally. Approved examples can guide style and structure, while new facts must come from the current source material. Rowboat/local memory is used as editorial context, not as a factual source for a new story.
-
-## Portable data
-
-The `Data` folder next to the executable contains the working installation state, including the database, portable configuration, platform tokens, queue state, editorial memory, exclusions, and operational data.
-
-For every update:
-
-1. Close the application completely.
-2. Confirm the process is no longer running.
-3. Back up the complete current application folder.
-4. Extract the new version into a **new folder**.
-5. Copy the complete existing `Data` folder into the new portable folder.
-6. Start the new version and verify AI and platform connections.
-7. Keep the old working copy until the first successful live cycle.
-
-Do not replace only the EXE. The portable package depends on the accompanying signed Python runtime and application directories.
-
-`Data\config.portable` and `Data\portable.key` form one pair. Do not delete, rename, or move them separately.
-
-See [PORTABLE_MODE.md](PORTABLE_MODE.md) for details.
-
-## Requirements
-
-### Ready Windows portable build
-
-- Windows 10 or Windows 11;
-- internet access for collection and configured cloud/platform integrations;
-- credentials only for the services you use;
-- Google Cloud OAuth Desktop client when Google Drive is enabled;
-- Ollama is optional but recommended as the local emergency AI reserve.
-
-Ollama and model files are **not bundled** into the portable archive.
-
-### Development from source
-
-- Python 3.11–3.13;
-- `requirements.txt` for runtime dependencies;
-- `requirements-test.txt` for tests;
-- `requirements-build.txt` for Windows packaging.
-
-```bat
-python -m venv .venv
-.venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt -r requirements-test.txt
-python app.py
+```text
+UA_FREE_Content_Tool.exe
+_runtime/
+Tools/
+Data/
+VERSION.txt
+PUBLIC_VERSION.txt
+README.txt
 ```
 
-Alternative entry point:
-
-```bat
-python -m content_agent.main
-```
-
-## Windows quick start
-
-1. Open the latest GitHub Release.
-2. For this candidate, use `UA_FREE_Content_Tool_v2.0.0-rc6_Windows_Portable.zip`.
-3. Verify SHA-256 against `SHA256SUMS.txt`.
-4. Extract the full ZIP into a new folder.
-5. Copy your existing `Data` folder if updating.
-6. Run `UA_FREE_Content_Tool.exe` without administrator rights.
-7. Open **Settings** and verify the AI Router, local AI, Google Drive, and publication targets you use.
-
-## Security
-
-UA FREE Content Tool is a local application with no built-in telemetry about editorial work.
-
-- Portable configuration is encrypted.
-- Secrets are masked in the interface and normal errors.
-- Google Drive uses OAuth.
-- Temporary public media access is limited to the technical publication workflow that requires it.
-- Local editorial learning stays on the operator’s machine unless explicitly exported.
-
-Never publish a real `Data` folder, portable keys, SQLite databases, tokens, secrets, private Drive links, or logs/screenshots containing credentials.
-
-See [SECURITY_NOTES.md](SECURITY_NOTES.md).
-
-## Build and validation
-
-Build the portable package with:
-
-```bat
-Build_Portable_Windows.bat
-```
-
-The release workflow validates source, tests the application, builds the signed portable runtime, performs GUI startup checks, runs Microsoft Defender, validates ZIP integrity and paths, calculates SHA-256 checksums, and publishes the GitHub Release.
-
-v2.0.0-rc6 is the current release candidate. It preserves the RC30 functional baseline and Data compatibility while hardening OpenRouter model selection, reasoning budgets and Supervisor diagnosis.
-
-## Documentation
-
-- [RELEASE_NOTES_v2.0.0-rc6.md](RELEASE_NOTES_v2.0.0-rc6.md) — current candidate notes.
-- [CHANGELOG.md](CHANGELOG.md) — version history.
-- [PLATFORM_SETUP.md](PLATFORM_SETUP.md) — platform and Google Drive setup.
-- [PORTABLE_MODE.md](PORTABLE_MODE.md) — portable data, migration, and backups.
-- [SECURITY_NOTES.md](SECURITY_NOTES.md) — security boundaries.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution rules.
-- [docs/MAINTAINER_RELEASE_GUIDE.md](docs/MAINTAINER_RELEASE_GUIDE.md) — release procedure.
-
-## Bug and vulnerability reports
-
-A GitHub Issue should include the application version, Windows version, the exact action performed, the visible error, and sanitized logs or screenshots. Never attach real tokens, secrets, `Data`, databases, or portable keys.
+Updater зберігає `Data` і `Tools`. Поточний реліз: **v2.0.0-rc28**.

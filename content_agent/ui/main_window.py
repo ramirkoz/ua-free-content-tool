@@ -3161,47 +3161,6 @@ class MainWindow:
             return
         webbrowser.open(urls[0])
 
-    def _copy_var_value(self, variable: object, label: str = "Токен") -> None:
-        try:
-            value = str(variable.get()).strip()  # type: ignore[attr-defined]
-        except Exception:
-            value = ""
-        if not value:
-            self.set_status(f"{label}: значення порожнє")
-            return
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(value)
-            self.root.update_idletasks()
-            self.set_status(f"{label}: скопійовано в буфер обміну")
-        except Exception as exc:
-            self._show_error(exc)
-
-    def _copy_settings_secret(self, key: str, label: str = "Токен") -> None:
-        variable = getattr(self, "settings_vars", {}).get(key)
-        self._copy_var_value(variable, label)
-
-    def _copy_selected_facebook_page_token(self) -> None:
-        tree = getattr(self, "meta_pages_tree", None)
-        if tree is None:
-            return
-        selected = tree.selection()
-        if not selected:
-            self.set_status("Оберіть Facebook-сторінку")
-            return
-        page_id = str(selected[0])
-        page = next((item for item in getattr(self, "meta_pages", []) if str(item.id) == page_id), None)
-        if page is None or not str(page.access_token or "").strip():
-            self.set_status("Для вибраної Facebook-сторінки токен відсутній")
-            return
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(str(page.access_token).strip())
-            self.root.update_idletasks()
-            self.set_status(f"Facebook Page token «{page.name}»: скопійовано")
-        except Exception as exc:
-            self._show_error(exc)
-
     def _build_settings_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(tab, text="Налаштування")
@@ -3396,32 +3355,31 @@ class MainWindow:
         meta = ttk.LabelFrame(platforms, text="Facebook Pages", padding=8)
         meta.pack(fill="x", pady=4)
         self.settings_vars["meta_user_access_token"] = tk.StringVar(value=self.config.meta_user_access_token)
-        ttk.Label(meta, text="Facebook User Access Token").grid(row=0, column=0, sticky="w")
-        ttk.Entry(meta, textvariable=self.settings_vars["meta_user_access_token"], show="•", width=72).grid(
-            row=1, column=0, columnspan=2, sticky="ew"
-        )
-        ttk.Button(meta, text="Копіювати токен", command=lambda: self._copy_settings_secret("meta_user_access_token", "Facebook User Access Token")).grid(
-            row=1, column=2, sticky="w", padx=(8, 0)
-        )
-        meta_actions = ttk.Frame(meta)
-        meta_actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        token_row = ttk.Frame(meta)
+        token_row.grid(row=0, column=0, columnspan=3, sticky="ew")
+        token_row.columnconfigure(0, weight=1)
+        ttk.Label(token_row, text="Підключення Meta").grid(row=0, column=0, sticky="w")
+        ttk.Label(token_row, textvariable=self.meta_status_var, foreground="#555").grid(row=1, column=0, sticky="w", pady=(2, 0))
+        meta_actions = ttk.Frame(token_row)
+        meta_actions.grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
+        ttk.Button(meta_actions, text="Підключити / оновити сторінки", command=self.connect_meta).pack(side="left")
         ttk.Button(
-            meta_actions,
-            text="Відкрити Graph API Explorer",
+            meta_actions, text="Налаштування Meta",
             command=lambda: webbrowser.open("https://developers.facebook.com/tools/explorer/", new=2),
-        ).pack(side="left")
-        ttk.Button(meta_actions, text="Знайти сторінки", command=self.connect_meta).pack(side="left", padx=(6, 0))
-        ttk.Label(meta, textvariable=self.meta_status_var, foreground="#555").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(5, 2)
-        )
+        ).pack(side="left", padx=(6, 0))
         ttk.Label(
             meta,
             text=(
-                "Усі знайдені сторінки автоматично стають доступними в редакторі. Якщо вказані App ID і App Secret, "
-                "короткий токен з Graph API Explorer спочатку буде обміняно на довготривалий."
+                "Токени сторінок є внутрішніми службовими даними: програма отримує, шифрує й використовує їх сама. "
+                "Ручне копіювання page token не потрібне."
             ),
-            foreground="#666",
-        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(3, 4))
+            foreground="#666", wraplength=1050,
+        ).grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 4))
+        # User token remains available for setup but no clipboard action is exposed.
+        ttk.Label(meta, text="User Access Token (лише для підключення/відновлення)").grid(row=2, column=0, sticky="w")
+        ttk.Entry(meta, textvariable=self.settings_vars["meta_user_access_token"], show="•", width=72).grid(
+            row=3, column=0, columnspan=3, sticky="ew", pady=(2, 6)
+        )
         self.meta_pages_tree = ttk.Treeview(meta, columns=("name", "id"), show="headings", height=5)
         self.meta_pages_tree.heading("name", text="Сторінка")
         self.meta_pages_tree.heading("id", text="ID")
@@ -3429,11 +3387,8 @@ class MainWindow:
         self.meta_pages_tree.column("id", width=230, anchor="w")
         meta_pages_scroll = ttk.Scrollbar(meta, orient="vertical", command=self.meta_pages_tree.yview)
         self.meta_pages_tree.configure(yscrollcommand=meta_pages_scroll.set)
-        self.meta_pages_tree.grid(row=5, column=0, columnspan=2, sticky="ew")
-        meta_pages_scroll.grid(row=5, column=2, sticky="ns")
-        ttk.Button(meta, text="Копіювати токен вибраної сторінки", command=self._copy_selected_facebook_page_token).grid(
-            row=6, column=0, columnspan=2, sticky="w", pady=(6, 0)
-        )
+        self.meta_pages_tree.grid(row=4, column=0, columnspan=2, sticky="ew")
+        meta_pages_scroll.grid(row=4, column=2, sticky="ns")
         meta.columnconfigure(0, weight=1)
         self.meta_pages = [
             MetaPage(str(row.get("id", "")), str(row.get("name", "")), str(row.get("access_token", "")))
@@ -3447,9 +3402,6 @@ class MainWindow:
         ttk.Label(threads, text="Threads access token").grid(row=0, column=0, sticky="w")
         ttk.Entry(threads, textvariable=self.settings_vars["threads_token"], show="•", width=70).grid(
             row=1, column=0, sticky="ew"
-        )
-        ttk.Button(threads, text="Копіювати токен", command=lambda: self._copy_settings_secret("threads_token", "Threads token")).grid(
-            row=1, column=1, sticky="w", padx=(8, 0)
         )
         threads_actions = ttk.Frame(threads)
         threads_actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
@@ -3489,9 +3441,6 @@ class MainWindow:
         ttk.Entry(linkedin, textvariable=self.settings_vars["linkedin_token"], show="•", width=70).grid(
             row=1, column=0, sticky="ew"
         )
-        ttk.Button(linkedin, text="Копіювати токен", command=lambda: self._copy_settings_secret("linkedin_token", "LinkedIn Access Token")).grid(
-            row=1, column=1, sticky="w", padx=(8, 0)
-        )
         linkedin_actions = ttk.Frame(linkedin)
         linkedin_actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Button(
@@ -3512,9 +3461,6 @@ class MainWindow:
         ttk.Label(telegram, text="Bot token").grid(row=0, column=0, sticky="w")
         ttk.Entry(telegram, textvariable=self.settings_vars["telegram_bot_token"], show="•", width=48).grid(
             row=1, column=0, sticky="ew", padx=(0, 8)
-        )
-        ttk.Button(telegram, text="Копіювати токен", command=lambda: self._copy_settings_secret("telegram_bot_token", "Telegram Bot token")).grid(
-            row=1, column=2, sticky="w", padx=(8, 0)
         )
         ttk.Label(telegram, text="Канал, наприклад @uafree_org").grid(row=0, column=1, sticky="w")
         ttk.Entry(telegram, textvariable=self.settings_vars["telegram_chat_id"], width=34).grid(
