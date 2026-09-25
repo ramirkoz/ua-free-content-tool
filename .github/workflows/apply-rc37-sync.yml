@@ -1,0 +1,27 @@
+name: Apply RC37 source snapshot
+on:
+  push:
+    branches: [rc37-restore-profile-schedules-and-topic-search]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rc37-restore-profile-schedules-and-topic-search
+      - name: Apply exact RC37 source snapshot
+        shell: bash
+        run: |
+          if [ ! -f .sync/rc37_source.zip.b64 ]; then exit 0; fi
+          base64 -d .sync/rc37_source.zip.b64 > /tmp/rc37-source.zip
+          unzip -o /tmp/rc37-source.zip -d .
+          rm -rf .sync
+          rm -f .github/workflows/apply-rc37-sync.yml
+          git config user.name "content-creator-sync"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "RC37: restore per-profile schedules and harden topic search"
+          git push origin HEAD:rc37-restore-profile-schedules-and-topic-search
