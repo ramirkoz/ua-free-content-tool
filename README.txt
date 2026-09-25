@@ -1,16 +1,21 @@
-UA FREE Content Tool v2.0.0-rc35 — MANUAL TEST
+UA FREE Content Tool v2.0.0-rc36 — MANUAL TEST
 
 Cumulative Fact Guard hotfix. Import from RC33 Data on first launch.
 Supervisor keeps a stable instance identity and publishes a CURRENT pointer in Google Drive.
 Old logs/cache/Tools/runtime state are not imported.
 
 RC34 fixes retained:
-- apostrophe-grouped thousands (1’279, 609’278, 1'279, 1ʼ279) normalize to 1279/609278;
-- short units m/м and similar tokens require a word boundary, so “25 моделей” is not misread as “25 m”.
+- apostrophe-grouped thousands normalize correctly;
+- short units m/м no longer consume the first character of ordinary words.
 
-RC35:
-- valid Roman numerals such as XXI are normalized as numeric facts (XXI = 21);
-- Roman numerals are no longer treated as Latin names/models;
-- mismatched Roman values remain blocked (XXII does not match source 21).
+RC35 retained:
+- valid Roman numerals normalize to numeric facts;
+- Roman numerals are not treated as Latin names/models.
 
-Fact Guard strictness remains enabled.
+RC36:
+- ordinary English words and sentence-initial Title Case words are no longer treated as model/entity facts;
+- Fact Guard checks only high-confidence structured Latin identifiers such as OpenAI, GPT-5.4, RTX-5090 and short acronyms;
+- Unicode numeric forms such as 💯 and keycap digits normalize before numeric comparison;
+- genuinely new structured identifiers remain blocked.
+
+Fact Guard remains strict for numbers, structured identifiers, high-risk strengthening and unsupported uncertainty.
