@@ -40,14 +40,12 @@ _SUFFIX_TOKEN_RE = re.compile(
     r"dollars?|євро|евро|euros?|₴|\$|€"
 )
 _LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
-_TITLE_PHRASE_RE = re.compile(r"\b(?:[A-Z][a-z]{1,}\s+){2,5}[A-Z][a-z]{1,}\b")
 _ROMAN_CANDIDATE_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
 _KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
 _GENERIC_LATIN = frozenset({
     "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
     "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
 })
-_LEADING_TITLE_ARTICLES = frozenset({"the", "a", "an"})
 _UNICODE_NUMBER_ALIASES = {"💯": "100", "🔟": "10"}
 _METADATA_PREFIXES = (
     "ДЖЕРЕЛО ",
@@ -148,12 +146,6 @@ def _normalize_numeric_text(value: str) -> str:
         text = text.replace(token, replacement)
     return text
 
-
-def _normalize_title_phrase(value: str) -> str:
-    parts = [part.casefold() for part in str(value or "").split() if part.strip()]
-    while parts and parts[0] in _LEADING_TITLE_ARTICLES:
-        parts.pop(0)
-    return " ".join(parts)
 
 
 def _is_strong_latin_token(token: str) -> bool:
@@ -314,10 +306,6 @@ def extract_latin_entities(value: str) -> set[str]:
     for token in _LATIN_TOKEN_RE.findall(text):
         if _is_strong_latin_token(token):
             result.add(token.casefold())
-    for phrase in _TITLE_PHRASE_RE.findall(text):
-        normalized = _normalize_title_phrase(phrase)
-        if normalized:
-            result.add(normalized)
     return result
 
 
