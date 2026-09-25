@@ -531,10 +531,7 @@ class AIEngineV13Mixin:
                     "topic_search_legacy_ids_skipped",
                     language=self.config.ui_language,  # type: ignore[attr-defined]
                     group_id=anchor_id,
-                    payload={
-                        "count": len(skipped_legacy_ids),
-                        "examples": skipped_legacy_ids[:8],
-                    },
+                    payload={"count": len(skipped_legacy_ids), "examples": skipped_legacy_ids[:8]},
                 )
             except Exception:
                 pass
