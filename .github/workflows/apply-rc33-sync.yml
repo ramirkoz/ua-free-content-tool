@@ -1,0 +1,27 @@
+name: Apply accepted RC33 source snapshot
+on:
+  push:
+    branches: [sync-rc33-accepted]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync-rc33-accepted
+      - name: Apply exact source snapshot
+        shell: bash
+        run: |
+          if [ ! -f .sync/rc33_source.zip.b64 ]; then exit 0; fi
+          base64 -d .sync/rc33_source.zip.b64 > /tmp/rc33-source.zip
+          unzip -o /tmp/rc33-source.zip -d .
+          rm -rf .sync
+          rm -f .github/workflows/apply-rc33-sync.yml
+          git config user.name "content-creator-sync"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "RC33: sync accepted source snapshot"
+          git push origin HEAD:sync-rc33-accepted
