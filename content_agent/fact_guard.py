@@ -41,6 +41,7 @@ _SUFFIX_TOKEN_RE = re.compile(
 _LATIN_ENTITY_RE = re.compile(
     r"\b(?:[A-Z][A-Za-z0-9]*(?:[._+\-/][A-Za-z0-9]+)*|[A-Z]{2,}[A-Z0-9._+\-/]*|[A-Za-z]+\d+[A-Za-z0-9._+\-/]*)\b"
 )
+_ROMAN_CANDIDATE_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
 _GENERIC_LATIN = frozenset({
     "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
     "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
@@ -154,6 +155,40 @@ def _parse_decimal(raw: str) -> Decimal | None:
         return None
 
 
+def _int_to_roman(value: int) -> str:
+    if value <= 0 or value > 3999:
+        return ""
+    pairs = (
+        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    )
+    out: list[str] = []
+    remaining = int(value)
+    for amount, token in pairs:
+        while remaining >= amount:
+            out.append(token)
+            remaining -= amount
+    return "".join(out)
+
+
+def _roman_to_int(token: str) -> int | None:
+    clean = str(token or "").strip().upper()
+    if len(clean) < 2 or not re.fullmatch(r"[IVXLCDM]+", clean):
+        return None
+    values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    total = 0
+    for index, char in enumerate(clean):
+        value = values[char]
+        if index + 1 < len(clean) and value < values[clean[index + 1]]:
+            total -= value
+        else:
+            total += value
+    if not 0 < total <= 3999 or _int_to_roman(total) != clean:
+        return None
+    return total
+
+
 def _decimal_text(value: Decimal) -> str:
     if value == value.to_integral():
         return str(int(value))
@@ -220,11 +255,16 @@ def _factual_evidence(value: str) -> str:
 
 
 def extract_numbers(value: str) -> set[str]:
+    text = str(value or "")
     result: set[str] = set()
-    for match in _NUMBER_RE.finditer(str(value or "")):
+    for match in _NUMBER_RE.finditer(text):
         canonical = _canon_number_match(match)
         if canonical:
             result.add(canonical)
+    for match in _ROMAN_CANDIDATE_RE.finditer(text):
+        roman_value = _roman_to_int(match.group(0))
+        if roman_value is not None:
+            result.add(str(roman_value))
     return result
 
 
@@ -233,6 +273,8 @@ def extract_latin_entities(value: str) -> set[str]:
     for token in _LATIN_ENTITY_RE.findall(str(value or "")):
         clean = token.strip(".,:;!?()[]{}«»\"'")
         if len(clean) < 3 or clean.upper() in _GENERIC_LATIN:
+            continue
+        if _roman_to_int(clean) is not None:
             continue
         if clean[0].isupper() and (any(ch.isupper() for ch in clean[1:]) or any(ch.isdigit() for ch in clean) or any(ch in "._+-/" for ch in clean)):
             result.add(clean.casefold())
