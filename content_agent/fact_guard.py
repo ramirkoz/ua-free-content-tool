@@ -8,7 +8,7 @@ _NUMBER_RE = re.compile(
     r"(?<![\w])"
     r"(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
     r"(?P<number>"
-    r"(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?)"
+    r"(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?)"
     r")"
     r"(?P<suffix>"
     r"(?:\s*(?:"
@@ -16,7 +16,10 @@ _NUMBER_RE = re.compile(
     r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
     r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
     r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
-    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м|k(?![a-zа-яіїєґ])|"
+    r"km(?![a-zа-яіїєґ])|км(?![a-zа-яіїєґ])|kg(?![a-zа-яіїєґ])|кг(?![a-zа-яіїєґ])|"
+    r"gb(?![a-zа-яіїєґ])|гб(?![a-zа-яіїєґ])|mb(?![a-zа-яіїєґ])|мб(?![a-zа-яіїєґ])|"
+    r"tb(?![a-zа-яіїєґ])|тб(?![a-zа-яіїєґ])|mw(?![a-zа-яіїєґ])|мвт(?![a-zа-яіїєґ])|"
+    r"gw(?![a-zа-яіїєґ])|гвт(?![a-zа-яіїєґ])|m(?![a-zа-яіїєґ])|м(?![a-zа-яіїєґ])|k(?![a-zа-яіїєґ])|"
     r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
     r"dollars?|євро|евро|euros?|₴|\$|€"
     r")){0,2}"
@@ -28,7 +31,10 @@ _SUFFIX_TOKEN_RE = re.compile(
     r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
     r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
     r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
-    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м|k(?![a-zа-яіїєґ])|"
+    r"km(?![a-zа-яіїєґ])|км(?![a-zа-яіїєґ])|kg(?![a-zа-яіїєґ])|кг(?![a-zа-яіїєґ])|"
+    r"gb(?![a-zа-яіїєґ])|гб(?![a-zа-яіїєґ])|mb(?![a-zа-яіїєґ])|мб(?![a-zа-яіїєґ])|"
+    r"tb(?![a-zа-яіїєґ])|тб(?![a-zа-яіїєґ])|mw(?![a-zа-яіїєґ])|мвт(?![a-zа-яіїєґ])|"
+    r"gw(?![a-zа-яіїєґ])|гвт(?![a-zа-яіїєґ])|m(?![a-zа-яіїєґ])|м(?![a-zа-яіїєґ])|k(?![a-zа-яіїєґ])|"
     r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
     r"dollars?|євро|евро|euros?|₴|\$|€"
 )
@@ -133,11 +139,15 @@ class FactGuardResult:
 
 def _parse_decimal(raw: str) -> Decimal | None:
     value = str(raw or "").strip().replace("\u00a0", " ").replace("\u202f", " ")
-    compact = value.replace(" ", "")
-    if re.fullmatch(r"[1-9]\d{0,2}(?:,\d{3})+", compact):
-        compact = compact.replace(",", "")
-    elif "," in compact and "." not in compact:
-        compact = compact.replace(",", ".")
+    # Thousands separators seen in real feeds include spaces, commas and multiple
+    # apostrophe characters (ASCII ', U+2019 ’, U+02BC ʼ). Treat them as one
+    # quantity only when groups after the separator contain exactly three digits.
+    if re.fullmatch(r"[1-9]\d{0,2}(?:[ ,\'’ʼ]\d{3})+", value):
+        compact = re.sub(r"[ ,\'’ʼ]", "", value)
+    else:
+        compact = value.replace(" ", "")
+        if "," in compact and "." not in compact:
+            compact = compact.replace(",", ".")
     try:
         return Decimal(compact)
     except (InvalidOperation, ValueError):
