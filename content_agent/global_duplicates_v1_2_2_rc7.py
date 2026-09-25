@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Callable, Iterable
@@ -55,6 +56,26 @@ def _parse_time(group: NewsGroup) -> float | None:
         return None
 
 
+def _canonical_integer_token(token: str) -> str | None:
+    """Return an ASCII decimal integer for Unicode digit-only tokens.
+
+    str.isdigit() accepts characters such as superscript digits that int()
+    rejects. Duplicate prefilter arithmetic must never call int() on the raw
+    token from a feed.
+    """
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    digits: list[str] = []
+    for char in raw:
+        try:
+            value = unicodedata.digit(char)
+        except (TypeError, ValueError):
+            return None
+        digits.append(str(int(value)))
+    return "".join(digits) if digits else None
+
+
 def _title_bigrams(tokens: list[str]) -> list[str]:
     return [f"{left}\x1f{right}" for left, right in zip(tokens, tokens[1:]) if left != right]
 
@@ -101,7 +122,12 @@ def _fast_candidate_edges(
         title_sets.append(title_set)
         body_sets.append(body_set)
         token_sets.append(all_tokens)
-        numbers.append({token for token in all_tokens if token.isdigit() and len(token) >= 2})
+        canonical_numbers: set[str] = set()
+        for token in all_tokens:
+            canonical = _canonical_integer_token(token)
+            if canonical is not None and len(canonical) >= 2:
+                canonical_numbers.add(canonical)
+        numbers.append(canonical_numbers)
         times.append(_parse_time(group))
         title_df.update(title_set)
         body_df.update(body_set)
