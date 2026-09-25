@@ -26,7 +26,7 @@ class MainWindow(Rc9MainWindow):
         self.worker = Rc10PublicationWorker(
             self.db,
             self.publisher_factory,
-            inter_target_delay_seconds=5.0,
+            inter_target_delay_seconds=0.0,
             progress_callback=self._publication_progress_from_worker,
             result_callback=self._publication_result_from_worker,
             managed_media_registry=self.managed_media_registry,

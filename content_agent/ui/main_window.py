@@ -83,6 +83,7 @@ from ..scheduling import KYIV, next_publish_slot, parse_iso
 from ..topic_search import build_topic_prompt, merge_local_and_ollama, parse_topic_matches
 from ..trends import ThreadsTrendSample, check_threads_keyword_access, threads_keyword_sample
 from ..worker import PublicationWorker, WorkerResult
+from ..version import APP_VERSION
 from .editing import install_edit_support
 from .exclusions_dialog import ContentExclusionsDialog
 from .queue_migration_dialog import QueueMigrationDialog
@@ -265,7 +266,7 @@ class MainWindow:
         self.worker = PublicationWorker(
             database,
             self.publisher_factory,
-            inter_target_delay_seconds=5.0,
+            inter_target_delay_seconds=0.0,
             max_automatic_attempts=3,
             progress_callback=self._publication_progress_from_worker,
             result_callback=self._publication_result_from_worker,
@@ -277,7 +278,7 @@ class MainWindow:
             daemon=True,
         )
 
-        root.title("UA FREE Content Tool — v1.3.1-rc7")
+        root.title(f"UA FREE Content Tool — v{APP_VERSION}")
         self._apply_ui_font_size(config.ui_font_size)
         root.geometry("1440x920")
         root.minsize(900, 650)
@@ -836,7 +837,7 @@ class MainWindow:
             else self.config.ui_language
         )
         self.config.ui_language = language
-        self.root.title("UA FREE Content Tool — v1.3.1-rc7")
+        self.root.title(f"UA FREE Content Tool — v{APP_VERSION}")
         localize_widget_tree(self.root, language)
         for variable in (getattr(self, 'status_var', None), getattr(self, 'operation_var', None), getattr(self, 'operation_detail_var', None)):
             if variable is not None:
@@ -3161,6 +3162,98 @@ class MainWindow:
             return
         webbrowser.open(urls[0])
 
+    def _copy_secret_value(self, variable: tk.StringVar, label: str = "секрет") -> None:
+        value = str(variable.get() or "")
+        if not value:
+            self.set_status(f"{label}: значення порожнє")
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.root.update_idletasks()
+            self.set_status(f"{label}: скопійовано; буфер буде очищено через 30 секунд")
+
+            def clear_if_unchanged(expected=value):
+                try:
+                    current = self.root.clipboard_get()
+                    if current == expected:
+                        self.root.clipboard_clear()
+                        self.root.update_idletasks()
+                except Exception:
+                    pass
+
+            self.root.after(30000, clear_if_unchanged)
+        except Exception as exc:
+            self._show_error(exc)
+
+    def _secret_field(self, parent, variable: tk.StringVar, *, width: int = 62, label: str = "секрет"):
+        box = ttk.Frame(parent)
+        entry = ttk.Entry(box, textvariable=variable, show="•", width=width)
+        entry.pack(side="left", fill="x", expand=True)
+
+        def toggle():
+            visible = str(entry.cget("show") or "") == ""
+            entry.configure(show="•" if visible else "")
+            reveal.configure(text="👁" if visible else "🙈")
+
+        reveal = ttk.Button(box, text="👁", width=3, command=toggle)
+        reveal.pack(side="left", padx=(4, 2))
+        ttk.Button(box, text="Копіювати", command=lambda: self._copy_secret_value(variable, label)).pack(side="left")
+        return box
+
+    def open_meta_manager(self) -> None:
+        existing = getattr(self, "_meta_manager_window", None)
+        try:
+            if existing is not None and existing.winfo_exists():
+                existing.lift(); existing.focus_force(); return
+        except Exception:
+            pass
+
+        win = tk.Toplevel(self.root)
+        self._meta_manager_window = win
+        win.title("Meta · керування підключенням")
+        win.geometry("920x560")
+        win.minsize(760, 440)
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Meta / Facebook Pages", font="TkHeadingFont").pack(anchor="w")
+        ttk.Label(body, textvariable=self.meta_status_var, foreground="#555", wraplength=860).pack(anchor="w", pady=(4, 10))
+
+        token_box = ttk.LabelFrame(body, text="User Access Token · лише підключення / відновлення", padding=8)
+        token_box.pack(fill="x", pady=(0, 10))
+        self._secret_field(token_box, self.settings_vars["meta_user_access_token"], width=72, label="Meta User Access Token").pack(fill="x")
+        ttk.Label(
+            token_box,
+            text="Page tokens не показуються і не копіюються: це внутрішні службові credentials програми.",
+            foreground="#666",
+        ).pack(anchor="w", pady=(6, 0))
+
+        actions = ttk.Frame(body)
+        actions.pack(fill="x", pady=(0, 8))
+        ttk.Button(actions, text="Підключити / оновити сторінки", command=self.connect_meta).pack(side="left")
+        ttk.Button(actions, text="Graph API Explorer", command=lambda: webbrowser.open("https://developers.facebook.com/tools/explorer/", new=2)).pack(side="left", padx=(6,0))
+
+        table = ttk.Frame(body)
+        table.pack(fill="both", expand=True)
+        tree = ttk.Treeview(table, columns=("name","id"), show="headings", height=12)
+        tree.heading("name", text="Сторінка"); tree.heading("id", text="ID")
+        tree.column("name", width=520, anchor="w"); tree.column("id", width=250, anchor="w")
+        scroll = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side="left", fill="both", expand=True); scroll.pack(side="right", fill="y")
+        self.meta_pages_tree = tree
+        self._refresh_meta_pages_view()
+
+        def close():
+            try:
+                if getattr(self, "meta_pages_tree", None) is tree:
+                    delattr(self, "meta_pages_tree")
+            except Exception:
+                pass
+            self._meta_manager_window = None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", close)
+
     def _build_settings_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(tab, text="Налаштування")
@@ -3323,9 +3416,7 @@ class MainWindow:
             row=1, column=0, sticky="ew", padx=(0, 8)
         )
         ttk.Label(facebook_app, text="Facebook App Secret").grid(row=0, column=1, sticky="w")
-        ttk.Entry(
-            facebook_app, textvariable=self.settings_vars["facebook_app_secret"], show="•", width=48
-        ).grid(row=1, column=1, sticky="ew")
+        self._secret_field(facebook_app, self.settings_vars["facebook_app_secret"], width=40, label="Facebook App Secret").grid(row=1, column=1, sticky="ew")
         ttk.Button(
             facebook_app, text="Відкрити налаштування застосунку",
             command=lambda: webbrowser.open("https://developers.facebook.com/apps/", new=2),
@@ -3342,9 +3433,7 @@ class MainWindow:
             row=1, column=0, sticky="ew", padx=(0, 8)
         )
         ttk.Label(threads_app, text="Threads App Secret").grid(row=0, column=1, sticky="w")
-        ttk.Entry(
-            threads_app, textvariable=self.settings_vars["threads_app_secret"], show="•", width=48
-        ).grid(row=1, column=1, sticky="ew")
+        self._secret_field(threads_app, self.settings_vars["threads_app_secret"], width=40, label="Threads App Secret").grid(row=1, column=1, sticky="ew")
         ttk.Button(
             threads_app, text="Відкрити налаштування застосунку",
             command=lambda: webbrowser.open("https://developers.facebook.com/apps/", new=2),
@@ -3352,57 +3441,30 @@ class MainWindow:
         threads_app.columnconfigure(0, weight=1)
         threads_app.columnconfigure(1, weight=1)
 
-        meta = ttk.LabelFrame(platforms, text="Facebook Pages", padding=8)
+        meta = ttk.LabelFrame(platforms, text="Meta / Facebook Pages", padding=8)
         meta.pack(fill="x", pady=4)
         self.settings_vars["meta_user_access_token"] = tk.StringVar(value=self.config.meta_user_access_token)
-        token_row = ttk.Frame(meta)
-        token_row.grid(row=0, column=0, columnspan=3, sticky="ew")
-        token_row.columnconfigure(0, weight=1)
-        ttk.Label(token_row, text="Підключення Meta").grid(row=0, column=0, sticky="w")
-        ttk.Label(token_row, textvariable=self.meta_status_var, foreground="#555").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        meta_actions = ttk.Frame(token_row)
-        meta_actions.grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
-        ttk.Button(meta_actions, text="Підключити / оновити сторінки", command=self.connect_meta).pack(side="left")
-        ttk.Button(
-            meta_actions, text="Налаштування Meta",
-            command=lambda: webbrowser.open("https://developers.facebook.com/tools/explorer/", new=2),
-        ).pack(side="left", padx=(6, 0))
-        ttk.Label(
-            meta,
-            text=(
-                "Токени сторінок є внутрішніми службовими даними: програма отримує, шифрує й використовує їх сама. "
-                "Ручне копіювання page token не потрібне."
-            ),
-            foreground="#666", wraplength=1050,
-        ).grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 4))
-        # User token remains available for setup but no clipboard action is exposed.
-        ttk.Label(meta, text="User Access Token (лише для підключення/відновлення)").grid(row=2, column=0, sticky="w")
-        ttk.Entry(meta, textvariable=self.settings_vars["meta_user_access_token"], show="•", width=72).grid(
-            row=3, column=0, columnspan=3, sticky="ew", pady=(2, 6)
-        )
-        self.meta_pages_tree = ttk.Treeview(meta, columns=("name", "id"), show="headings", height=5)
-        self.meta_pages_tree.heading("name", text="Сторінка")
-        self.meta_pages_tree.heading("id", text="ID")
-        self.meta_pages_tree.column("name", width=420, anchor="w")
-        self.meta_pages_tree.column("id", width=230, anchor="w")
-        meta_pages_scroll = ttk.Scrollbar(meta, orient="vertical", command=self.meta_pages_tree.yview)
-        self.meta_pages_tree.configure(yscrollcommand=meta_pages_scroll.set)
-        self.meta_pages_tree.grid(row=4, column=0, columnspan=2, sticky="ew")
-        meta_pages_scroll.grid(row=4, column=2, sticky="ns")
-        meta.columnconfigure(0, weight=1)
         self.meta_pages = [
             MetaPage(str(row.get("id", "")), str(row.get("name", "")), str(row.get("access_token", "")))
             for row in configured_facebook_pages(self.config)
         ]
-        self._refresh_meta_pages_view()
+        meta.columnconfigure(0, weight=1)
+        ttk.Label(meta, textvariable=self.meta_status_var, foreground="#555", wraplength=1050).grid(row=0, column=0, sticky="w")
+        meta_actions = ttk.Frame(meta)
+        meta_actions.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        ttk.Button(meta_actions, text="Оновити сторінки", command=self.connect_meta).pack(side="left")
+        ttk.Button(meta_actions, text="Керувати Meta", command=self.open_meta_manager).pack(side="left", padx=(6, 0))
+        ttk.Label(
+            meta,
+            text="Токени сторінок зберігаються всередині й не виносяться в основні налаштування.",
+            foreground="#666", wraplength=1050,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
         threads = ttk.LabelFrame(platforms, text="Threads", padding=8)
         threads.pack(fill="x", pady=4)
         self.settings_vars["threads_token"] = tk.StringVar(value=self.config.threads_token)
         ttk.Label(threads, text="Threads access token").grid(row=0, column=0, sticky="w")
-        ttk.Entry(threads, textvariable=self.settings_vars["threads_token"], show="•", width=70).grid(
-            row=1, column=0, sticky="ew"
-        )
+        self._secret_field(threads, self.settings_vars["threads_token"], width=62, label="Threads access token").grid(row=1, column=0, sticky="ew")
         threads_actions = ttk.Frame(threads)
         threads_actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Button(threads_actions, text="Визначити профіль", command=self.connect_threads).pack(side="left")
@@ -3438,9 +3500,7 @@ class MainWindow:
         linkedin.pack(fill="x", pady=4)
         self.settings_vars["linkedin_token"] = tk.StringVar(value=self.config.linkedin_token)
         ttk.Label(linkedin, text="LinkedIn Access Token").grid(row=0, column=0, sticky="w")
-        ttk.Entry(linkedin, textvariable=self.settings_vars["linkedin_token"], show="•", width=70).grid(
-            row=1, column=0, sticky="ew"
-        )
+        self._secret_field(linkedin, self.settings_vars["linkedin_token"], width=62, label="LinkedIn Access Token").grid(row=1, column=0, sticky="ew")
         linkedin_actions = ttk.Frame(linkedin)
         linkedin_actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Button(
@@ -3459,9 +3519,9 @@ class MainWindow:
         self.settings_vars["telegram_bot_token"] = tk.StringVar(value=self.config.telegram_bot_token)
         self.settings_vars["telegram_chat_id"] = tk.StringVar(value=self.config.telegram_chat_id)
         ttk.Label(telegram, text="Bot token").grid(row=0, column=0, sticky="w")
-        ttk.Entry(telegram, textvariable=self.settings_vars["telegram_bot_token"], show="•", width=48).grid(
-            row=1, column=0, sticky="ew", padx=(0, 8)
-        )
+        self._secret_field(
+            telegram, self.settings_vars["telegram_bot_token"], width=48, label="Telegram Bot token"
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 8))
         ttk.Label(telegram, text="Канал, наприклад @uafree_org").grid(row=0, column=1, sticky="w")
         ttk.Entry(telegram, textvariable=self.settings_vars["telegram_chat_id"], width=34).grid(
             row=1, column=1, sticky="ew"
@@ -3484,9 +3544,9 @@ class MainWindow:
             row=1, column=0, sticky="ew", padx=(0, 8)
         )
         ttk.Label(google, text="Client secret").grid(row=0, column=1, sticky="w")
-        ttk.Entry(google, textvariable=self.settings_vars["google_client_secret"], show="•", width=28).grid(
-            row=1, column=1, sticky="ew"
-        )
+        self._secret_field(
+            google, self.settings_vars["google_client_secret"], width=28, label="Google OAuth Client secret"
+        ).grid(row=1, column=1, sticky="ew")
         google_actions = ttk.Frame(google)
         google_actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(
@@ -3599,11 +3659,17 @@ class MainWindow:
         self.root.after(400, lambda: self.scan_ollama_models(show_errors=False))
 
     def _refresh_meta_pages_view(self) -> None:
-        if not hasattr(self, "meta_pages_tree"):
+        tree = getattr(self, "meta_pages_tree", None)
+        if tree is None:
             return
-        self.meta_pages_tree.delete(*self.meta_pages_tree.get_children())
-        for page in self.meta_pages:
-            self.meta_pages_tree.insert("", "end", iid=page.id, values=(page.name, page.id))
+        try:
+            if not tree.winfo_exists():
+                return
+            tree.delete(*tree.get_children())
+            for page in self.meta_pages:
+                tree.insert("", "end", iid=page.id, values=(page.name, page.id))
+        except tk.TclError:
+            return
 
     def _meta_status_text(self) -> str:
         pages = configured_facebook_pages(self.config)

@@ -9,7 +9,9 @@ logger = logging.getLogger("content_agent.worker.v14_rc10")
 
 
 class Rc10PublicationWorker(V14PublicationWorker):
-    """Publish-now batches jump ahead of the normal scheduler without moving it."""
+    """RC32: publish due targets continuously; real platform limits decide pacing."""
+
+    CATCHUP_GAP_SECONDS = 0
 
     def run_once(self):
         # RC4 normally inserts a five-minute pause between overdue packages. A

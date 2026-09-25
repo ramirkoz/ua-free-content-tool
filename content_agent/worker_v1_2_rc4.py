@@ -145,9 +145,11 @@ class Rc4PublicationWorker(ManagedMediaPublicationWorker):
     def _run_once_locked(self) -> WorkerResult:
         try:
             result = super()._run_once_locked()
-            if result.completed and result.sent_targets > 0 and self._due_backlog_exists():
+            if result.completed and result.sent_targets > 0 and self._due_backlog_exists() and self.CATCHUP_GAP_SECONDS > 0:
                 self._catchup_not_before = time.monotonic() + self.CATCHUP_GAP_SECONDS
-                self._notify("Є прострочені новини. Наступний пакет буде відправлено не раніше ніж через 5 хвилин.")
+                self._notify(
+                    f"Є прострочені новини. Наступний пакет буде відправлено не раніше ніж через {int(self.CATCHUP_GAP_SECONDS)} с."
+                )
             return result
         finally:
             proxy = self._active_drive_proxy

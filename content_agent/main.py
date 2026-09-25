@@ -85,8 +85,9 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
         wants_import = messagebox.askyesno(
             "UA FREE Content Tool · перший запуск",
             "Імпортувати потрібні дані зі старої версії?\n\n"
-            "Перенесемо джерела, групи, матеріали, чергу публікацій, редакційну пам’ять і налаштування. "
-            "Логи, кеш, старі backups, Codex/runtime та інший технічний мотлох не копіюються.",
+            "Перенесемо джерела, групи, матеріали, чергу публікацій, редакційну пам’ять, "
+            "налаштування соцмереж та AI Router/OpenRouter credentials. "
+            "Логи, кеш, cooldown/state, supervisor/recovery, старі backups, Codex/runtime і Tools не копіюються.",
             parent=root,
         )
         if wants_import:
@@ -211,7 +212,22 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
 
         database, config, migration = payload
         if migration is not None:
-            logger.info("Clean portable data import completed from %s.", migration.source)
+            logger.info(
+                "Clean portable data import completed from %s; config=%s files=%s warnings=%s.",
+                migration.source, migration.config_imported, migration.imported_files, migration.warnings,
+            )
+            table_rows = sum(int(value or 0) for value in migration.tables.values())
+            summary = (
+                "Чистий імпорт завершено.\n\n"
+                f"Записів у робочих таблицях: {table_rows}\n"
+                f"Основні налаштування: {'перенесено' if migration.config_imported else 'не знайдено'}\n"
+                f"Додаткові налаштування/credentials: {len(migration.imported_files)} файлів\n"
+                "Codex runtime: не переносився; за потреби встановіть його у вкладці AI.\n"
+                "Стара Data не змінювалась."
+            )
+            if migration.warnings:
+                summary += "\n\nПопередження:\n- " + "\n- ".join(migration.warnings[:6])
+            messagebox.showinfo("UA FREE Content Tool · імпорт", summary, parent=root)
         progress.stop()
         frame.destroy()
         with pulse_lock:

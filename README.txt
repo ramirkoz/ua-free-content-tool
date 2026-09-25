@@ -1,6 +1,5 @@
-UA FREE Content Tool v2.0.0-rc29 — MANUAL TEST
+UA FREE Content Tool v2.0.0-rc33 — MANUAL TEST
 
-Recovery build based on the canonical RC28 runtime.
-First run can selectively import useful data from an older Content Tool folder/Data.
-Do not copy the old Data folder over the new one.
-If startup fails, see Data\logs\bootstrap_error.log.
+Recovery/stability build. Import from RC32 Data on first launch.
+Supervisor keeps a stable instance identity and publishes a CURRENT pointer in Google Drive.
+Old logs/cache/Tools/runtime state are not imported.

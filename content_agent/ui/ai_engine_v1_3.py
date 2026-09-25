@@ -106,6 +106,17 @@ class AIEngineV13Mixin:
         self.ai_codex_enabled_var = tk.BooleanVar(value=bool(getattr(secrets, "codex_enabled", False)))
         self.ai_local_enabled_var = tk.BooleanVar(value=secrets.local_enabled)
 
+        def secret_control(variable: tk.StringVar, label: str, width: int = 38):
+            box = ttk.Frame(frame)
+            entry = ttk.Entry(box, textvariable=variable, show="•", width=width)
+            entry.pack(side="left", fill="x", expand=True)
+            def toggle():
+                visible = str(entry.cget("show") or "") == ""
+                entry.configure(show="•" if visible else "")
+            ttk.Button(box, text="👁", width=3, command=toggle).pack(side="left", padx=(3,2))
+            ttk.Button(box, text="Копіювати", command=lambda: self._copy_secret_value(variable, label)).pack(side="left")
+            return box
+
         rows = [
             ("NVIDIA NIM API Key", "nvidia_api_key", True),
             ("Google Gemini API Key", "gemini_api_key", True),
@@ -115,21 +126,17 @@ class AIEngineV13Mixin:
             column = 0 if index < 5 else 2
             row = index if index < 5 else index - 3
             ttk.Label(frame, text=label).grid(row=row, column=column, sticky="w", pady=2)
-            ttk.Entry(
-                frame,
-                textvariable=self.ai_provider_vars[key],
-                show="•" if secret else "",
-                width=46,
-            ).grid(row=row, column=column + 1, sticky="ew", padx=(8, 8), pady=2)
+            if secret:
+                secret_control(self.ai_provider_vars[key], label).grid(row=row, column=column + 1, sticky="ew", padx=(8, 8), pady=2)
+            else:
+                ttk.Entry(frame, textvariable=self.ai_provider_vars[key], width=46).grid(row=row, column=column + 1, sticky="ew", padx=(8, 8), pady=2)
 
         ttk.Label(frame, text="Cloudflare Account ID").grid(row=5, column=0, sticky="w", pady=2)
         ttk.Entry(frame, textvariable=self.ai_provider_vars["cloudflare_account_id"], width=46).grid(
             row=5, column=1, sticky="ew", padx=(8, 14), pady=2
         )
         ttk.Label(frame, text="Cloudflare API Token").grid(row=5, column=2, sticky="w", pady=2)
-        ttk.Entry(frame, textvariable=self.ai_provider_vars["cloudflare_api_token"], show="•", width=46).grid(
-            row=5, column=3, sticky="ew", padx=(8, 8), pady=2
-        )
+        secret_control(self.ai_provider_vars["cloudflare_api_token"], "Cloudflare API Token").grid(row=5, column=3, sticky="ew", padx=(8, 8), pady=2)
 
         ttk.Checkbutton(frame, text="Локальний аварійний AI · Ollama автоматично", variable=self.ai_local_enabled_var).grid(
             row=6, column=0, sticky="w", pady=(4, 2)

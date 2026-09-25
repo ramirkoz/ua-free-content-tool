@@ -68,6 +68,16 @@ class MainWindow(LegacyMainWindow):
             self.v2_openrouter_key_var.set("")
 
         super().__init__(root, database, config)
+        # RC32: destinations of one operator-approved queue must not wait on
+        # artificial inter-platform/catch-up sleeps. Platform APIs still provide
+        # their own real rate-limit signals and those are respected by the worker.
+        try:
+            self.worker.inter_target_delay_seconds = 0.0
+            self.worker.CATCHUP_GAP_SECONDS = 0
+            if hasattr(self.worker, "_catchup_not_before"):
+                self.worker._catchup_not_before = 0.0
+        except Exception:
+            pass
         self._apply_v2_inbox_contract()
         self._install_v2_inbox_reset_button()
         self._install_v2_history_retry_button()
@@ -82,6 +92,24 @@ class MainWindow(LegacyMainWindow):
         self._autocollect_watchdog_id = None
         self._schedule_autocollect_watchdog()
 
+
+    def _startup_queue_migration_gate(self) -> None:
+        """RC32: legacy queue text migration must never disable collection/publishing.
+
+        Old FIX28 treated any overdue/active package as a reason not to start *any*
+        background service. That froze source collection and the publication worker
+        together. Current V2 validates text at publication boundaries, so background
+        services always start; old queue rows remain visible and can finish normally.
+        """
+        if self.stop_event.is_set():
+            return
+        try:
+            self._start_background_services()
+            self.set_status("Готово. Джерела й публікаційний worker запущено; стара черга не блокує роботу.")
+        except Exception as exc:
+            self.status_var.set(f"Не вдалося запустити фонові сервіси: {exc}")
+            raise
+
     def _schedule_autocollect_watchdog(self) -> None:
         try:
             if self.stop_event.is_set():
@@ -94,6 +122,32 @@ class MainWindow(LegacyMainWindow):
             self._autocollect_watchdog_id = self.root.after(60000, self._schedule_autocollect_watchdog)
         except Exception:
             self._autocollect_watchdog_id = None
+
+    def run_worker_once(self) -> None:
+        """Run one due package now, then immediately wake the normal queue drain."""
+        try:
+            if hasattr(self.worker, "_catchup_not_before"):
+                self.worker._catchup_not_before = 0.0
+            self.worker.inter_target_delay_seconds = 0.0
+        except Exception:
+            pass
+
+        def work():
+            result = self.worker.run_once()
+            # Continue the overdue queue immediately after the operator-requested
+            # package. The background worker is the single normal owner of the rest.
+            try:
+                self.worker.wake()
+            except Exception:
+                pass
+            return result
+
+        self.run_async(
+            work,
+            self._show_worker_result,
+            label="Черга: виконую одну публікацію",
+            done_label="Перевірку черги завершено",
+        )
 
     def _media_name_context(self) -> tuple[int, str]:
         group_id = int(getattr(self, "current_group_id", 0) or 0)
@@ -460,7 +514,12 @@ class MainWindow(LegacyMainWindow):
         openrouter.pack(fill="x", pady=(0, 8))
         openrouter.columnconfigure(1, weight=1)
         ttk.Label(openrouter, text="API key").grid(row=0, column=0, sticky="w")
-        ttk.Entry(openrouter, textvariable=self.v2_openrouter_key_var, show="•", width=72).grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        key_box = ttk.Frame(openrouter)
+        key_entry = ttk.Entry(key_box, textvariable=self.v2_openrouter_key_var, show="•", width=58)
+        key_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(key_box, text="👁", width=3, command=lambda: key_entry.configure(show="" if str(key_entry.cget("show") or "") else "•")).pack(side="left", padx=(3,2))
+        ttk.Button(key_box, text="Копіювати", command=lambda: self._copy_secret_value(self.v2_openrouter_key_var, "OpenRouter API key")).pack(side="left")
+        key_box.grid(row=0, column=1, sticky="ew", padx=(8, 8))
         ttk.Button(openrouter, text="Зберегти", command=self.save_v2_openrouter_settings).grid(row=0, column=2, padx=(0, 6))
         ttk.Button(openrouter, text="Перевірити", command=self.test_v2_openrouter).grid(row=0, column=3)
         ttk.Label(openrouter, text="Місячний ліміт, $:").grid(row=1, column=0, sticky="w", pady=(6, 0))
