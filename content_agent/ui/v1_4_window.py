@@ -501,10 +501,26 @@ class MainWindow(Rc14Window):
     # Independent per-destination schedules.
     # ------------------------------------------------------------------
     def _install_destination_schedule_settings(self) -> None:
-        platforms = self._find_platform_frame("Facebook Pages")
-        if platforms is None:
+        # RC37: the settings UI renamed the Facebook section to
+        # "Meta / Facebook Pages". The old exact-title lookup silently skipped
+        # the whole per-destination schedule block. Keep compatibility with both
+        # old and current labels and fall back to the Settings tab itself.
+        platforms = (
+            self._find_platform_frame("Meta / Facebook Pages")
+            or self._find_platform_frame("Facebook Pages")
+        )
+        parent = platforms.master if platforms is not None else None
+        if parent is None:
+            try:
+                for tab_id in self.notebook.tabs():
+                    title = str(self.notebook.tab(tab_id, "text") or "").strip()
+                    if title in {"Налаштування", "Settings"}:
+                        parent = self.root.nametowidget(tab_id)
+                        break
+            except Exception:
+                parent = None
+        if parent is None:
             return
-        parent = platforms.master
         old = getattr(self, "destination_schedule_frame", None)
         if old is not None:
             try:

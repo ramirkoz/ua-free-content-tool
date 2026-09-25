@@ -1201,7 +1201,24 @@ class MainWindow:
 
     def _selected_group_ids(self) -> list[int]:
         selected = set(self.groups_tree.selection())
-        return [int(item) for item in self.groups_tree.get_children() if item in selected]
+        result: list[int] = []
+        for item in self.groups_tree.get_children():
+            if item not in selected:
+                continue
+            candidates = [str(item)]
+            try:
+                candidates.append(str(self.groups_tree.set(item, "id") or ""))
+            except Exception:
+                pass
+            group_id = None
+            for raw in candidates:
+                token = raw.strip()
+                if token.isdigit():
+                    group_id = int(token)
+                    break
+            if group_id is not None and group_id > 0 and group_id not in result:
+                result.append(group_id)
+        return result
 
     def _selected_group_id(self) -> int | None:
         selection = self._selected_group_ids()
