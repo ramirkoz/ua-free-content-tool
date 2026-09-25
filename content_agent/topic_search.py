@@ -13,18 +13,6 @@ _LINE_RE = re.compile(
 )
 
 
-def _safe_group_id(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    token = str(value or "").strip()
-    if not token.isdigit():
-        return None
-    parsed = int(token)
-    return parsed if parsed > 0 else None
-
-
 @dataclass(frozen=True, slots=True)
 class OllamaTopicMatch:
     group_id: int
@@ -44,10 +32,10 @@ def build_topic_prompt(
     language = normalize_language(language)
     blocks: list[str] = []
     for row in candidates:
-        group_id = _safe_group_id(row.get("group_id") or row.get("id"))
+        group_id = int(row.get("group_id") or row.get("id") or 0)
         title = str(row.get("title") or "")
         text = " ".join(str(row.get("text") or "").split())[:750]
-        if group_id is not None:
+        if group_id:
             if language == "en":
                 blocks.append(f"ID {group_id}\nHEADLINE: {title}\nTEXT: {text}")
             else:
