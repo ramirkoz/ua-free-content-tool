@@ -28,7 +28,7 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
     TRANSIENT_BACKOFF_MAX = 5 * 60
     CONTROL_POLL_INTERVAL = 5 * 60
     STATUS_UPLOAD_INTERVAL = 60
-    HEARTBEAT_START_DELAY = 15
+    HEARTBEAT_START_DELAY = 5
     HEARTBEAT_INTERVAL = 60
     HANDLE_GROWTH_SUPPRESS = 160
     HANDLE_RATE_SUPPRESS = 800.0
@@ -342,6 +342,28 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
                     instance_folder,
                     replace=True,
                 )
+                # One stable pointer makes the currently running instance easy to
+                # locate without scanning RESUME or guessing which historical
+                # instance folder belongs to this launch.
+                settings = load_backend_settings()
+                root_folder = exporter.ensure_folder(settings.supervisor_drive_root, "root")
+                from .diagnostics import instance_identity
+                ident = instance_identity()
+                exporter.upload_json(
+                    "CURRENT.json",
+                    {
+                        "schema": "ua-free-content-tool-supervisor-current-v1",
+                        "version": self.version,
+                        "generated_at": status.get("generated_at"),
+                        "instance_id": ident.instance_id,
+                        "instance_name": ident.instance_name,
+                        "instance_folder_id": instance_folder,
+                        "status_file": "status.json",
+                        "incident_file": "incident.json",
+                    },
+                    root_folder,
+                    replace=True,
+                )
             self._last_drive_status_at = time.monotonic()
             self._heartbeat_last_success_at = datetime.now().astimezone().isoformat(timespec="seconds")
             self._heartbeat_success()
@@ -393,6 +415,13 @@ class ResilientSupervisorRuntime(SupervisorRuntime):
                         ),
                     })
                 self._annotate_drive(status)
+                # Local telemetry is unconditional. Drive may be offline/auth-expired,
+                # but the program must still leave a current heartbeat for diagnostics.
+                try:
+                    write_json("heartbeat.json", status)
+                    write_json("heartbeat_incident.json", {"generated_at": status.get("generated_at"), "incidents": incidents})
+                except Exception as exc:
+                    logger.warning("Local supervisor heartbeat write failed: %s", exc)
                 self._heartbeat_upload(status, incidents)
             except Exception as exc:
                 self._heartbeat_last_error = f"{type(exc).__name__}: {exc}"[:600]
