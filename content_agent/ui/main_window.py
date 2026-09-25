@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import faulthandler
+import logging
 import queue
 import threading
 import time
@@ -89,6 +90,8 @@ from .exclusions_dialog import ContentExclusionsDialog
 from .queue_migration_dialog import QueueMigrationDialog
 from .topic_candidates_dialog import TopicCandidatesDialog
 
+
+logger = logging.getLogger("content_agent.ui")
 
 AUTO_COLLECT_INTERVAL_MS = 5 * 60 * 1000
 TOKEN_DIAGNOSTIC_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -822,6 +825,7 @@ class MainWindow:
                 self._show_error(exc)
 
     def _show_error(self, error: Exception) -> None:
+        logger.error("UI operation failed: %s", error)
         self.set_status("Помилка")
         self._finish_operation(str(error), error=True)
         self.msg.showerror("UA FREE Content Tool", str(error), parent=self.root)
