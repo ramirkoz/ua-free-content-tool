@@ -147,6 +147,7 @@ def _normalize_numeric_text(value: str) -> str:
     return text
 
 
+
 def _is_strong_latin_token(token: str) -> bool:
     clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
     if len(clean) < 2 or clean.upper() in _GENERIC_LATIN:
@@ -299,7 +300,7 @@ def extract_numbers(value: str) -> set[str]:
 
 
 def extract_latin_entities(value: str) -> set[str]:
-    """Extract only high-confidence structured Latin identifiers."""
+    """Extract only high-confidence Latin entities, not ordinary English words."""
     text = str(value or "")
     result: set[str] = set()
     for token in _LATIN_TOKEN_RE.findall(text):
