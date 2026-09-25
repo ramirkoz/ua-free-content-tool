@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -38,14 +39,16 @@ _SUFFIX_TOKEN_RE = re.compile(
     r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
     r"dollars?|євро|евро|euros?|₴|\$|€"
 )
-_LATIN_ENTITY_RE = re.compile(
-    r"\b(?:[A-Z][A-Za-z0-9]*(?:[._+\-/][A-Za-z0-9]+)*|[A-Z]{2,}[A-Z0-9._+\-/]*|[A-Za-z]+\d+[A-Za-z0-9._+\-/]*)\b"
-)
+_LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
+_TITLE_PHRASE_RE = re.compile(r"\b(?:[A-Z][a-z]{1,}\s+){2,5}[A-Z][a-z]{1,}\b")
 _ROMAN_CANDIDATE_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
+_KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
 _GENERIC_LATIN = frozenset({
     "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
     "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
 })
+_LEADING_TITLE_ARTICLES = frozenset({"the", "a", "an"})
+_UNICODE_NUMBER_ALIASES = {"💯": "100", "🔟": "10"}
 _METADATA_PREFIXES = (
     "ДЖЕРЕЛО ",
     "SOURCE ",
@@ -136,6 +139,42 @@ class FactGuardResult:
     score: int
     unsupported_numbers: tuple[str, ...] = ()
     unsupported_entities: tuple[str, ...] = ()
+
+
+def _normalize_numeric_text(value: str) -> str:
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = _KEYCAP_DIGIT_RE.sub(lambda match: match.group(1), text)
+    for token, replacement in _UNICODE_NUMBER_ALIASES.items():
+        text = text.replace(token, replacement)
+    return text
+
+
+def _normalize_title_phrase(value: str) -> str:
+    parts = [part.casefold() for part in str(value or "").split() if part.strip()]
+    while parts and parts[0] in _LEADING_TITLE_ARTICLES:
+        parts.pop(0)
+    return " ".join(parts)
+
+
+def _is_strong_latin_token(token: str) -> bool:
+    clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
+    if len(clean) < 2 or clean.upper() in _GENERIC_LATIN:
+        return False
+    if _roman_to_int(clean) is not None:
+        return False
+    letters = [char for char in clean if char.isalpha()]
+    if not letters:
+        return False
+    if any(char.isdigit() for char in clean) or any(char in "._+-/" for char in clean):
+        return True
+    has_upper = any(char.isupper() for char in letters)
+    has_lower = any(char.islower() for char in letters)
+    simple_title = clean[:1].isupper() and clean[1:].islower()
+    if has_upper and has_lower and not simple_title:
+        return True
+    if clean.isupper() and 2 <= len(clean) <= 5:
+        return True
+    return False
 
 
 def _parse_decimal(raw: str) -> Decimal | None:
@@ -255,7 +294,7 @@ def _factual_evidence(value: str) -> str:
 
 
 def extract_numbers(value: str) -> set[str]:
-    text = str(value or "")
+    text = _normalize_numeric_text(value)
     result: set[str] = set()
     for match in _NUMBER_RE.finditer(text):
         canonical = _canon_number_match(match)
@@ -269,19 +308,16 @@ def extract_numbers(value: str) -> set[str]:
 
 
 def extract_latin_entities(value: str) -> set[str]:
+    """Extract only high-confidence Latin entities, not ordinary English words."""
+    text = str(value or "")
     result: set[str] = set()
-    for token in _LATIN_ENTITY_RE.findall(str(value or "")):
-        clean = token.strip(".,:;!?()[]{}«»\"'")
-        if len(clean) < 3 or clean.upper() in _GENERIC_LATIN:
-            continue
-        if _roman_to_int(clean) is not None:
-            continue
-        if clean[0].isupper() and (any(ch.isupper() for ch in clean[1:]) or any(ch.isdigit() for ch in clean) or any(ch in "._+-/" for ch in clean)):
-            result.add(clean.casefold())
-        elif clean.isupper():
-            result.add(clean.casefold())
-        elif clean[0].isupper() and any(ch.islower() for ch in clean[1:]):
-            result.add(clean.casefold())
+    for token in _LATIN_TOKEN_RE.findall(text):
+        if _is_strong_latin_token(token):
+            result.add(token.casefold())
+    for phrase in _TITLE_PHRASE_RE.findall(text):
+        normalized = _normalize_title_phrase(phrase)
+        if normalized:
+            result.add(normalized)
     return result
 
 
