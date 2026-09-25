@@ -80,7 +80,7 @@ from ..publication_metrics import (
 )
 from ..rewriter import platform_texts_from_base, rewrite_article_with_fallback
 from ..scheduling import KYIV, next_publish_slot, parse_iso
-from ..topic_search import build_topic_prompt, merge_local_and_ollama, parse_topic_matches
+from ..topic_search import build_topic_prompt, index_topic_candidate_rows, merge_local_and_ollama, parse_topic_matches
 from ..trends import ThreadsTrendSample, check_threads_keyword_access, threads_keyword_sample
 from ..worker import PublicationWorker, WorkerResult
 from ..version import APP_VERSION
@@ -1354,7 +1354,17 @@ class MainWindow:
         if not local_candidates:
             self.topic_search_status_var.set(self.t("Схожих матеріалів для об’єднання не знайдено."))
             return
-        rows_by_id = {int(row["group_id"]): row for row in candidate_rows}
+        rows_by_id, skipped_legacy_ids = index_topic_candidate_rows(candidate_rows)
+        if skipped_legacy_ids:
+            try:
+                self.db.record_learning_event(  # type: ignore[attr-defined]
+                    "topic_search_legacy_ids_skipped",
+                    language=self.config.ui_language,  # type: ignore[attr-defined]
+                    group_id=anchor_id,
+                    payload={"count": len(skipped_legacy_ids), "examples": skipped_legacy_ids[:8]},
+                )
+            except Exception:
+                pass
         shortlisted = [rows_by_id[item.group_id] for item in local_candidates if item.group_id in rows_by_id]
         self.topic_search_status_var.set(
             (f"Ollama is checking {len(shortlisted)} candidates…" if self.config.ui_language == "en"

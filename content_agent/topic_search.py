@@ -25,6 +25,34 @@ def _safe_group_id(value: object) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def safe_group_id(value: object) -> int | None:
+    """Public legacy-safe group-id parser used by all topic-search UI paths."""
+    return _safe_group_id(value)
+
+
+def index_topic_candidate_rows(
+    candidates: Iterable[Mapping[str, object]],
+) -> tuple[dict[int, Mapping[str, object]], list[str]]:
+    """Index valid candidate rows without letting malformed legacy IDs crash search.
+
+    Returns (rows_by_id, skipped_raw_ids). Imported old databases may contain
+    non-numeric display artifacts such as '19…'. They are diagnostic data, not
+    fatal application errors.
+    """
+    rows_by_id: dict[int, Mapping[str, object]] = {}
+    skipped: list[str] = []
+    for row in candidates:
+        raw = row.get("group_id") if row.get("group_id") is not None else row.get("id")
+        group_id = _safe_group_id(raw)
+        if group_id is None:
+            token = str(raw or "").strip()
+            if token:
+                skipped.append(token[:80])
+            continue
+        rows_by_id.setdefault(group_id, row)
+    return rows_by_id, skipped
+
+
 @dataclass(frozen=True, slots=True)
 class OllamaTopicMatch:
     group_id: int

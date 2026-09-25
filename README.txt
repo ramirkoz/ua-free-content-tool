@@ -1,17 +1,11 @@
-UA FREE Content Tool v2.0.0-rc38 — MANUAL TEST
+UA FREE Content Tool v2.0.0-rc39 — MANUAL TEST
 
-Cumulative recovery release on top of RC37.
+Cumulative recovery release on top of RC38.
 
-RC37 retained:
-- per-profile/page/channel publication schedule block in Settings;
-- destination_schedules_v1_4.json / DestinationScheduleStore;
-- hardened imported legacy topic-search IDs.
+RC39:
+- hardens the full “Пошук схожих за темою матеріалів” route against malformed legacy group IDs imported from older databases;
+- both UI paths use one safe candidate indexer instead of direct int(group_id) conversion;
+- malformed legacy IDs such as “19…” are skipped, recorded as a local learning/diagnostic event, and no longer crash the whole topic search;
+- valid candidates continue through local ranking and AI duplicate/topic analysis.
 
-RC38 Fact Guard:
-- full-form measurement units in Ukrainian, Russian and English normalize to the same canonical units as abbreviations;
-- km/км, m/м, kg/кг, MW/МВт, GW/ГВт, GB/ГБ, MB/МБ and TB/ТБ are normalized consistently;
-- common grammatical forms are supported;
-- unit parsing uses word boundaries so ordinary words are not misread as units;
-- real changed values remain blocked.
-
-All RC34-RC36 Fact Guard fixes are retained.
+RC34-RC38 Fact Guard and RC37 scheduling/topic-search recovery fixes are retained.
