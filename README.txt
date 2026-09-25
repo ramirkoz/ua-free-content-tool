@@ -1,11 +1,17 @@
-UA FREE Content Tool v2.0.0-rc37 — MANUAL TEST
+UA FREE Content Tool v2.0.0-rc38 — MANUAL TEST
 
-Recovery release on top of RC36.
+Cumulative recovery release on top of RC37.
 
-RC37:
-- restores the per-profile/page/channel publication schedule block in Settings;
-- reuses destination_schedules_v1_4.json and the existing DestinationScheduleStore;
-- current “Meta / Facebook Pages” settings label no longer hides the schedule UI;
-- imported legacy data with malformed non-numeric topic-search IDs is skipped instead of crashing “Пошук схожих за темою матеріалів”.
+RC37 retained:
+- per-profile/page/channel publication schedule block in Settings;
+- destination_schedules_v1_4.json / DestinationScheduleStore;
+- hardened imported legacy topic-search IDs.
 
-RC34-RC36 Fact Guard fixes are retained.
+RC38 Fact Guard:
+- full-form measurement units in Ukrainian, Russian and English normalize to the same canonical units as abbreviations;
+- km/км, m/м, kg/кг, MW/МВт, GW/ГВт, GB/ГБ, MB/МБ and TB/ТБ are normalized consistently;
+- common grammatical forms are supported;
+- unit parsing uses word boundaries so ordinary words are not misread as units;
+- real changed values remain blocked.
+
+All RC34-RC36 Fact Guard fixes are retained.
