@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -8,7 +9,7 @@ _NUMBER_RE = re.compile(
     r"(?<![\w])"
     r"(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
     r"(?P<number>"
-    r"(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?)"
+    r"(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?)"
     r")"
     r"(?P<suffix>"
     r"(?:\s*(?:"
@@ -16,7 +17,10 @@ _NUMBER_RE = re.compile(
     r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
     r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
     r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
-    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м|k(?![a-zа-яіїєґ])|"
+    r"km(?![a-zа-яіїєґ])|км(?![a-zа-яіїєґ])|kg(?![a-zа-яіїєґ])|кг(?![a-zа-яіїєґ])|"
+    r"gb(?![a-zа-яіїєґ])|гб(?![a-zа-яіїєґ])|mb(?![a-zа-яіїєґ])|мб(?![a-zа-яіїєґ])|"
+    r"tb(?![a-zа-яіїєґ])|тб(?![a-zа-яіїєґ])|mw(?![a-zа-яіїєґ])|мвт(?![a-zа-яіїєґ])|"
+    r"gw(?![a-zа-яіїєґ])|гвт(?![a-zа-яіїєґ])|m(?![a-zа-яіїєґ])|м(?![a-zа-яіїєґ])|k(?![a-zа-яіїєґ])|"
     r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
     r"dollars?|євро|евро|euros?|₴|\$|€"
     r")){0,2}"
@@ -28,17 +32,21 @@ _SUFFIX_TOKEN_RE = re.compile(
     r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
     r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
     r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
-    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м|k(?![a-zа-яіїєґ])|"
+    r"km(?![a-zа-яіїєґ])|км(?![a-zа-яіїєґ])|kg(?![a-zа-яіїєґ])|кг(?![a-zа-яіїєґ])|"
+    r"gb(?![a-zа-яіїєґ])|гб(?![a-zа-яіїєґ])|mb(?![a-zа-яіїєґ])|мб(?![a-zа-яіїєґ])|"
+    r"tb(?![a-zа-яіїєґ])|тб(?![a-zа-яіїєґ])|mw(?![a-zа-яіїєґ])|мвт(?![a-zа-яіїєґ])|"
+    r"gw(?![a-zа-яіїєґ])|гвт(?![a-zа-яіїєґ])|m(?![a-zа-яіїєґ])|м(?![a-zа-яіїєґ])|k(?![a-zа-яіїєґ])|"
     r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
     r"dollars?|євро|евро|euros?|₴|\$|€"
 )
-_LATIN_ENTITY_RE = re.compile(
-    r"\b(?:[A-Z][A-Za-z0-9]*(?:[._+\-/][A-Za-z0-9]+)*|[A-Z]{2,}[A-Z0-9._+\-/]*|[A-Za-z]+\d+[A-Za-z0-9._+\-/]*)\b"
-)
+_LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
+_ROMAN_CANDIDATE_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
+_KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
 _GENERIC_LATIN = frozenset({
     "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
     "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
 })
+_UNICODE_NUMBER_ALIASES = {"💯": "100", "🔟": "10"}
 _METADATA_PREFIXES = (
     "ДЖЕРЕЛО ",
     "SOURCE ",
@@ -131,17 +139,85 @@ class FactGuardResult:
     unsupported_entities: tuple[str, ...] = ()
 
 
+def _normalize_numeric_text(value: str) -> str:
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = _KEYCAP_DIGIT_RE.sub(lambda match: match.group(1), text)
+    for token, replacement in _UNICODE_NUMBER_ALIASES.items():
+        text = text.replace(token, replacement)
+    return text
+
+
+
+def _is_strong_latin_token(token: str) -> bool:
+    clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
+    if len(clean) < 2 or clean.upper() in _GENERIC_LATIN:
+        return False
+    if _roman_to_int(clean) is not None:
+        return False
+    letters = [char for char in clean if char.isalpha()]
+    if not letters:
+        return False
+    if any(char.isdigit() for char in clean) or any(char in "._+-/" for char in clean):
+        return True
+    has_upper = any(char.isupper() for char in letters)
+    has_lower = any(char.islower() for char in letters)
+    simple_title = clean[:1].isupper() and clean[1:].islower()
+    if has_upper and has_lower and not simple_title:
+        return True
+    if clean.isupper() and 2 <= len(clean) <= 5:
+        return True
+    return False
+
+
 def _parse_decimal(raw: str) -> Decimal | None:
     value = str(raw or "").strip().replace("\u00a0", " ").replace("\u202f", " ")
-    compact = value.replace(" ", "")
-    if re.fullmatch(r"[1-9]\d{0,2}(?:,\d{3})+", compact):
-        compact = compact.replace(",", "")
-    elif "," in compact and "." not in compact:
-        compact = compact.replace(",", ".")
+    # Thousands separators seen in real feeds include spaces, commas and multiple
+    # apostrophe characters (ASCII ', U+2019 ’, U+02BC ʼ). Treat them as one
+    # quantity only when groups after the separator contain exactly three digits.
+    if re.fullmatch(r"[1-9]\d{0,2}(?:[ ,\'’ʼ]\d{3})+", value):
+        compact = re.sub(r"[ ,\'’ʼ]", "", value)
+    else:
+        compact = value.replace(" ", "")
+        if "," in compact and "." not in compact:
+            compact = compact.replace(",", ".")
     try:
         return Decimal(compact)
     except (InvalidOperation, ValueError):
         return None
+
+
+def _int_to_roman(value: int) -> str:
+    if value <= 0 or value > 3999:
+        return ""
+    pairs = (
+        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    )
+    out: list[str] = []
+    remaining = int(value)
+    for amount, token in pairs:
+        while remaining >= amount:
+            out.append(token)
+            remaining -= amount
+    return "".join(out)
+
+
+def _roman_to_int(token: str) -> int | None:
+    clean = str(token or "").strip().upper()
+    if len(clean) < 2 or not re.fullmatch(r"[IVXLCDM]+", clean):
+        return None
+    values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    total = 0
+    for index, char in enumerate(clean):
+        value = values[char]
+        if index + 1 < len(clean) and value < values[clean[index + 1]]:
+            total -= value
+        else:
+            total += value
+    if not 0 < total <= 3999 or _int_to_roman(total) != clean:
+        return None
+    return total
 
 
 def _decimal_text(value: Decimal) -> str:
@@ -210,26 +286,26 @@ def _factual_evidence(value: str) -> str:
 
 
 def extract_numbers(value: str) -> set[str]:
+    text = _normalize_numeric_text(value)
     result: set[str] = set()
-    for match in _NUMBER_RE.finditer(str(value or "")):
+    for match in _NUMBER_RE.finditer(text):
         canonical = _canon_number_match(match)
         if canonical:
             result.add(canonical)
+    for match in _ROMAN_CANDIDATE_RE.finditer(text):
+        roman_value = _roman_to_int(match.group(0))
+        if roman_value is not None:
+            result.add(str(roman_value))
     return result
 
 
 def extract_latin_entities(value: str) -> set[str]:
+    """Extract only high-confidence Latin entities, not ordinary English words."""
+    text = str(value or "")
     result: set[str] = set()
-    for token in _LATIN_ENTITY_RE.findall(str(value or "")):
-        clean = token.strip(".,:;!?()[]{}«»\"'")
-        if len(clean) < 3 or clean.upper() in _GENERIC_LATIN:
-            continue
-        if clean[0].isupper() and (any(ch.isupper() for ch in clean[1:]) or any(ch.isdigit() for ch in clean) or any(ch in "._+-/" for ch in clean)):
-            result.add(clean.casefold())
-        elif clean.isupper():
-            result.add(clean.casefold())
-        elif clean[0].isupper() and any(ch.islower() for ch in clean[1:]):
-            result.add(clean.casefold())
+    for token in _LATIN_TOKEN_RE.findall(text):
+        if _is_strong_latin_token(token):
+            result.add(token.casefold())
     return result
 
 
