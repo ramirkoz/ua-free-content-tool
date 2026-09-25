@@ -41,19 +41,6 @@ class TopicCandidate:
     reason: str
 
 
-
-
-def _safe_group_id(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    token = str(value or "").strip()
-    if not token.isdigit():
-        return None
-    parsed = int(token)
-    return parsed if parsed > 0 else None
-
 def normalize_text(value: str) -> str:
     return " ".join(str(value or "").lower().replace("’", "'").split())
 
@@ -153,9 +140,9 @@ def rank_topic_candidates(
     language = normalize_language(language)
     ranked: list[TopicCandidate] = []
     for row in candidates:
-        group_id = _safe_group_id(row.get("group_id") or row.get("id"))
+        group_id = int(row.get("group_id") or row.get("id") or 0)
         candidate_text = str(row.get("text") or row.get("combined_text") or "")
-        if group_id is None or not candidate_text:
+        if not group_id or not candidate_text:
             continue
         base = weighted_similarity(anchor_text, candidate_text)
         learned = _feedback_boost(anchor_text, candidate_text, feedback)
