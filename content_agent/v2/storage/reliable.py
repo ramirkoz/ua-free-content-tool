@@ -9,16 +9,21 @@ from pathlib import Path
 from ...database import redact_secrets
 from ...paths import data_dir
 from .compat import Database as CompatDatabase
+from .manual_topics import ManualTopicsMixin
 
 logger = logging.getLogger('content_agent.v2.storage.reliable')
 
 
-class Database(CompatDatabase):
-    """RC10 durable publication-success boundary.
+class Database(ManualTopicsMixin, CompatDatabase):
+    """RC10 durable publication-success boundary plus V2 durable product metadata.
 
-    External success is journalled before SQLite is updated.  Receipts are replayed
+    External success is journalled before SQLite is updated. Receipts are replayed
     before another claim and before History is read, so a local commit failure cannot
     silently hide an already-published post or cause an automatic duplicate retry.
+
+    RC43 also owns the durable manual-topic catalog through ``ManualTopicsMixin``.
+    Topic assignment is source metadata and is intentionally independent from the
+    historical automatic topic classifier.
     """
     _receipt_lock = threading.RLock()
 

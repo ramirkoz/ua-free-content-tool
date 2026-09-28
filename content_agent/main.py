@@ -17,7 +17,7 @@ from .paths import data_dir, portable_mode
 from .readable_media_names import install_runtime as install_readable_media_names_runtime
 from .clean_import import clean_import_from_old_data, first_run_marker, mark_first_run_choice, target_has_user_data
 from .version import APP_VERSION
-from .v2.ui.window import MainWindow
+from .v2.ui.manual_topics_window import MainWindow
 
 
 def _raise_windows_stdio_limit(logger: object | None = None) -> int:
