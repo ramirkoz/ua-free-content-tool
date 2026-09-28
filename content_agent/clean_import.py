@@ -15,6 +15,7 @@ from .paths import config_path, data_dir, database_path, migration_dir, portable
 # Only durable editorial/user state is imported. Runtime cooldowns, source-health,
 # supervisor/recovery state, caches, logs, backups, Tools and legacy AI runtimes stay behind.
 _STABLE_TABLES = (
+    "manual_topics",
     "sources",
     "news_groups",
     "articles",
