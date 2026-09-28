@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from content_agent.clean_import import _STABLE_TABLES
 from content_agent.database import Database as BaseDatabase
 from content_agent.v2.storage.manual_topics import ManualTopicsMixin
 from content_agent.v2.ui.manual_topics_window import UNASSIGNED_TOPIC, _ManualSourceTopicStore
@@ -49,6 +50,29 @@ def test_manual_topics_are_arbitrary_and_persist_on_source(tmp_path):
     row = next(item for item in reopened.source_topic_rows() if int(item["id"]) == source_id)
     assert int(row["topic_id"]) == culture
     assert row["topic_name"] == "Культура / дивні штуки"
+
+
+def test_rc42_database_upgrades_in_place_without_losing_existing_sources(tmp_path):
+    path = tmp_path / "content.sqlite3"
+    old = BaseDatabase(path)
+    source_id = old.add_source("rss", "Existing RC42 source", "https://legacy.test/feed")
+    with old.connect() as con:
+        columns_before = {str(row[1]) for row in con.execute("PRAGMA table_info(sources)").fetchall()}
+        assert "topic_id" not in columns_before
+
+    upgraded = TopicDatabase(path)
+    with upgraded.connect() as con:
+        columns_after = {str(row[1]) for row in con.execute("PRAGMA table_info(sources)").fetchall()}
+        assert "topic_id" in columns_after
+        assert con.execute("SELECT 1 FROM manual_topics LIMIT 1").fetchone() is None
+    row = next(item for item in upgraded.source_topic_rows() if int(item["id"]) == source_id)
+    assert row["name"] == "Existing RC42 source"
+    assert row["topic_id"] is None
+
+
+def test_manual_topics_are_part_of_future_clean_import_contract():
+    assert "manual_topics" in _STABLE_TABLES
+    assert _STABLE_TABLES.index("manual_topics") < _STABLE_TABLES.index("sources")
 
 
 def test_group_topics_are_derived_only_from_member_sources(tmp_path):
