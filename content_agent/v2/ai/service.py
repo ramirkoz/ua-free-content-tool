@@ -14,9 +14,9 @@ from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_ba
 
 logger = logging.getLogger("content_agent.v2.ai_service")
 
-# Compatibility layer for the historical direct Router implementation. RC47 puts
-# a typed request/backend contract in front of it; removing the legacy runtime
-# patch itself is a separate consolidation step so behavior does not change here.
+# Historical Router call sites are still normalized here while the stable V2
+# service owns routing/timeout/cancel semantics.  This is the single remaining
+# compatibility boundary; UI code must not import historical router modules.
 install_direct_router_runtime()
 
 
@@ -25,10 +25,6 @@ class AIServiceError(RuntimeError):
 
 
 _LOCK = threading.RLock()
-# The historical router persists cooldown/model-health state through read-modify-
-# write JSON operations. All active V2 router executions use this lock so two AI
-# jobs cannot overwrite each other's state. This is deliberately narrower than a
-# global AI lock: OpenRouter and Agent remain independent.
 _ROUTER_EXECUTION_LOCK = threading.RLock()
 _LAST_RESULT: UnifiedAIResult | None = None
 _PROCESS_STARTED_AT = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -184,7 +180,6 @@ def execute(
     suppress_provider_on_quota: bool = False,
     cancel_event: object | None = None,
 ) -> UnifiedAIResult:
-    """Compatibility signature that now builds the canonical typed request."""
     return execute_request(
         AIRequest(
             prompt=str(prompt),
@@ -228,7 +223,7 @@ def last_result() -> UnifiedAIResult | None:
         return _LAST_RESULT
 
 
-def backend_status() -> dict[str, object]:
+def _structured_backend_status() -> dict[str, object]:
     settings = load_backend_settings()
     status: dict[str, object] = {
         "active_backend": settings.active_backend,
@@ -269,13 +264,60 @@ def backend_status() -> dict[str, object]:
     return status
 
 
-def test_active_backend() -> str:
+def backend_status(
+    backend: str | None = None,
+    *,
+    openrouter_key: str | None = None,
+) -> dict[str, object] | str:
+    """Canonical status API plus the stable UI text view.
+
+    With no backend argument it returns structured telemetry.  The optional backend
+    form is retained as a UI compatibility view so historical V2 widgets cannot
+    crash startup when service internals evolve.
+    """
+    status = _structured_backend_status()
+    if backend is None:
+        return status
+    selected = str(backend or BACKEND_ROUTER).strip().casefold()
+    active = str(status.get("active_backend") or BACKEND_ROUTER)
+    marker = "активний" if selected == active else "резерв"
+    if selected == BACKEND_OPENROUTER:
+        configured = bool(str(openrouter_key or "").strip()) or bool(status.get("openrouter_configured"))
+        return f"OpenRouter: {'налаштовано' if configured else 'не налаштовано'} · {marker}"
+    if selected == BACKEND_AGENT:
+        try:
+            from ...codex_runtime import inspect_codex_cached
+
+            info = inspect_codex_cached(max_age_seconds=20.0)
+            ready = bool(info.installed and info.authenticated)
+            return f"Agent / Codex: {'готовий' if ready else info.detail} · {marker}"
+        except Exception as exc:
+            return f"Agent / Codex: стан недоступний · {exc}"
+    router = status.get("router") if isinstance(status.get("router"), dict) else {}
+    if isinstance(router, dict) and router.get("error"):
+        return f"AI Router: помилка стану · {router['error']}"
+    configured = int(router.get("configured_providers", 0) or 0) if isinstance(router, dict) else 0
+    available = int(router.get("available_providers", 0) or 0) if isinstance(router, dict) else 0
+    return f"AI Router: {available}/{configured} доступні · {marker}"
+
+
+def test_active_backend(
+    backend: str | None = None,
+    *,
+    timeout_seconds: int = 45,
+) -> str:
+    """Probe an explicit backend or, by default, the currently selected backend."""
     settings = load_backend_settings()
-    if settings.active_backend == BACKEND_OPENROUTER:
+    selected = str(backend or settings.active_backend or BACKEND_ROUTER)
+    if selected == BACKEND_OPENROUTER:
         return OpenRouterBackend(settings).probe()
-    if settings.active_backend == BACKEND_AGENT:
-        result = execute("Відповідай тільки словом OK.", max_output_tokens=16, task_timeout_seconds=45)
-        return f"Agent backend працює: {result.label}"
+    if selected == BACKEND_AGENT:
+        from ... import ai_router as legacy
+
+        text = str(legacy._invoke_codex_limited("Відповідай тільки словом OK.", max(3, int(timeout_seconds)))).strip()
+        if not text:
+            raise AIServiceError("Agent backend повернув порожню відповідь під час перевірки.")
+        return "Agent backend працює: Codex / ChatGPT"
     from ...ai_router import test_ai_router
 
     with _ROUTER_EXECUTION_LOCK:
