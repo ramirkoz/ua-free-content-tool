@@ -24,9 +24,11 @@ class Database(Rc18Database):
     def count_today_articles(self, *, now: datetime | None = None) -> int:
         """Count raw news items collected for the current working calendar day.
 
-        ``discovered_at`` is stored canonically in UTC and gives us a cheap bounded
-        candidate set. Publication time remains authoritative for the day check, with
-        discovery time used only when the source has no trustworthy publication time.
+        ``discovered_at`` is stored canonically in UTC. RC49 therefore performs a
+        direct lexical UTC range scan so SQLite can use ``idx_articles_discovered_at``
+        instead of applying ``julianday()`` to every historical row. Publication time
+        remains authoritative for the final day check, with discovery time used only
+        when the source has no trustworthy publication time.
         """
         current = (now or datetime.now(KYIV)).astimezone(KYIV)
         start_local = datetime.combine(current.date(), time.min, tzinfo=KYIV)
@@ -39,8 +41,8 @@ class Database(Rc18Database):
                 """
                 SELECT published_at, discovered_at
                 FROM articles
-                WHERE julianday(discovered_at) >= julianday(?)
-                  AND julianday(discovered_at) < julianday(?)
+                WHERE discovered_at >= ?
+                  AND discovered_at < ?
                 """,
                 (start_utc, end_utc),
             ).fetchall()
