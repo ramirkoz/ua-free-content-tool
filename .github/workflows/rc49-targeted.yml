@@ -10,7 +10,7 @@ on:
       - content_agent/database_v1_4_rc21.py
       - content_agent/v2/storage/migrations.py
       - content_agent/v2/supervisor/runtime.py
-      - content_agent/v2/ui/active_window.py
+      - content_agent/v2/ui/manual_topics_window_rc44.py
       - tests/test_rc49_startup_contract.py
       - tests/test_rc49_runtime_smoke.py
       - tests/test_rc48_ux_reliability.py
@@ -45,7 +45,7 @@ jobs:
       - name: RC49 startup readiness and indexed telemetry regressions
         shell: pwsh
         run: python -m pytest -q tests/test_rc49_startup_contract.py
-      - name: RC49 active-window startup callback smoke regression
+      - name: RC49 stable-window startup callback smoke regression
         shell: pwsh
         run: python -m pytest -q tests/test_rc49_runtime_smoke.py
       - name: Keep RC48 UX and reliability regressions green
