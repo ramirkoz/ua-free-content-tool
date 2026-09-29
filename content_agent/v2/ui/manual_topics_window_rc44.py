@@ -7,6 +7,13 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from ...ai_router import (
+    AIProviderSecrets,
+    load_provider_secrets,
+    provider_health_text,
+    save_provider_secrets,
+    test_ai_router,
+)
 from ...app.container import AppServices, build_services
 from ...backup import import_backup
 from ...config import AppConfig, ConfigError, load_config
@@ -46,6 +53,51 @@ class MainWindow(Rc43MainWindow):
         self._apply_rc48_inbox_labels()
         self._install_rc48_history_unknown_controls()
         self._install_rc48_keyboard_shortcuts()
+
+    def save_ai_provider_keys(self) -> None:
+        """Persist the direct-provider fields owned by the canonical V2 AI tab."""
+        try:
+            current = load_provider_secrets()
+            values = getattr(self, "ai_provider_vars", {})
+            updated = AIProviderSecrets(
+                gemini_api_key=str(values["gemini_api_key"].get() or ""),
+                nvidia_api_key=str(values["nvidia_api_key"].get() or ""),
+                groq_api_key=str(values["groq_api_key"].get() or ""),
+                cloudflare_account_id=str(values["cloudflare_account_id"].get() or ""),
+                cloudflare_api_token=str(values["cloudflare_api_token"].get() or ""),
+                codex_enabled=bool(self.codex_enabled_var.get()),
+                local_enabled=bool(self.local_enabled_var.get()),
+                local_base_url=current.local_base_url,
+                local_model=current.local_model,
+            )
+            save_provider_secrets(updated)
+            self.refresh_v2_ai_status()
+            self.v2_router_status_var.set(provider_health_text())
+            self.set_status("AI Router: прямі провайдери збережено.")
+        except Exception as exc:
+            self._show_error(exc)
+
+    def test_ai_router_ui(self) -> None:
+        """Run the canonical Router probe without blocking Tk."""
+        def action() -> str:
+            return test_ai_router()
+
+        def success(result: object) -> None:
+            self.refresh_v2_ai_status()
+            health = provider_health_text()
+            self.v2_router_status_var.set(f"{result}\n{health}" if health else str(result))
+            self.set_status(str(result))
+
+        self.run_async(
+            action,
+            success,
+            label="Перевіряю AI Router",
+            done_label="AI Router перевірено",
+            timeout_seconds=165,
+            timeout_message="AI Router не завершив перевірку за 165 секунд.",
+            modal_errors=False,
+            modal_timeout=False,
+        )
 
     def _drain_ui_events(self) -> None:
         """Keep Tk alive while making queued callback failures observable."""
