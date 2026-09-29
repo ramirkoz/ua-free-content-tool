@@ -17,6 +17,7 @@ RC47 continues the reliability/architecture roadmap on top of RC46 without addin
 - Adds database API for explicit operator confirmation that an unknown external attempt was not sent.
 - Backup validation remains backward compatible with RC44/RC46 databases and now accepts the additive V2 migration table/outcome column.
 - Adds RC47 regression tests for composition, AI contracts, migration/backfill, explicit outcome state and backup compatibility.
+- Keeps the historical RC46 workflow as a regression gate on later PRs instead of trying to package a fake RC46 artifact from a newer version.
 
 ## Preserved
 
@@ -35,3 +36,4 @@ RC47 continues the reliability/architecture roadmap on top of RC46 without addin
 - No Backup format v2/staging restore yet.
 - No signed Ed25519 update manifest yet.
 - Legacy direct Router runtime patching remains behind the new typed AI contract for now.
+- Router-state concurrency hardening remains a later change.
