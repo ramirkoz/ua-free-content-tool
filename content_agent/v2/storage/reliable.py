@@ -139,6 +139,38 @@ class Database(ManualTopicsMixin, CompatDatabase):
                 ),
             )
 
+    def confirm_target_sent(self, target_id: int) -> None:
+        """Record the operator's confirmation that an ambiguous external post exists.
+
+        A remote id may be unavailable after a transport ambiguity, so the durable
+        operator decision itself is the authoritative terminal outcome. Progress is
+        retained for audit instead of being discarded.
+        """
+        target_id = int(target_id)
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT status,progress_json,outcome FROM publication_targets WHERE id=?",
+                (target_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(target_id)
+            if normalize_outcome(row['outcome']) is PublicationOutcome.SENT:
+                return
+            try:
+                progress = json.loads(str(row['progress_json'] or '{}'))
+                progress = dict(progress) if isinstance(progress, dict) else {}
+            except Exception:
+                progress = {}
+            progress['operator_confirmed_sent_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
+            db.execute(
+                "UPDATE publication_targets SET status='sent',outcome=?,last_error=NULL,progress_json=?,updated_at=datetime('now') WHERE id=?",
+                (
+                    PublicationOutcome.SENT.value,
+                    json.dumps(progress, ensure_ascii=False, sort_keys=True),
+                    target_id,
+                ),
+            )
+
     def reconcile_external_successes(self, *, best_effort: bool = False) -> int:
         count = 0
         for path in sorted(self._receipt_dir().glob('target_*.json')):
