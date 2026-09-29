@@ -7,6 +7,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from ...app.container import AppServices, build_services
 from ...backup import import_backup
 from ...config import AppConfig, ConfigError, load_config
 from ...i18n import language_label
@@ -17,17 +18,20 @@ logger = logging.getLogger("content_agent.v2.ui.rc44")
 
 
 class MainWindow(Rc43MainWindow):
-    """RC44 visible filters plus RC45 reliability overrides.
+    """Stable V2 shell for visible filters plus reliability/composition overrides.
 
-    The file name stays stable intentionally: RC45 freezes creation of new
-    version-numbered runtime layers. New behavior should move toward services and
-    explicit composition rather than another MainWindow subclass file.
+    The file name stays stable intentionally: new behavior moves toward services
+    and explicit composition rather than another version-numbered MainWindow layer.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        # Queue-migration dialogs receive a Tk-safe dispatcher through the root
-        # without requiring another legacy MainWindow override.
+    def __init__(self, root, database_or_services, config=None) -> None:
+        if isinstance(database_or_services, AppServices):
+            services = database_or_services
+            self.services = services
+            super().__init__(root, services.db, services.config)
+        else:
+            super().__init__(root, database_or_services, config)
+            self.services = build_services(config=self.config, database=self.db)
         try:
             setattr(self.root, "_ua_free_post_ui", self._post_ui)
         except Exception:
@@ -79,6 +83,7 @@ class MainWindow(Rc43MainWindow):
                 self.config = AppConfig()
             self.publisher_factory.config = self.config
             self.db = create_database()
+            self.services = build_services(config=self.config, database=self.db)
             self.worker.database = self.db
             self.refresh_sources()
             self.refresh_groups()
