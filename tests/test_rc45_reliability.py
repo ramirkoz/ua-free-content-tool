@@ -137,6 +137,10 @@ def test_rc44_topic_filter_widgets_are_actually_managed() -> None:
         tree_frame = ttk.Frame(tab); tree_frame.pack(fill="both", expand=True)
         tree = ttk.Treeview(tree_frame); tree.pack(fill="both", expand=True)
         window = object.__new__(MainWindow)
+        # The active filter deliberately binds StringVar to the owning Tk root.
+        # This characterization harness bypasses __init__, so provide the root
+        # explicitly instead of relying on Tk's implicit default-root behavior.
+        window.root = root
         window.groups_tree = tree
         window.refresh_groups = lambda: None
         window._refresh_inbox_filter_choices = lambda: None
