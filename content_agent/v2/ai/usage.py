@@ -59,7 +59,17 @@ def _iter_events() -> Iterable[dict[str, object]]:
     return rows
 
 
-def usage_summary(*, backend: str | None = None) -> dict[str, float | int]:
+def usage_summary(
+    monthly_budget_usd: float | None = None,
+    *,
+    backend: str | None = None,
+) -> dict[str, float | int]:
+    """Return current-day/current-month usage.
+
+    ``monthly_budget_usd`` is optional because the stable AI UI displays remaining
+    OpenRouter budget.  Keeping it in this view function prevents UI widgets from
+    reproducing accounting logic and preserves the historical positional call.
+    """
     now = datetime.now().astimezone()
     month_prefix = now.strftime("%Y-%m")
     day_prefix = now.strftime("%Y-%m-%d")
@@ -95,4 +105,8 @@ def usage_summary(*, backend: str | None = None) -> dict[str, float | int]:
             result["today_prompt_tokens"] = int(result["today_prompt_tokens"]) + prompt
             result["today_completion_tokens"] = int(result["today_completion_tokens"]) + completion
             result["today_requests"] = int(result["today_requests"]) + 1
+    if monthly_budget_usd is not None:
+        budget = max(0.0, float(monthly_budget_usd))
+        result["budget"] = budget
+        result["remaining"] = max(0.0, budget - float(result["month_cost"]))
     return result
