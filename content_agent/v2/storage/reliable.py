@@ -215,11 +215,9 @@ class Database(ManualTopicsMixin, CompatDatabase):
             outcome = normalize_outcome(row['outcome'])
             if outcome is PublicationOutcome.CONFIRMED_NOT_SENT:
                 continue
-            reason = (
-                'Результат попередньої зовнішньої операції позначено як невідомий.'
-                if outcome is PublicationOutcome.UNKNOWN
-                else uncertain_publication_reason(row['last_error'], row['progress_json'])
-            )
+            reason = uncertain_publication_reason(row['last_error'], row['progress_json'])
+            if outcome is PublicationOutcome.UNKNOWN and not reason:
+                reason = 'Результат попередньої зовнішньої операції позначено як невідомий.'
             if reason:
                 raise ValueError(
                     f"Пакет #{int(row['batch_id'])}, ціль #{int(row['id'])}: {reason} "
