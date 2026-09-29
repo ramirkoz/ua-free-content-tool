@@ -47,10 +47,10 @@ jobs:
       - name: RC45 adds no new versioned runtime layer
         shell: pwsh
         run: |
-          git fetch origin main --depth=1
-          $changed = git diff --name-only origin/main...HEAD -- content_agent
-          $bad = $changed | Where-Object { $_ -match '(^|_)rc45(_|\.|$)' -or $_ -match 'window_rc45' }
-          if ($bad) { throw "RC45 must not add a new versioned runtime layer: $($bad -join ', ')" }
+          $bad = Get-ChildItem content_agent -Recurse -File -Filter *.py | Where-Object {
+            $_.Name -match '(^|_)rc45(_|\.|$)' -or $_.Name -match 'window_rc45'
+          }
+          if ($bad) { throw "RC45 must not add a new versioned runtime layer: $($bad.FullName -join ', ')" }
       - name: Keep RC44 and RC43 topic regressions green
         shell: pwsh
         run: python -m pytest -q tests/test_rc44_inbox_topic_filter.py tests/test_rc43_manual_source_topics.py
