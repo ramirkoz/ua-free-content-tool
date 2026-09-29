@@ -25,6 +25,11 @@ class AIServiceError(RuntimeError):
 
 
 _LOCK = threading.RLock()
+# The historical router persists cooldown/model-health state through read-modify-
+# write JSON operations. All active V2 router executions use this lock so two AI
+# jobs cannot overwrite each other's state. This is deliberately narrower than a
+# global AI lock: OpenRouter and Agent remain independent.
+_ROUTER_EXECUTION_LOCK = threading.RLock()
 _LAST_RESULT: UnifiedAIResult | None = None
 _PROCESS_STARTED_AT = datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -111,24 +116,25 @@ class _RouterAIBackend:
     def run(self, request: AIRequest) -> UnifiedAIResult:
         from ... import ai_router as legacy
 
-        return _legacy_result_to_unified(
-            legacy.run_ai_router(
-                request.prompt,
-                validator=request.validator,
-                max_output_tokens=request.max_output_tokens,
-                local_prompt=request.local_prompt,
-                local_max_output_tokens=request.local_max_output_tokens,
-                local_timeout_seconds=request.local_timeout_seconds,
-                local_repair=request.local_repair,
-                cloud_timeout_seconds=request.cloud_timeout_seconds,
-                task_timeout_seconds=request.task_timeout_seconds,
-                skip_providers=request.skip_providers,
-                skip_models=request.skip_models,
-                suppress_provider_on_quota=request.suppress_provider_on_quota,
-                cancel_event=request.cancel_event,
-            ),
-            BACKEND_ROUTER,
-        )
+        with _ROUTER_EXECUTION_LOCK:
+            return _legacy_result_to_unified(
+                legacy.run_ai_router(
+                    request.prompt,
+                    validator=request.validator,
+                    max_output_tokens=request.max_output_tokens,
+                    local_prompt=request.local_prompt,
+                    local_max_output_tokens=request.local_max_output_tokens,
+                    local_timeout_seconds=request.local_timeout_seconds,
+                    local_repair=request.local_repair,
+                    cloud_timeout_seconds=request.cloud_timeout_seconds,
+                    task_timeout_seconds=request.task_timeout_seconds,
+                    skip_providers=request.skip_providers,
+                    skip_models=request.skip_models,
+                    suppress_provider_on_quota=request.suppress_provider_on_quota,
+                    cancel_event=request.cancel_event,
+                ),
+                BACKEND_ROUTER,
+            )
 
 
 def _backend_for(name: str, settings: object) -> AIBackend:
@@ -234,7 +240,8 @@ def backend_status() -> dict[str, object]:
     try:
         from ...ai_router import provider_health_rows
 
-        rows = provider_health_rows()
+        with _ROUTER_EXECUTION_LOCK:
+            rows = provider_health_rows()
         configured = [row for row in rows if bool(row.get("configured"))]
         available = [row for row in configured if int(row.get("available_slots") or 0) > 0]
         status["router"] = {
@@ -271,7 +278,8 @@ def test_active_backend() -> str:
         return f"Agent backend працює: {result.label}"
     from ...ai_router import test_ai_router
 
-    return test_ai_router()
+    with _ROUTER_EXECUTION_LOCK:
+        return test_ai_router()
 
 
 __all__ = [
