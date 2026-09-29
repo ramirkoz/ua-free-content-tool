@@ -17,7 +17,7 @@ from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
 from .readable_media_names import install_runtime as install_readable_media_names_runtime
 from .v2.storage.factory import create_database
-from .v2.ui.active_window import MainWindow
+from .v2.ui.manual_topics_window_rc44 import MainWindow
 from .version import APP_VERSION
 
 
