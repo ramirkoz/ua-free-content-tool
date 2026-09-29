@@ -9,30 +9,25 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
+from .app.container import build_services
+from .clean_import import clean_import_from_old_data, first_run_marker, mark_first_run_choice, target_has_user_data
 from .config import AppConfig, ConfigError, load_config
-from .v2.storage.factory import create_database
 from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
 from .readable_media_names import install_runtime as install_readable_media_names_runtime
-from .clean_import import clean_import_from_old_data, first_run_marker, mark_first_run_choice, target_has_user_data
-from .version import APP_VERSION
+from .v2.storage.factory import create_database
 from .v2.ui.manual_topics_window_rc44 import MainWindow
+from .version import APP_VERSION
 
 
 def _raise_windows_stdio_limit(logger: object | None = None) -> int:
-    """Raise the MSVCRT stdio descriptor ceiling on Windows.
-
-    This is containment, not permission to leak descriptors. RC6 also bounds
-    resolver threads and stops a collection cycle on EMFILE. Raising the CRT
-    ceiling gives the long-running portable app more headroom for legitimate
-    simultaneous SQLite/log/media/network activity while live telemetry makes
-    a growing handle count visible.
-    """
+    """Raise the MSVCRT stdio descriptor ceiling on Windows."""
     if os.name != "nt":
         return -1
     try:
         import ctypes
+
         msvcrt = ctypes.CDLL("msvcrt")
         getmax = msvcrt._getmaxstdio
         getmax.restype = ctypes.c_int
@@ -122,9 +117,6 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
                 set_stage("clean_import")
                 migration_started = time.monotonic()
                 migration = clean_import_from_old_data(selected_import_path)
-                # The initial Database() creates the target schema for selective
-                # import. Re-create the active composition afterwards so one-time
-                # data migrations and receipt reconciliation run on imported rows.
                 try:
                     database = create_database()
                     with database.connect() as db:
@@ -155,11 +147,14 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
                 config = AppConfig()
             logger.info("STARTUP stage=config end duration=%.3fs", time.monotonic() - config_started)
 
+            set_stage("compose_services")
+            services = build_services(config=config, database=database)
+
             set_stage("database_quick_check")
             check_started = time.monotonic()
-            database.quick_check()
+            services.db.quick_check()
             logger.info("STARTUP stage=database_quick_check end duration=%.3fs", time.monotonic() - check_started)
-            result_queue.put(("ok", (database, config, migration)))
+            result_queue.put(("ok", (services, migration)))
         except Exception as exc:
             result_queue.put(("error", exc))
 
@@ -224,7 +219,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
             root.destroy()
             return
 
-        database, config, migration = payload
+        services, migration = payload
         if migration is not None:
             logger.info(
                 "Clean portable data import completed from %s; config=%s files=%s warnings=%s.",
@@ -249,7 +244,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
         build_started = time.monotonic()
         try:
             root.withdraw()
-            MainWindow(root, database, config)
+            MainWindow(root, services)
             root.title(f"UA FREE Content Tool — v{APP_VERSION}")
             root.deiconify()
         except Exception as exc:
