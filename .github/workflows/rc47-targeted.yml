@@ -67,9 +67,11 @@ jobs:
         shell: pwsh
         run: python -m pytest -q tests/test_drive_auth_recovery_rc41.py tests/test_google_drive_r8.py
       - name: Build signed portable
+        if: github.event_name != 'pull_request'
         shell: cmd
         run: Build_Portable_Windows.bat
       - name: Package portable
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
@@ -81,6 +83,7 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $zip" | Set-Content SHA256SUMS_RC47.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: UA_FREE_Content_Tool_v2.0.0-rc47_Windows_Portable_MANUAL_TEST
           path: |
