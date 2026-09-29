@@ -48,9 +48,24 @@ def _migration_0010_articles_discovered_at_index(db: Connection) -> None:
     )
 
 
+def _migration_0011_manual_source_topics(db: Connection) -> None:
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS manual_topics("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "name TEXT NOT NULL COLLATE NOCASE UNIQUE,"
+        "created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    if "topic_id" not in _columns(db, "sources"):
+        db.execute("ALTER TABLE sources ADD COLUMN topic_id INTEGER")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_sources_topic_id ON sources(topic_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_manual_topics_name ON manual_topics(name COLLATE NOCASE)")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0009_publication_target_outcome", _migration_0009_publication_target_outcome),
     ("0010_articles_discovered_at_index", _migration_0010_articles_discovered_at_index),
+    ("0011_manual_source_topics", _migration_0011_manual_source_topics),
 )
 
 
