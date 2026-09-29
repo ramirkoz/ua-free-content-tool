@@ -21,6 +21,16 @@ from .v2.ui.manual_topics_window_rc44 import MainWindow
 from .version import APP_VERSION
 
 
+_STARTUP_STAGE_LABELS = {
+    "database_init": "перевіряю базу даних",
+    "clean_import": "імпортую дані зі старої версії",
+    "config": "завантажую налаштування",
+    "compose_services": "підключаю служби програми",
+    "database_quick_check": "перевіряю цілісність даних",
+    "build_main_window": "відкриваю робоче вікно",
+}
+
+
 def _raise_windows_stdio_limit(logger: object | None = None) -> int:
     """Raise the MSVCRT stdio descriptor ceiling on Windows."""
     if os.name != "nt":
@@ -58,16 +68,66 @@ def _show_startup_error(root: tk.Tk, message: str) -> None:
         pass
 
 
+def _choose_first_run_action(root: tk.Tk) -> str:
+    """Return import/fresh/later using explicit operator-facing choices."""
+    choice = {"value": "later"}
+    dialog = tk.Toplevel(root)
+    dialog.title("UA FREE Content Tool · перший запуск")
+    dialog.transient(root)
+    dialog.resizable(False, False)
+    dialog.grab_set()
+
+    body = ttk.Frame(dialog, padding=18)
+    body.pack(fill="both", expand=True)
+    ttk.Label(body, text="Що зробити з даними попередньої версії?", font="TkHeadingFont").pack(anchor="w")
+    ttk.Label(
+        body,
+        text=(
+            "Імпорт переносить робочі дані й налаштування зі старої папки Content Tool.\n"
+            "«Почати з чистого» створює нову Data. «Вирішити пізніше» нічого не змінює\n"
+            "і покаже цей вибір знову під час наступного запуску."
+        ),
+        justify="left",
+        wraplength=560,
+    ).pack(anchor="w", pady=(10, 16))
+
+    buttons = ttk.Frame(body)
+    buttons.pack(fill="x")
+
+    def finish(value: str) -> None:
+        choice["value"] = value
+        try:
+            dialog.grab_release()
+        except tk.TclError:
+            pass
+        dialog.destroy()
+
+    ttk.Button(buttons, text="Імпортувати", command=lambda: finish("import")).pack(side="left")
+    ttk.Button(buttons, text="Почати з чистого", command=lambda: finish("fresh")).pack(side="left", padx=8)
+    ttk.Button(buttons, text="Вирішити пізніше", command=lambda: finish("later")).pack(side="right")
+    dialog.protocol("WM_DELETE_WINDOW", lambda: finish("later"))
+
+    dialog.update_idletasks()
+    try:
+        x = root.winfo_rootx() + max(0, (root.winfo_width() - dialog.winfo_reqwidth()) // 2)
+        y = root.winfo_rooty() + max(0, (root.winfo_height() - dialog.winfo_reqheight()) // 2)
+        dialog.geometry(f"+{x}+{y}")
+    except tk.TclError:
+        pass
+    root.wait_window(dialog)
+    return str(choice["value"])
+
+
 def _run_ui_startup(root: tk.Tk, logger: object) -> int:
     root.title(f"UA FREE Content Tool — v{APP_VERSION} · запуск")
-    root.geometry("560x150")
-    root.minsize(520, 140)
+    root.geometry("620x180")
+    root.minsize(560, 160)
 
     frame = ttk.Frame(root, padding=18)
     frame.pack(fill="both", expand=True)
     status_var = tk.StringVar(value="Запуск: підготовка…")
     ttk.Label(frame, text=f"UA FREE Content Tool v{APP_VERSION}", font="TkHeadingFont").pack(anchor="w")
-    ttk.Label(frame, textvariable=status_var, wraplength=500).pack(anchor="w", pady=(10, 8))
+    ttk.Label(frame, textvariable=status_var, wraplength=560).pack(anchor="w", pady=(10, 8))
     progress = ttk.Progressbar(frame, mode="indeterminate")
     progress.pack(fill="x")
     progress.start(12)
@@ -77,24 +137,20 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
 
     selected_import_path = ""
     if not first_run_marker().exists() and not target_has_user_data():
-        wants_import = messagebox.askyesno(
-            "UA FREE Content Tool · перший запуск",
-            "Імпортувати потрібні дані зі старої версії?\n\n"
-            "Перенесемо джерела, групи, матеріали, чергу публікацій, редакційну пам’ять, "
-            "налаштування соцмереж та AI Router/OpenRouter credentials. "
-            "Логи, кеш, cooldown/state, supervisor/recovery, старі backups, Codex/runtime і Tools не копіюються.",
-            parent=root,
-        )
-        if wants_import:
+        action = _choose_first_run_action(root)
+        if action == "import":
             selected_import_path = filedialog.askdirectory(
-                title="Оберіть стару папку Content Tool або її Data",
+                title="Оберіть стару папку Content Tool, UA_FREE_Content_Tool або Data",
                 parent=root,
                 mustexist=True,
             ) or ""
             if not selected_import_path:
-                mark_first_run_choice("cancelled")
-        else:
+                status_var.set("Імпорт не вибрано. Під час наступного запуску запитаємо знову.")
+        elif action == "fresh":
             mark_first_run_choice("fresh")
+        else:
+            status_var.set("Дані не змінюємо. Під час наступного запуску запитаємо знову.")
+
     stop_watchdog = threading.Event()
     pulse_lock = threading.Lock()
     pulse = {"last": time.monotonic(), "stage": "create_window", "dumped": 0.0}
@@ -199,7 +255,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
             except queue.Empty:
                 break
         if latest_stage:
-            status_var.set("Запуск: " + latest_stage.replace("_", " ") + "…")
+            status_var.set("Запуск: " + _STARTUP_STAGE_LABELS.get(latest_stage, latest_stage.replace("_", " ")) + "…")
         try:
             kind, payload = result_queue.get_nowait()
         except queue.Empty:
@@ -244,9 +300,18 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
         build_started = time.monotonic()
         try:
             root.withdraw()
-            MainWindow(root, services)
+            window = MainWindow(root, services)
+            # RC49 readiness contract: the inner V2 constructor may create the
+            # Supervisor object, but SupervisorRuntime.start() is required to defer
+            # all DB/Drive/AI work until the *outermost* Source/Topic shell has also
+            # finished.  This prevents startup quick_check from blocking Tk on the
+            # global database maintenance lock.
+            window._ui_ready = True
             root.title(f"UA FREE Content Tool — v{APP_VERSION}")
             root.deiconify()
+            supervisor = getattr(window, "v2_supervisor", None)
+            if supervisor is not None:
+                root.after_idle(supervisor.start)
         except Exception as exc:
             stop_watchdog.set()
             logger.error("Application UI startup failed: %s", exc)
