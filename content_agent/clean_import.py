@@ -242,6 +242,51 @@ def _import_sidecars(old_root: Path) -> tuple[list[str], list[str]]:
     return imported, warnings
 
 
+def _copy_publication_receipts(
+    old_root: Path,
+    target_db: Path,
+    *,
+    imported: list[str],
+    warnings: list[str],
+) -> None:
+    """Carry durable external-success receipts only when their target row exists.
+
+    These receipts are part of the duplicate-publication safety boundary, not
+    transient supervisor state. Invalid/orphaned files are skipped with a warning.
+    """
+    source_dir = old_root / "publication_recovery"
+    if not source_dir.is_dir():
+        return
+    target_dir = data_dir() / "publication_recovery"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(f"file:{target_db.resolve().as_posix()}?mode=ro", uri=True, timeout=10)
+    try:
+        for source in sorted(source_dir.glob("target_*.json")):
+            try:
+                payload = json.loads(source.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict) or payload.get("schema") != "ua-free-content-tool-publication-receipt-v1":
+                    raise ValueError("невідомий формат receipt")
+                target_id = int(payload.get("target_id") or 0)
+                if target_id <= 0:
+                    raise ValueError("неправильний target_id")
+                exists = con.execute("SELECT 1 FROM publication_targets WHERE id=?", (target_id,)).fetchone()
+                if exists is None:
+                    warnings.append(f"{source.name}: receipt не має відповідної publication target; пропущено")
+                    continue
+                target = target_dir / source.name
+                tmp = target.with_name(target.name + ".import.tmp")
+                try:
+                    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    os.replace(tmp, target)
+                finally:
+                    tmp.unlink(missing_ok=True)
+                imported.append(str(target.relative_to(data_dir())))
+            except Exception as exc:
+                warnings.append(f"{source.name}: пошкоджений publication receipt, пропущено ({exc})")
+    finally:
+        con.close()
+
+
 def clean_import_from_old_data(path: str | Path) -> CleanImportReport:
     old_root, source_db = _locate_old_data(path)
     target_db = database_path()
@@ -265,6 +310,9 @@ def clean_import_from_old_data(path: str | Path) -> CleanImportReport:
         for table in _STABLE_TABLES:
             if _columns(src, table) and _columns(dst, table):
                 summary[table] = _copy_table(src, dst, table)
+        fk_rows = dst.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_rows:
+            raise RuntimeError(f"Нова база не пройшла foreign_key_check після імпорту: {len(fk_rows)} помилок")
         dst.commit()
         if dst.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise RuntimeError("Нова база не пройшла SQLite quick_check після імпорту")
@@ -277,6 +325,12 @@ def clean_import_from_old_data(path: str | Path) -> CleanImportReport:
 
     config_imported = _import_config(old_root)
     imported_files, warnings = _import_sidecars(old_root)
+    _copy_publication_receipts(
+        old_root,
+        target_db,
+        imported=imported_files,
+        warnings=warnings,
+    )
     report = CleanImportReport(
         source=str(old_root),
         database=str(source_db),

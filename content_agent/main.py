@@ -10,7 +10,7 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 from .config import AppConfig, ConfigError, load_config
-from .v2.storage.reliable import Database
+from .v2.storage.factory import create_database
 from .instance_lock import AlreadyRunning, InstanceLock
 from .logging_setup import configure_logging
 from .paths import data_dir, portable_mode
@@ -114,7 +114,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
         try:
             set_stage("database_init")
             database_started = time.monotonic()
-            database = Database()
+            database = create_database()
             logger.info("STARTUP stage=database_init end duration=%.3fs", time.monotonic() - database_started)
 
             migration = None
@@ -122,6 +122,20 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
                 set_stage("clean_import")
                 migration_started = time.monotonic()
                 migration = clean_import_from_old_data(selected_import_path)
+                # The initial Database() creates the target schema for selective
+                # import. Re-create the active composition afterwards so one-time
+                # data migrations and receipt reconciliation run on imported rows.
+                try:
+                    database = create_database()
+                    with database.connect() as db:
+                        fk_rows = db.execute("PRAGMA foreign_key_check").fetchall()
+                    if fk_rows:
+                        raise RuntimeError(
+                            f"Імпортована база не пройшла foreign_key_check: {len(fk_rows)} помилок."
+                        )
+                except Exception:
+                    logger.exception("Clean import post-migration validation failed")
+                    raise
                 mark_first_run_choice("imported", selected_import_path)
                 logger.info(
                     "STARTUP stage=clean_import end duration=%.3fs source=%s tables=%s",
