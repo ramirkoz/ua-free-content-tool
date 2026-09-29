@@ -159,15 +159,14 @@ def test_legacy_router_execution_is_serialized(monkeypatch: pytest.MonkeyPatch) 
     active = 0
     max_active = 0
     guard = threading.Lock()
-    ready = threading.Barrier(2)
+    start = threading.Barrier(3)
 
     def fake_run(*_args, **_kwargs):
         nonlocal active, max_active
-        ready.wait(timeout=2)
         with guard:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(0.05)
+        time.sleep(0.08)
         with guard:
             active -= 1
         return SimpleNamespace(text="ok", provider="fake", model="m", label="fake", attempted=())
@@ -179,6 +178,7 @@ def test_legacy_router_execution_is_serialized(monkeypatch: pytest.MonkeyPatch) 
 
     def runner():
         try:
+            start.wait(timeout=2)
             backend.run(request)
         except BaseException as exc:  # pragma: no cover - assertion below reports it
             errors.append(exc)
@@ -186,13 +186,11 @@ def test_legacy_router_execution_is_serialized(monkeypatch: pytest.MonkeyPatch) 
     first = threading.Thread(target=runner)
     second = threading.Thread(target=runner)
     first.start(); second.start()
+    start.wait(timeout=2)
     first.join(timeout=3); second.join(timeout=3)
 
-    # A barrier inside the locked section would deadlock if both executions were
-    # allowed to enter concurrently. One thread reaches it first, proving the lock;
-    # release it for this synthetic test by accepting the Barrier timeout.
-    assert max_active <= 1
-    assert all(isinstance(exc, threading.BrokenBarrierError) for exc in errors) or not errors
+    assert errors == []
+    assert max_active == 1
 
 
 def test_rc48_adds_no_new_versioned_mainwindow_layer() -> None:
