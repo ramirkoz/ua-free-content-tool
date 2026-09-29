@@ -66,9 +66,11 @@ _REQUIRED_TABLES = {
 }
 _OPTIONAL_TABLES = {
     "manual_topics": {"id", "name", "created_at", "updated_at"},
+    "schema_migrations": {"id", "applied_at"},
 }
 _OPTIONAL_COLUMNS = {
     "sources": {"topic_id"},
+    "publication_targets": {"outcome"},
 }
 _ALLOWED = {"content_agent.sqlite3", "config.dpapi", "config.portable", "portable.key", "manifest.json"}
 _MAX_BACKUP_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -220,9 +222,9 @@ def _create_backup_unlocked(destination_dir: Path | None = None) -> Path:
     return final_zip
 
 
-
 def create_backup(destination_dir: Path | None = None) -> Path:
     return _create_backup_unlocked(destination_dir)
+
 
 def _validate_archive(archive_path: Path, destination: Path) -> dict[str, object]:
     try:
