@@ -13,7 +13,10 @@ Manual-test candidate built on RC48.
 - Replaces the ambiguous first-run Yes/No prompt with explicit operator choices: `Імпортувати`, `Почати з чистого`, `Вирішити пізніше`.
 - `Вирішити пізніше` does not create a permanent first-run marker, so the choice is offered again on the next launch.
 - Startup progress stages are rendered as human Ukrainian labels rather than internal identifiers.
+- Makes publication shutdown graceful so an active publication worker is given a bounded chance to reach a safe stop boundary instead of being torn down immediately.
+- Renames the current V2 neural-network settings surface to the clearer operator-facing `AI` label while preserving the existing backend configuration.
 - Preserves RC48 Source/Topic filter fixes, explicit publication outcomes, manual-edit rewrite protection, adaptive shell layout and unknown-publication fail-closed UX.
+- Keeps RC47/RC48 workflows as regression gates on newer PRs instead of falsely failing because a newer candidate no longer has the older exact package version.
 
 ## Live incident addressed
 
