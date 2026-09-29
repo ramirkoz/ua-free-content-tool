@@ -1,13 +1,105 @@
 from __future__ import annotations
 
+import logging
+import queue
+import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
+from ...backup import import_backup
+from ...config import AppConfig, ConfigError, load_config
+from ...i18n import language_label
+from ..storage.factory import create_database
 from .manual_topics_window import ALL_SOURCES, ALL_TOPICS, MainWindow as Rc43MainWindow
+
+logger = logging.getLogger("content_agent.v2.ui.rc44")
 
 
 class MainWindow(Rc43MainWindow):
-    """RC44: keep Inbox source/topic filters on their own visible row."""
+    """RC44 visible filters plus RC45 reliability overrides.
+
+    The file name stays stable intentionally: RC45 freezes creation of new
+    version-numbered runtime layers. New behavior should move toward services and
+    explicit composition rather than another MainWindow subclass file.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # Queue-migration dialogs receive a Tk-safe dispatcher through the root
+        # without requiring another legacy MainWindow override.
+        try:
+            setattr(self.root, "_ua_free_post_ui", self._post_ui)
+        except Exception:
+            logger.exception("Could not expose UI dispatcher to child dialogs")
+
+    def _drain_ui_events(self) -> None:
+        """Keep Tk alive while making queued callback failures observable."""
+        self._ui_dispatch_after_id = None
+        self._ui_last_pulse = time.monotonic()
+        if getattr(self, "_closing", False):
+            return
+        processed = 0
+        while processed < 200:
+            try:
+                callback = self._ui_event_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception:
+                logger.exception("Queued UI callback failed")
+            processed += 1
+        if not getattr(self, "_closing", False):
+            try:
+                self._ui_dispatch_after_id = self.root.after(50, self._drain_ui_events)
+            except tk.TclError:
+                self._ui_dispatch_after_id = None
+
+    def import_backup_ui(self) -> None:
+        """Restore through the same reliable database composition as startup."""
+        selected = self.files.askopenfilename(
+            parent=self.root,
+            title="Оберіть backup",
+            filetypes=[("UA FREE backup", "*.zip")],
+        )
+        if not selected:
+            return
+        if not self.msg.askyesno(
+            "Імпорт",
+            "Поточні дані спочатку буде збережено в safety backup. Продовжити?",
+            parent=self.root,
+        ):
+            return
+
+        def success(result: object) -> None:
+            try:
+                self.config = load_config()
+            except ConfigError:
+                self.config = AppConfig()
+            self.publisher_factory.config = self.config
+            self.db = create_database()
+            self.worker.database = self.db
+            self.refresh_sources()
+            self.refresh_groups()
+            self.refresh_queue()
+            self.refresh_history()
+            self._update_target_availability()
+            self.ui_language_var.set(language_label(self.config.ui_language))
+            self._apply_language()
+            self.refresh_learning_stats()
+            self.msg.showinfo(
+                "Імпорт",
+                f"Імпорт завершено. Safety backup: {getattr(result, 'safety_backup', '')}",
+                parent=self.root,
+            )
+
+        self.run_async(
+            lambda: import_backup(Path(selected)),
+            success,
+            label="Імпортую резервну копію",
+            done_label="Імпорт завершено",
+        )
 
     def _install_manual_topic_inbox_filters(self) -> None:
         if hasattr(self, "inbox_source_filter_box"):

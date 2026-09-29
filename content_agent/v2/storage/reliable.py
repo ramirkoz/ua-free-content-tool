@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ...database import redact_secrets
 from ...paths import data_dir
+from ..publishing.retry import uncertain_publication_reason
 from .compat import Database as CompatDatabase
 from .manual_topics import ManualTopicsMixin
 
@@ -125,6 +126,33 @@ class Database(ManualTopicsMixin, CompatDatabase):
             logger.error('Suppressing failed downgrade for known external success target=%s', target_id)
             return
         super().mark_target_failed(target_id, error)
+
+    def _assert_batches_safe_to_retry(self, batch_ids) -> None:
+        ids = sorted({int(value) for value in batch_ids if int(value) > 0})
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT id,batch_id,last_error,progress_json FROM publication_targets "
+                f"WHERE batch_id IN ({placeholders}) AND status!='sent'",
+                ids,
+            ).fetchall()
+        for row in rows:
+            reason = uncertain_publication_reason(row["last_error"], row["progress_json"])
+            if reason:
+                raise ValueError(
+                    f"Пакет #{int(row['batch_id'])}, ціль #{int(row['id'])}: {reason} "
+                    "Повтор заблоковано до ручної перевірки платформи."
+                )
+
+    def _reschedule_batches(self, schedules, *, allowed_statuses):
+        self._assert_batches_safe_to_retry(schedules.keys())
+        return super()._reschedule_batches(schedules, allowed_statuses=allowed_statuses)
+
+    def resume_batch(self, batch_id: int, *, reset_attempts: bool = True) -> None:
+        self._assert_batches_safe_to_retry([batch_id])
+        return super().resume_batch(batch_id, reset_attempts=reset_attempts)
 
     def mark_unsent_targets_failed(self, batch_id: int, error: object) -> None:
         self.reconcile_external_successes(best_effort=True)

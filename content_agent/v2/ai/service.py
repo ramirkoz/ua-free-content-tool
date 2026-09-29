@@ -55,38 +55,44 @@ def execute(
     suppress_provider_on_quota: bool = False,
     cancel_event: object | None = None,
 ) -> UnifiedAIResult:
-    """Single V2 execution gate.
-
-    Backend choice remains explicit. RC8 changes the direct Router itself: direct
-    Gemini/Groq/NVIDIA/Cloudflare calls now use paced transport, short retry and
-    reviewed model fallbacks rather than treating one transient response as a dead
-    provider.
-    """
+    """Single V2 execution gate."""
     global _LAST_RESULT
     settings = load_backend_settings()
     backend = settings.active_backend
+    skipped_providers = {str(value or "").strip().casefold() for value in (skip_providers or ()) if str(value or "").strip()}
+    skipped_models = {str(value or "").strip().casefold() for value in (skip_models or ()) if str(value or "").strip()}
     logger.info("AI V2 execute backend=%s max_output_tokens=%s", backend, max_output_tokens)
 
+    if cancel_event is not None and bool(getattr(cancel_event, "is_set", lambda: False)()):
+        raise AIServiceError("AI-завдання скасовано.")
+
     if backend == BACKEND_OPENROUTER:
+        if "openrouter" in skipped_providers:
+            raise AIServiceError("OpenRouter пропущено safety contract цього AI-завдання.")
         timeout = int(task_timeout_seconds or cloud_timeout_seconds or 120)
         result = OpenRouterBackend(settings).run(
             prompt,
             validator=validator,
             max_output_tokens=max_output_tokens,
             timeout_seconds=timeout,
-            skip_models=tuple(skip_models or ()),
+            skip_models=tuple(skipped_models),
         )
     elif backend == BACKEND_AGENT:
-        from ...codex_runtime import run_codex
-        if cancel_event is not None and bool(getattr(cancel_event, "is_set", lambda: False)()):
-            raise AIServiceError("AI-завдання скасовано.")
+        if skipped_providers.intersection({"agent", "codex"}) or "codex-chatgpt" in skipped_models:
+            raise AIServiceError("Codex / ChatGPT пропущено safety contract цього AI-завдання.")
+        from ... import ai_router as legacy
+        timeout = max(3, int(task_timeout_seconds or cloud_timeout_seconds or 120))
         started = time.monotonic()
         try:
-            text = str(run_codex(prompt)).strip()
+            text = str(legacy._invoke_codex_limited(prompt, timeout)).strip()
         except Exception as exc:
+            if cancel_event is not None and bool(getattr(cancel_event, "is_set", lambda: False)()):
+                raise AIServiceError("AI-завдання скасовано.") from exc
             raise AIServiceError(f"Agent backend (Codex) не завершив запит: {exc}") from exc
         if not text:
             raise AIServiceError("Agent backend повернув порожню відповідь.")
+        if cancel_event is not None and bool(getattr(cancel_event, "is_set", lambda: False)()):
+            raise AIServiceError("AI-завдання скасовано.")
         if validator is not None:
             validator(text)
         result = UnifiedAIResult(
