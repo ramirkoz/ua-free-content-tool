@@ -40,8 +40,17 @@ def _migration_0009_publication_target_outcome(db: Connection) -> None:
     )
 
 
+def _migration_0010_articles_discovered_at_index(db: Connection) -> None:
+    """Keep current-day counters off full-table scans on large portable databases."""
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_articles_discovered_at "
+        "ON articles(discovered_at)"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0009_publication_target_outcome", _migration_0009_publication_target_outcome),
+    ("0010_articles_discovered_at_index", _migration_0010_articles_discovered_at_index),
 )
 
 
