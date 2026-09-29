@@ -63,16 +63,46 @@ class CleanImportReport:
 
 def _locate_old_data(path: str | Path) -> tuple[Path, Path]:
     src = Path(path).expanduser().resolve()
+    if src.is_file() and src.suffix.casefold() in {".sqlite", ".sqlite3", ".db"}:
+        return src.parent, src
+
     roots: list[Path] = []
     if src.is_dir():
-        roots.extend([src, src / "Data"])
+        # Accept every folder level a human can reasonably select in Explorer:
+        # 1) Data itself;
+        # 2) UA_FREE_Content_Tool application folder;
+        # 3) the outer extracted ZIP wrapper containing UA_FREE_Content_Tool.
+        roots.extend((src, src / "Data"))
+        app_root = src / "UA_FREE_Content_Tool"
+        roots.extend((app_root, app_root / "Data"))
+
+        # Older/manual packages may keep the application folder under a versioned
+        # UA_FREE_Content_Tool* name. Look only one level down and only at our own
+        # package naming family so we do not recursively grab an unrelated DB.
+        try:
+            for child in sorted(src.iterdir(), key=lambda item: item.name.casefold()):
+                if not child.is_dir() or child == app_root:
+                    continue
+                if not child.name.casefold().startswith("ua_free_content_tool"):
+                    continue
+                roots.extend((child, child / "Data"))
+        except OSError:
+            pass
+
+    seen: set[Path] = set()
     for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
         db = root / "content_agent.sqlite3"
         if db.is_file():
             return root, db
-    if src.is_file() and src.suffix.casefold() in {".sqlite", ".sqlite3", ".db"}:
-        return src.parent, src
-    raise FileNotFoundError(f"Не знайдено content_agent.sqlite3 у {src}")
+
+    raise FileNotFoundError(
+        f"Не знайдено content_agent.sqlite3 у {src}. "
+        "Можна обрати зовнішню папку розпакованого portable, папку UA_FREE_Content_Tool, "
+        "її Data або сам файл content_agent.sqlite3."
+    )
 
 
 def _columns(con: sqlite3.Connection, table: str) -> list[str]:
