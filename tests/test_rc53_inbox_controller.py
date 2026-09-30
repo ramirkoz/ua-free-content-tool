@@ -47,13 +47,10 @@ def _seed_inbox(db) -> tuple[int, int, int, int]:
 def test_rc53_source_topic_search_filters_are_sql_backed(tmp_path: Path) -> None:
     db = create_database(tmp_path / "rc53.sqlite3")
     source_a, source_b, topic_a, topic_b = _seed_inbox(db)
-
     assert [g.canonical_title for g in db.list_inbox_groups(source_id=source_a)] == ["Alpha mission"]
     assert [g.canonical_title for g in db.list_inbox_groups(source_id=source_b)] == ["Beta laboratory"]
     assert [g.canonical_title for g in db.list_inbox_groups(topic_id=topic_a)] == ["Alpha mission"]
     assert [g.canonical_title for g in db.list_inbox_groups(topic_id=topic_b)] == ["Beta laboratory"]
-
-    # Search terms use AND semantics, while each token may match title/editorial/article text.
     assert [g.canonical_title for g in db.list_inbox_groups(search="Alpha launch")] == ["Alpha mission"]
     assert db.list_inbox_groups(search="Alpha scientists") == []
     assert [
@@ -66,7 +63,6 @@ def test_rc53_canonical_shell_uses_controller_and_shared_components() -> None:
     shell = Path("content_agent/v2/ui/manual_topics_window_rc44.py").read_text(encoding="utf-8")
     controller = Path("content_agent/v2/ui/tabs/inbox.py").read_text(encoding="utf-8")
     components = Path("content_agent/v2/ui/components.py").read_text(encoding="utf-8")
-
     assert "InboxTabController" in shell
     assert "FilterBar" in shell
     assert "StatusBar" in shell
@@ -88,5 +84,5 @@ def test_rc53_package_version_is_aligned() -> None:
     public = Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip()
     internal = Path("VERSION.txt").read_text(encoding="utf-8").strip()
     package = Path("content_agent/__init__.py").read_text(encoding="utf-8")
-    assert public == internal == "2.0.0-rc53"
-    assert '__version__ = "2.0.0-rc53"' in package
+    assert public == internal
+    assert f'__version__ = "{public}"' in package

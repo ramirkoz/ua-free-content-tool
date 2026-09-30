@@ -4,11 +4,7 @@ from typing import Iterable
 
 
 class ManualTopicsMixin:
-    """Durable operator-owned topic catalog and per-source assignment.
-
-    Schema evolution is owned by v2.storage.migrations. This mixin contains only
-    runtime data operations and never mutates the schema from its constructor.
-    """
+    """Durable operator-owned topic catalog and RC54 operator data policy."""
 
     @staticmethod
     def _clean_topic_name(value: object) -> str:
@@ -26,10 +22,7 @@ class ManualTopicsMixin:
         if not clean:
             raise ValueError("Назва теми не може бути порожньою.")
         with self.connect() as db:
-            existing = db.execute(
-                "SELECT id FROM manual_topics WHERE name=? COLLATE NOCASE",
-                (clean,),
-            ).fetchone()
+            existing = db.execute("SELECT id FROM manual_topics WHERE name=? COLLATE NOCASE", (clean,)).fetchone()
             if existing:
                 return int(existing[0])
             cursor = db.execute(
@@ -44,14 +37,12 @@ class ManualTopicsMixin:
             raise ValueError("Назва теми не може бути порожньою.")
         with self.connect() as db:
             collision = db.execute(
-                "SELECT id FROM manual_topics WHERE name=? COLLATE NOCASE AND id<>?",
-                (clean, int(topic_id)),
+                "SELECT id FROM manual_topics WHERE name=? COLLATE NOCASE AND id<>?", (clean, int(topic_id))
             ).fetchone()
             if collision:
                 raise ValueError("Тема з такою назвою вже існує.")
             cursor = db.execute(
-                "UPDATE manual_topics SET name=?,updated_at=datetime('now') WHERE id=?",
-                (clean, int(topic_id)),
+                "UPDATE manual_topics SET name=?,updated_at=datetime('now') WHERE id=?", (clean, int(topic_id))
             )
             if cursor.rowcount != 1:
                 raise KeyError(int(topic_id))
@@ -61,9 +52,7 @@ class ManualTopicsMixin:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                affected = int(
-                    db.execute("SELECT COUNT(*) FROM sources WHERE topic_id=?", (topic_id,)).fetchone()[0] or 0
-                )
+                affected = int(db.execute("SELECT COUNT(*) FROM sources WHERE topic_id=?", (topic_id,)).fetchone()[0] or 0)
                 db.execute("UPDATE sources SET topic_id=NULL WHERE topic_id=?", (topic_id,))
                 cursor = db.execute("DELETE FROM manual_topics WHERE id=?", (topic_id,))
                 if cursor.rowcount != 1:
@@ -78,10 +67,8 @@ class ManualTopicsMixin:
         source_id = int(source_id)
         value = None if topic_id is None else int(topic_id)
         with self.connect() as db:
-            if value is not None:
-                topic = db.execute("SELECT id FROM manual_topics WHERE id=?", (value,)).fetchone()
-                if topic is None:
-                    raise KeyError(value)
+            if value is not None and db.execute("SELECT id FROM manual_topics WHERE id=?", (value,)).fetchone() is None:
+                raise KeyError(value)
             cursor = db.execute("UPDATE sources SET topic_id=? WHERE id=?", (value, source_id))
             if cursor.rowcount != 1:
                 raise KeyError(source_id)
@@ -121,14 +108,10 @@ class ManualTopicsMixin:
         query += " ORDER BY a.group_id,s.name COLLATE NOCASE,s.id"
         with self.connect() as db:
             rows = db.execute(query, params).fetchall()
-
         result: dict[int, dict[str, object]] = {}
         for row in rows:
             group_id = int(row["group_id"])
-            bucket = result.setdefault(
-                group_id,
-                {"source_ids": [], "source_names": [], "topic_ids": [], "topic_names": []},
-            )
+            bucket = result.setdefault(group_id, {"source_ids": [], "source_names": [], "topic_ids": [], "topic_names": []})
             source_id = int(row["source_id"])
             source_name = str(row["source_name"] or "")
             topic_id = row["topic_id"]
@@ -141,6 +124,22 @@ class ManualTopicsMixin:
                 bucket["topic_names"].append(topic_name)
         return result
 
+    def set_group_analysis(
+        self,
+        group_id: int,
+        *,
+        score: int,
+        confidence: int,
+        details: dict[str, object],
+        recommendations: list[str],
+    ) -> None:
+        """RC54 compatibility sink: automatic 'potential' scoring is no longer product behavior.
+
+        Historical schema fields stay readable until RC55 cleanup, but active collection/merge
+        paths cannot persist or influence an operator-facing score anymore.
+        """
+        return None
+
     def list_inbox_groups(
         self,
         *,
@@ -148,14 +147,9 @@ class ManualTopicsMixin:
         source_id: int | None = None,
         topic_id: int | None = None,
         search: str = "",
-        limit: int = 200,
+        limit: int | None = None,
     ):
-        """Return Inbox groups with Source/Topic/Search filtering performed in SQL.
-
-        RC53 deliberately moves these filters out of Treeview post-processing. Each
-        whitespace-separated search token must match the group title/editorial text
-        or at least one article title/body (AND semantics across tokens).
-        """
+        """Return all matching Inbox groups unless an explicit caller limit is given."""
         query = """
             SELECT g.*,
                    COUNT(a.id) AS source_count,
@@ -190,9 +184,7 @@ class ManualTopicsMixin:
                 ))"""
             )
         if source_id is not None:
-            where.append(
-                "EXISTS (SELECT 1 FROM articles fs WHERE fs.group_id=g.id AND fs.source_id=?)"
-            )
+            where.append("EXISTS (SELECT 1 FROM articles fs WHERE fs.group_id=g.id AND fs.source_id=?)")
             params.append(int(source_id))
         if topic_id is not None:
             where.append(
@@ -217,8 +209,10 @@ class ManualTopicsMixin:
             params.extend([pattern, pattern, pattern, pattern, pattern])
         if where:
             query += " WHERE " + " AND ".join(f"({item})" for item in where)
-        query += " GROUP BY g.id ORDER BY COALESCE(MAX(a.published_at),g.updated_at) DESC LIMIT ?"
-        params.append(max(1, min(5000, int(limit))))
+        query += " GROUP BY g.id ORDER BY COALESCE(MAX(a.published_at),g.updated_at) DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(max(1, min(5000, int(limit))))
         with self.connect() as db:
             rows = db.execute(query, params).fetchall()
         return [self._group_from_row(row, []) for row in rows]

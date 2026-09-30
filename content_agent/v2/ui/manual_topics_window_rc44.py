@@ -6,32 +6,31 @@ from tkinter import ttk
 from .components import FilterBar, PublicationStatus, StatusBar
 from .legacy_manual_topics_window_rc44 import MainWindow as LegacyStableMainWindow
 from .manual_topics_window import ALL_SOURCES, ALL_TOPICS
+from .tabs.data_backups import DataBackupsTabController
 from .tabs.inbox import InboxTabController
+from .tabs.platforms import PlatformsTabController
 
 
 class MainWindow(LegacyStableMainWindow):
-    """Canonical V2 shell with the first extracted tab controller.
-
-    RC53 keeps the proven legacy shell as one frozen compatibility boundary while
-    Inbox state/query/rendering moves to composition. New RC-specific window layers
-    are forbidden; future UI work extends controllers/components instead.
-    """
+    """Canonical V2 shell composed from shared controls and tab controllers."""
 
     ALL_SOURCES_LABEL = ALL_SOURCES
     ALL_TOPICS_LABEL = ALL_TOPICS
 
     def __init__(self, root, database_or_services, config=None) -> None:
         self._inbox_controller: InboxTabController | None = None
+        self._platforms_controller: PlatformsTabController | None = None
+        self._data_controller: DataBackupsTabController | None = None
         super().__init__(root, database_or_services, config)
+        self._apply_rc54_dpi_layout()
         self._inbox_controller = InboxTabController(self, self._rc53_filter_bar)
         self._inbox_controller.refresh_choices()
+        self._platforms_controller = PlatformsTabController(self)
+        self._data_controller = DataBackupsTabController(self)
         self._rename_system_tab()
+        self._apply_rc54_publication_layout()
         self.refresh_groups()
 
-    # ------------------------------------------------------------------
-    # Shared FilterBar. Dynamic dispatch makes this replace the RC43/RC44
-    # source/topic bar during construction, so no duplicate legacy filter renders.
-    # ------------------------------------------------------------------
     def _install_manual_topic_inbox_filters(self) -> None:
         if hasattr(self, "_rc53_filter_bar"):
             return
@@ -58,8 +57,6 @@ class MainWindow(LegacyStableMainWindow):
         self._rc53_filter_bar = bar
         self.inbox_source_filter_box = bar.source_box
         self.inbox_topic_filter_box = bar.topic_box
-        # RC14 keyword entry served a separate historical Inbox-search surface.
-        # RC53 owns search in the single FilterBar, so hide the duplicate if present.
         old_search = getattr(self, "_rc14_keyword_entry", None)
         if old_search is not None:
             try:
@@ -119,14 +116,9 @@ class MainWindow(LegacyStableMainWindow):
     def refresh_groups(self) -> None:
         controller = getattr(self, "_inbox_controller", None)
         if controller is None:
-            # Construction compatibility only. Once MainWindow.__init__ completes,
-            # all operator refreshes go through SQL-backed InboxTabController.
             return super().refresh_groups()
         controller.refresh()
 
-    # ------------------------------------------------------------------
-    # Shared StatusBar replacing the RC48 inline implementation.
-    # ------------------------------------------------------------------
     def _apply_rc48_shell_layout(self) -> None:
         super()._apply_rc48_shell_layout()
         old = getattr(self, "_rc48_status_bar", None)
@@ -140,9 +132,35 @@ class MainWindow(LegacyStableMainWindow):
         self._rc48_status_bar = bar
         self.operation_progress = bar.progress
 
-    # ------------------------------------------------------------------
-    # Shared PublicationStatus while preserving RC48 compatibility attributes.
-    # ------------------------------------------------------------------
+    def _apply_rc54_dpi_layout(self) -> None:
+        """Respect Windows DPI while keeping the product usable at compact acceptance sizes."""
+        try:
+            pixels_per_inch = float(self.root.winfo_fpixels("1i"))
+            scaling = max(1.0, min(2.5, pixels_per_inch / 72.0))
+            self.root.tk.call("tk", "scaling", scaling)
+            self._rc54_tk_scaling = scaling
+        except Exception:
+            self._rc54_tk_scaling = 1.0
+        try:
+            self.root.minsize(980, 540)
+        except tk.TclError:
+            pass
+
+    def _apply_rc54_publication_layout(self) -> None:
+        """Favor always-visible destinations over oversized media preview space."""
+        canvas = getattr(self, "targets_canvas", None)
+        if canvas is not None:
+            try:
+                canvas.configure(height=190)
+            except tk.TclError:
+                pass
+        media_tree = getattr(self, "media_candidates_tree", None)
+        if media_tree is not None:
+            try:
+                media_tree.configure(height=2)
+            except tk.TclError:
+                pass
+
     def _install_rc48_history_unknown_controls(self) -> None:
         retry = getattr(self, "history_retry_button", None)
         parent = getattr(retry, "master", None)
