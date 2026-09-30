@@ -56,7 +56,9 @@ def _unresolved_marker_error(phase: str) -> PublishError:
 class CommentedFacebookPublisher(FacebookPagePublisher):
     def __init__(self, *args, donation_comment: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.donation_comment = DONATION_COMMENT if donation_comment is None else str(donation_comment or "").strip()
+        # None preserves old callers that still set the module-level compatibility
+        # value immediately before publish. RC52 callers pass an explicit value.
+        self._donation_comment = donation_comment
 
     def _prepare_gallery(self, gallery: ImageGalleryPayload, progress: dict[str, object], context: PublishContext) -> tuple[list[str], dict[str, object]]:
         photo_ids = list(progress.get("facebook_gallery_photo_ids") or [])
@@ -112,7 +114,7 @@ class CommentedFacebookPublisher(FacebookPagePublisher):
             post_id = str(main.remote_id or "")
             progress = finish_phase(progress, context, completed_key=_KEYS.main_completed, id_key=_KEYS.main_id, remote_id=post_id)
 
-        donation_comment = self.donation_comment
+        donation_comment = DONATION_COMMENT if self._donation_comment is None else str(self._donation_comment or "").strip()
         if not donation_comment or donation_comment in text:
             return PublishResult(remote_id=post_id, progress=progress)
         if bool(progress.get(_KEYS.comment_completed)):
