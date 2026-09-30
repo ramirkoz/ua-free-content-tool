@@ -27,6 +27,7 @@ def test_real_main_window_builds_all_tabs_and_ai_refreshes(tmp_path, monkeypatch
         window = MainWindow(root, services)
         window._ui_ready = True
         window.refresh_v2_ai_status()
+        root.deiconify()
         root.update_idletasks()
 
         labels = [window.notebook.tab(tab_id, "text") for tab_id in window.notebook.tabs()]
@@ -38,7 +39,7 @@ def test_real_main_window_builds_all_tabs_and_ai_refreshes(tmp_path, monkeypatch
         assert hasattr(window, "v2_platforms_tree")
 
         # RC50 layout acceptance matrix derived from the UI audit. We validate the
-        # active shell at the logical sizes that correspond to 100/125/150/175%.
+        # mapped active shell at the logical sizes that correspond to 100/125/150/175%.
         for width, height in ((1440, 920), (1536, 824), (1280, 680), (1097, 577)):
             root.geometry(f"{width}x{height}")
             root.update_idletasks()
