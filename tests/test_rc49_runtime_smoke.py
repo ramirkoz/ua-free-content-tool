@@ -36,7 +36,7 @@ def test_rc49_ai_status_compat_contract_keeps_structured_telemetry(monkeypatch) 
 
 
 def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
-    from content_agent.v2.ai import service
+    from content_agent.v2 import ai
     from content_agent.v2.ai.settings import AIBackendSettings, BACKEND_ROUTER
     from content_agent.v2.ui import window as window_module
     from content_agent.v2.ui.manual_topics_window_rc44 import MainWindow
@@ -56,11 +56,11 @@ def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
     monkeypatch.setattr(window_module, "provider_health_text", lambda: "Router health OK")
     monkeypatch.setattr(window_module, "inspect_codex_cached", lambda: "Codex cached OK")
     monkeypatch.setattr(window_module, "usage_summary", lambda **_kwargs: {"requests": 0})
-    monkeypatch.setattr(service, "_raw_backend_status", lambda: {
+    monkeypatch.setattr(ai, "_raw_backend_status", lambda: {
         "active_backend": BACKEND_ROUTER,
         "openrouter_configured": False,
         "router": {"configured_providers": 1, "available_providers": 1, "rows": []},
-    }, raising=False)
+    })
 
     window = object.__new__(MainWindow)
     window.v2_backend_settings = settings
@@ -84,7 +84,7 @@ def test_rc49_full_ai_tab_builds_on_windows(monkeypatch) -> None:
     import tkinter as tk
     from tkinter import ttk
 
-    from content_agent.v2.ai import service
+    from content_agent.v2 import ai
     from content_agent.v2.ai.settings import AIBackendSettings, BACKEND_ROUTER
     from content_agent.v2.ui import window as window_module
     from content_agent.v2.ui.manual_topics_window_rc44 import MainWindow
@@ -100,11 +100,11 @@ def test_rc49_full_ai_tab_builds_on_windows(monkeypatch) -> None:
         "codex_enabled": False,
         "local_enabled": False,
     })())
-    monkeypatch.setattr(service, "_raw_backend_status", lambda: {
+    monkeypatch.setattr(ai, "_raw_backend_status", lambda: {
         "active_backend": BACKEND_ROUTER,
         "openrouter_configured": False,
         "router": {"configured_providers": 0, "available_providers": 0, "rows": []},
-    }, raising=False)
+    })
 
     root = tk.Tk()
     root.withdraw()
