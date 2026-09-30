@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from content_agent.i18n import original_text, tr
+from content_agent.paths import data_dir
+from content_agent.scheduling import KYIV, parse_iso
+from content_agent.ui.main_window import GROUP_FILTERS, GROUP_STATUS_LABELS
+
+
+@dataclass(frozen=True, slots=True)
+class InboxFilterState:
+    source_id: int | None = None
+    topic_id: int | None = None
+    search: str = ""
+
+
+class InboxTabController:
+    """First extracted tab controller: state, SQL query and Inbox rendering."""
+
+    DEFAULT_WIDTHS = {
+        "id": 70,
+        "status": 100,
+        "title": 560,
+        "topic": 150,
+        "source": 190,
+        "sources": 80,
+        "published": 145,
+        "score": 105,
+    }
+
+    def __init__(self, host, filter_bar) -> None:
+        self.host = host
+        self.db = host.db
+        self.tree = host.groups_tree
+        self.filter_bar = filter_bar
+        self._source_label_to_id: dict[str, int] = {}
+        self._topic_label_to_id: dict[str, int] = {}
+        self._column_path = data_dir() / "v2" / "inbox_columns.json"
+        self._configure_columns()
+        self.refresh_choices()
+        self._load_widths()
+        self.tree.bind("<ButtonRelease-1>", self._save_widths, add="+")
+
+    def _configure_columns(self) -> None:
+        columns = [str(value) for value in self.tree.cget("columns")]
+        for name in ("topic", "source"):
+            if name not in columns:
+                columns.append(name)
+        self.tree.configure(columns=tuple(columns))
+        headings = {"topic": "Тема", "source": "Джерело"}
+        for name, label in headings.items():
+            self.tree.heading(name, text=label)
+            self.tree.column(name, width=self.DEFAULT_WIDTHS[name], minwidth=80, anchor="w")
+        display = [
+            name for name in ("id", "status", "title", "topic", "source", "sources", "published", "score")
+            if name in columns
+        ]
+        self.tree.configure(displaycolumns=tuple(display))
+        for name, width in self.DEFAULT_WIDTHS.items():
+            if name in columns:
+                try:
+                    self.tree.column(name, width=max(width, int(self.tree.column(name, "width") or 0)))
+                except Exception:
+                    pass
+
+    def _load_widths(self) -> None:
+        try:
+            raw = json.loads(self._column_path.read_text(encoding="utf-8"))
+        except Exception:
+            raw = {}
+        if not isinstance(raw, dict):
+            return
+        columns = {str(value) for value in self.tree.cget("columns")}
+        for name, value in raw.items():
+            if name not in columns:
+                continue
+            try:
+                width = max(45, min(1200, int(value)))
+                self.tree.column(name, width=width)
+            except Exception:
+                continue
+
+    def _save_widths(self, _event=None) -> None:
+        try:
+            self._column_path.parent.mkdir(parents=True, exist_ok=True)
+            columns = [str(value) for value in self.tree.cget("columns")]
+            payload = {name: int(self.tree.column(name, "width")) for name in columns}
+            tmp = self._column_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+            tmp.replace(self._column_path)
+        except Exception:
+            return
+
+    def refresh_choices(self) -> None:
+        source_rows = self.db.source_topic_rows()
+        source_labels: list[str] = []
+        source_map: dict[str, int] = {}
+        for row in source_rows:
+            label = f"{str(row['name'])} [#{int(row['id'])}]"
+            source_labels.append(label)
+            source_map[label] = int(row["id"])
+        topic_rows = self.db.list_manual_topics()
+        topic_labels = [str(row["name"]) for row in topic_rows]
+        topic_map = {str(row["name"]): int(row["id"]) for row in topic_rows}
+        self._source_label_to_id = source_map
+        self._topic_label_to_id = topic_map
+        self.host._inbox_source_label_to_id = dict(source_map)
+        self.host._inbox_topic_label_to_id = dict(topic_map)
+        self.filter_bar.set_choices(
+            sources=(self.host.ALL_SOURCES_LABEL, *source_labels),
+            topics=(self.host.ALL_TOPICS_LABEL, *topic_labels),
+        )
+        if self.host.inbox_source_filter_var.get() not in {self.host.ALL_SOURCES_LABEL, *source_labels}:
+            self.host.inbox_source_filter_var.set(self.host.ALL_SOURCES_LABEL)
+        if self.host.inbox_topic_filter_var.get() not in {self.host.ALL_TOPICS_LABEL, *topic_labels}:
+            self.host.inbox_topic_filter_var.set(self.host.ALL_TOPICS_LABEL)
+
+    def state(self) -> InboxFilterState:
+        return InboxFilterState(
+            source_id=self._source_label_to_id.get(str(self.host.inbox_source_filter_var.get() or "")),
+            topic_id=self._topic_label_to_id.get(str(self.host.inbox_topic_filter_var.get() or "")),
+            search=" ".join(str(self.host.inbox_search_var.get() or "").split()).strip(),
+        )
+
+    @staticmethod
+    def _format_time(value: str | None) -> str:
+        parsed = parse_iso(str(value or ""))
+        if parsed is None:
+            return "—"
+        return parsed.astimezone(KYIV).strftime("%d.%m.%Y %H:%M")
+
+    @staticmethod
+    def _compact_names(values: object) -> str:
+        names = [str(value).strip() for value in (values or []) if str(value).strip()]
+        if not names:
+            return "—"
+        if len(names) <= 2:
+            return " / ".join(names)
+        return " / ".join(names[:2]) + f" +{len(names) - 2}"
+
+    def refresh(self) -> None:
+        selected_before = tuple(self.tree.selection())
+        focus_before = self.tree.focus()
+        yview_before = self.tree.yview()
+        current = self.state()
+        selected_filter = original_text(self.host.group_filter.get())
+        status = GROUP_FILTERS.get(selected_filter)
+        try:
+            groups = self.db.list_inbox_groups(
+                status=status,
+                source_id=current.source_id,
+                topic_id=current.topic_id,
+                search=current.search,
+                limit=200,
+            )
+            metadata = self.db.group_manual_topics([group.id for group in groups]) if groups else {}
+        except Exception as exc:
+            self.host.set_status(f"Вхідні: помилка фільтрації · {exc}")
+            return
+
+        self.tree.delete(*self.tree.get_children())
+        columns = tuple(str(value) for value in self.tree.cget("columns"))
+        decisions: dict[int, object] = {}
+        for group in groups:
+            info = metadata.get(
+                int(group.id),
+                {"source_names": [], "topic_names": [], "source_ids": [], "topic_ids": []},
+            )
+            topic_label = self._compact_names(info.get("topic_names", []))
+            source_label = self._compact_names(info.get("source_names", []))
+            score = f"{group.explosiveness_score}/100" if group.explosiveness_score else "—"
+            values = {
+                "id": group.id,
+                "status": tr(GROUP_STATUS_LABELS.get(group.status, group.status), self.host.config.ui_language),
+                "title": group.canonical_title,
+                "topic": topic_label,
+                "source": source_label,
+                "sources": group.source_count,
+                "published": self._format_time(group.last_published_at),
+                "score": score,
+            }
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(group.id),
+                values=tuple(values.get(name, "") for name in columns),
+                tags=("approved",) if group.status == "approved" else (),
+            )
+            decisions[int(group.id)] = type("TopicDecision", (), {"topic": topic_label})()
+        self.host._topic_decisions = decisions
+
+        existing = [iid for iid in selected_before if self.tree.exists(iid)]
+        if existing:
+            self.tree.selection_set(existing)
+        if focus_before and self.tree.exists(focus_before):
+            self.tree.focus(focus_before)
+        if yview_before:
+            try:
+                self.tree.yview_moveto(float(yview_before[0]))
+            except Exception:
+                pass
+        count = len(groups)
+        if count:
+            self.host.set_status(f"Вхідні: показано {count} блоків.")
+        else:
+            self.host.set_status("Вхідні: за поточними фільтрами нічого не знайдено.")
+
+    def reset(self) -> None:
+        self.host.inbox_source_filter_var.set(self.host.ALL_SOURCES_LABEL)
+        self.host.inbox_topic_filter_var.set(self.host.ALL_TOPICS_LABEL)
+        self.host.inbox_search_var.set("")
+        self.refresh()
+
+    def focus_primary(self) -> None:
+        self.filter_bar.focus_search()
+
+    def escape(self) -> str | None:
+        if str(self.host.inbox_search_var.get() or ""):
+            self.host.inbox_search_var.set("")
+            self.refresh()
+            return "break"
+        try:
+            self.tree.focus_set()
+        except Exception:
+            return None
+        return "break"
+
+
+__all__ = ["InboxFilterState", "InboxTabController"]
