@@ -20,6 +20,9 @@ from ...config import AppConfig, ConfigError, load_config
 from ...i18n import language_label
 from ..publishing.outcomes import PublicationOutcome
 from ..storage.factory import create_database
+from .data_tab import DataTabController
+from .inbox_controller import InboxTabController
+from .platforms_tab import PlatformsTabController
 from .manual_topics_window import ALL_SOURCES, ALL_TOPICS, MainWindow as Rc43MainWindow
 
 logger = logging.getLogger("content_agent.v2.ui.rc44")
@@ -53,6 +56,13 @@ class MainWindow(Rc43MainWindow):
         self._apply_rc48_inbox_labels()
         self._install_rc48_history_unknown_controls()
         self._install_rc48_keyboard_shortcuts()
+
+        # RC50: behavior moves into controllers/components, not another versioned window.
+        self.inbox_controller = InboxTabController(self)
+        self.data_tab_controller = DataTabController(self)
+        self.data_tab_controller.build()
+        self.platforms_tab_controller = PlatformsTabController(self, self.services.destinations)
+        self.platforms_tab_controller.build()
 
     def save_ai_provider_keys(self) -> None:
         """Persist the direct-provider fields owned by the canonical V2 AI tab."""
@@ -122,50 +132,59 @@ class MainWindow(Rc43MainWindow):
             except tk.TclError:
                 self._ui_dispatch_after_id = None
 
+    def create_migration_backup_ui(self) -> None:
+        password = self.data_tab_controller.choose_password(confirm=True)
+        if not password:
+            return
+        selected = self.files.askdirectory(parent=self.root, title="Куди зберегти migration backup")
+        destination = Path(selected) if selected else None
+
+        def success(result: object) -> None:
+            self.data_tab_controller.status_var.set(f"Migration backup створено: {result}")
+            self.set_status("Migration backup створено.")
+
+        self.run_async(
+            lambda: self.services.maintenance.create_migration_backup(password, destination),
+            success,
+            label="Створюю захищений migration backup",
+            done_label="Migration backup створено",
+        )
+
     def import_backup_ui(self) -> None:
-        """Restore through the same reliable database composition as startup."""
+        """Stage and validate restore through the RC50 maintenance boundary."""
         selected = self.files.askopenfilename(
-            parent=self.root,
-            title="Оберіть backup",
-            filetypes=[("UA FREE backup", "*.zip")],
+            parent=self.root, title="Оберіть backup", filetypes=[("UA FREE backup", "*.zip")]
         )
         if not selected:
             return
+        archive = Path(selected)
+        password = None
+        try:
+            if self.services.maintenance.backup_requires_password(archive):
+                password = self.data_tab_controller.choose_password(confirm=False)
+                if not password:
+                    return
+        except Exception as exc:
+            self._show_error(exc)
+            return
         if not self.msg.askyesno(
             "Імпорт",
-            "Поточні дані спочатку буде збережено в safety backup. Продовжити?",
+            "Поточні дані буде збережено у safety backup. Після успішного restore програму треба перезапустити. Продовжити?",
             parent=self.root,
         ):
             return
 
         def success(result: object) -> None:
-            try:
-                self.config = load_config()
-            except ConfigError:
-                self.config = AppConfig()
-            self.publisher_factory.config = self.config
-            self.db = create_database()
-            self.services = build_services(config=self.config, database=self.db)
-            self.worker.database = self.db
-            self.refresh_sources()
-            self.refresh_groups()
-            self.refresh_queue()
-            self.refresh_history()
-            self._update_target_availability()
-            self.ui_language_var.set(language_label(self.config.ui_language))
-            self._apply_language()
-            self.refresh_learning_stats()
             self.msg.showinfo(
-                "Імпорт",
-                f"Імпорт завершено. Safety backup: {getattr(result, 'safety_backup', '')}",
+                "Імпорт завершено",
+                f"Backup перевірено й відновлено. Safety backup: {getattr(result, 'safety_backup', '')}\n\nЗакрийте й запустіть Content Tool знову.",
                 parent=self.root,
             )
+            self.set_status("Restore завершено. Потрібен перезапуск програми.")
 
         self.run_async(
-            lambda: import_backup(Path(selected)),
-            success,
-            label="Імпортую резервну копію",
-            done_label="Імпорт завершено",
+            lambda: self.services.maintenance.import_backup(archive, credential_password=password),
+            success, label="Перевіряю й відновлюю backup", done_label="Restore завершено",
         )
 
     # ------------------------------------------------------------------

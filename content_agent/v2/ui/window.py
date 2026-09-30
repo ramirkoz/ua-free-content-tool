@@ -20,7 +20,7 @@ from ...readable_media_names import readable_post_media_filename
 from ...ui.media_workflow import format_media_size
 from ...version import APP_VERSION
 from ..ai.openrouter_backend import OpenRouterBackend
-from ..ai.service import backend_status, test_active_backend
+from ..ai.service import backend_status_text, test_active_backend
 from ..ai.settings import (
     AIBackendSettings,
     BACKEND_AGENT,
@@ -589,7 +589,7 @@ class MainWindow(LegacyMainWindow):
     def _switch_v2_backend(self, value: str) -> None:
         self.v2_backend_settings.active_backend = value
         self.v2_backend_settings = save_backend_settings(self.v2_backend_settings)
-        self.v2_ai_status_var.set(backend_status(self.v2_backend_settings.active_backend))
+        self.v2_ai_status_var.set(backend_status_text(self.v2_backend_settings.active_backend))
         self.set_status(f"AI backend: {self.v2_backend_settings.active_backend}.")
 
     def save_v2_openrouter_settings(self) -> None:
@@ -610,7 +610,7 @@ class MainWindow(LegacyMainWindow):
             return
         def action() -> object:
             backend = OpenRouterBackend(load_backend_settings())
-            return backend.test_connection()
+            return backend.probe()
         def success(result: object) -> None:
             self.v2_openrouter_status_var.set(str(result))
             self.refresh_v2_ai_status()
@@ -628,8 +628,8 @@ class MainWindow(LegacyMainWindow):
         settings = load_backend_settings()
         self.v2_backend_settings = settings
         self.v2_backend_var.set(settings.active_backend)
-        self.v2_ai_status_var.set(backend_status(settings.active_backend))
-        self.v2_openrouter_status_var.set(backend_status(BACKEND_OPENROUTER, openrouter_key=self.v2_openrouter_key_var.get()))
+        self.v2_ai_status_var.set(backend_status_text(settings.active_backend))
+        self.v2_openrouter_status_var.set(backend_status_text(BACKEND_OPENROUTER, openrouter_key=self.v2_openrouter_key_var.get()))
         try:
             self.v2_router_status_var.set(provider_health_text())
         except Exception as exc:
@@ -643,11 +643,13 @@ class MainWindow(LegacyMainWindow):
                 self.v2_agent_status_var.set(f"Agent / Codex: {agent.detail}")
         except Exception as exc:
             self.v2_agent_status_var.set(f"Agent / Codex: {exc}")
-        summary = usage_summary(settings.openrouter_monthly_budget_usd)
+        summary = usage_summary(backend="openrouter")
+        budget = max(0.0, float(settings.openrouter_monthly_budget_usd or 0.0))
+        remaining = max(0.0, budget - float(summary['month_cost']))
         self.v2_usage_var.set(
             f"Сьогодні: {summary['today_requests']} запитів · ${summary['today_cost']:.4f} · "
-            f"місяць: {summary['month_requests']} запитів · ${summary['month_cost']:.4f} / ${summary['budget']:.2f} · "
-            f"залишок: ${summary['remaining']:.2f}"
+            f"місяць: {summary['month_requests']} запитів · ${summary['month_cost']:.4f} / ${budget:.2f} · "
+            f"залишок: ${remaining:.2f}"
         )
 
     def _schedule_v2_status_refresh(self) -> None:
@@ -663,7 +665,7 @@ class MainWindow(LegacyMainWindow):
 
     def _build_v2_supervisor_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="Supervisor")
+        self.notebook.add(tab, text="Стан системи")
         identity = instance_identity()
         ttk.Label(tab, text="TECH SUPERVISOR · локальний діагност і окремий контур телеметрії", font="TkHeadingFont").pack(anchor="w")
         ttk.Label(

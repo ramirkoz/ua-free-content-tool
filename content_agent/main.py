@@ -61,6 +61,23 @@ def _raise_windows_stdio_limit(logger: object | None = None) -> int:
         return -1
 
 
+def _enable_windows_dpi_awareness(logger: object | None = None) -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception as exc:
+        if logger is not None:
+            try:
+                logger.warning("Could not enable Windows DPI awareness: %s", exc)
+            except Exception:
+                pass
+
+
 def _show_startup_error(root: tk.Tk, message: str) -> None:
     try:
         messagebox.showerror("UA FREE Content Tool", message, parent=root)
@@ -334,6 +351,7 @@ def main() -> int:
     logger = configure_logging()
     install_readable_media_names_runtime()
     _raise_windows_stdio_limit(logger)
+    _enable_windows_dpi_awareness(logger)
     try:
         with InstanceLock():
             try:
