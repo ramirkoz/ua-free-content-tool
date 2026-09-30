@@ -33,6 +33,21 @@ class CanonicalRouterBackend:
             retry_after=getattr(exc, "retry_after", None),
         )
 
+    @staticmethod
+    def _reviewed_slot(slot):
+        """Apply reviewed provider/model updates without mutating legacy globals."""
+        from ... import ai_router as legacy
+
+        if slot.provider == "groq" and slot.model == "qwen/qwen3.6-27b":
+            return legacy.AIModelSlot(
+                slot.priority,
+                slot.provider,
+                "qwen/qwen3.8-27b",
+                "Qwen 3.8 27B / Groq",
+                slot.family,
+            )
+        return slot
+
     def _invoke_cloud(self, slot, cfg, prompt: str, *, max_output_tokens: int, timeout_seconds: int):
         from ... import ai_router as legacy
 
@@ -119,6 +134,7 @@ class CanonicalRouterBackend:
             skip_providers=skipped_providers,
             skip_models=skipped_models,
         )
+        routes = [self._reviewed_slot(slot) for slot in routes]
         if not routes:
             raise legacy._diagnostic_error(legacy.AIRouterError("Немає здорового маршруту поза cooldown."))
 
