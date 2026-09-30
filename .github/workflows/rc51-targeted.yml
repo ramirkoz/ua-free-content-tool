@@ -1,0 +1,111 @@
+name: RC51 AI final architecture gate
+
+on:
+  push:
+    branches: [rc51-ai-final-architecture]
+  pull_request:
+    branches: [main]
+    paths:
+      - content_agent/v2/ai/**
+      - content_agent/app/**
+      - content_agent/ai_router.py
+      - content_agent/v2/ui/window.py
+      - tests/test_rc51_ai_architecture.py
+      - tests/test_rc50_storage_contract.py
+      - tests/test_rc49_startup_contract.py
+      - tests/test_rc49_runtime_smoke.py
+      - VERSION.txt
+      - PUBLIC_VERSION.txt
+      - content_agent/__init__.py
+      - RELEASE_NOTES_v2.0.0-rc51.md
+      - .github/workflows/rc51-targeted.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+      - name: Compile application
+        shell: pwsh
+        run: python -m compileall -q content_agent tests
+      - name: RC51 AI final architecture regressions
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc51_ai_architecture.py
+      - name: Keep RC50 storage backup composition green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc50_storage_contract.py
+      - name: Keep RC49 startup regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc49_startup_contract.py tests/test_rc49_runtime_smoke.py
+      - name: Keep RC48 UX and reliability regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc48_ux_reliability.py
+      - name: Keep RC47 composition regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc47_composition_contracts.py
+      - name: Keep RC46 clean import regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc46_clean_import_wrapper.py
+      - name: Keep RC45 reliability regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc45_reliability.py
+      - name: Keep RC44 and RC43 topic regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc44_inbox_topic_filter.py tests/test_rc43_manual_source_topics.py
+      - name: Keep RC42 Instagram multi-account regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc42_instagram_multi_ui.py tests/test_v1_4_destinations.py tests/test_v1_4_rc2_instagram.py
+      - name: Keep RC41 Drive auth regressions green
+        shell: pwsh
+        run: python -m pytest -q tests/test_drive_auth_recovery_rc41.py tests/test_google_drive_r8.py
+      - name: RC51 architecture invariants
+        shell: pwsh
+        run: |
+          $badLayer = Get-ChildItem content_agent -Recurse -File -Filter *.py | Where-Object {
+            $_.Name -match '(^|_)rc51(_|\.|$)' -or $_.Name -match 'window_rc51'
+          }
+          if ($badLayer) { throw "RC51 must not add a new versioned runtime layer: $($badLayer.FullName -join ', ')" }
+          if (Test-Path content_agent/v2/ai/direct_router_runtime.py) { throw "direct_router_runtime.py must be removed" }
+          $rebinding = Select-String -Path content_agent/v2/ai/__init__.py -Pattern '_service\.backend_status\s*=|_service\.test_active_backend\s*=|_usage\.usage_summary\s*=' -Quiet
+          if ($rebinding) { throw "AI package must not monkey-patch service/usage exports" }
+      - name: Repository-wide baseline audit
+        id: repo_audit
+        continue-on-error: true
+        shell: pwsh
+        run: python -m pytest -q
+      - name: Record repository-wide baseline debt
+        if: steps.repo_audit.outcome == 'failure'
+        shell: pwsh
+        run: Write-Warning "Repository-wide audit still contains historical failures outside the RC51 changed surface. Targeted RC41-RC51 release gates above remain mandatory; full-suite debt stays visible for RC55 final consolidation."
+      - name: Build signed portable
+        shell: cmd
+        run: Build_Portable_Windows.bat
+      - name: Package portable
+        shell: pwsh
+        run: |
+          $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          if ($version -ne '2.0.0-rc51') { throw "unexpected version $version" }
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          if (-not (Test-Path "$root\UA_FREE_Content_Tool.exe")) { throw "portable exe missing" }
+          $zip = "UA_FREE_Content_Tool_v${version}_Windows_Portable_MANUAL_TEST.zip"
+          Compress-Archive -Path $root -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content SHA256SUMS_RC51.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v2.0.0-rc51_Windows_Portable_MANUAL_TEST
+          path: |
+            UA_FREE_Content_Tool_v2.0.0-rc51_Windows_Portable_MANUAL_TEST.zip
+            SHA256SUMS_RC51.txt
+          if-no-files-found: error
