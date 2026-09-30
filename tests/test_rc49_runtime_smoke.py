@@ -28,11 +28,28 @@ def test_rc49_ai_status_compat_contract_keeps_structured_telemetry(monkeypatch) 
         "router": {"configured_providers": 3, "available_providers": 2, "rows": []},
     }
     monkeypatch.setattr(ai, "_raw_backend_status", lambda: fake)
+    monkeypatch.setattr(ai, "_raw_usage_summary", lambda **_kwargs: {
+        "today_cost": 0.25,
+        "month_cost": 1.5,
+        "today_prompt_tokens": 0,
+        "today_completion_tokens": 0,
+        "month_prompt_tokens": 0,
+        "month_completion_tokens": 0,
+        "today_requests": 2,
+        "month_requests": 7,
+        "month_errors": 0,
+    })
 
     assert ai.backend_status() is fake
     assert "доступно 2" in ai.backend_status("router")
     assert "API key не задано" in ai.backend_status("openrouter", openrouter_key="")
     assert "налаштовано" in ai.backend_status("openrouter", openrouter_key="test-key")
+
+    raw_usage = ai.usage_summary(backend="openrouter")
+    assert "budget" not in raw_usage
+    ui_usage = ai.usage_summary(25.0)
+    assert ui_usage["budget"] == 25.0
+    assert ui_usage["remaining"] == 23.5
 
 
 def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
@@ -55,7 +72,15 @@ def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
     monkeypatch.setattr(window_module, "load_backend_settings", lambda: settings)
     monkeypatch.setattr(window_module, "provider_health_text", lambda: "Router health OK")
     monkeypatch.setattr(window_module, "inspect_codex_cached", lambda: "Codex cached OK")
-    monkeypatch.setattr(window_module, "usage_summary", lambda **_kwargs: {"requests": 0})
+    monkeypatch.setattr(window_module, "peek_codex_status_cache", lambda: None)
+    monkeypatch.setattr(window_module, "usage_summary", lambda _budget: {
+        "today_requests": 0,
+        "today_cost": 0.0,
+        "month_requests": 0,
+        "month_cost": 0.0,
+        "budget": 25.0,
+        "remaining": 25.0,
+    })
     monkeypatch.setattr(ai, "_raw_backend_status", lambda: {
         "active_backend": BACKEND_ROUTER,
         "openrouter_configured": False,
@@ -77,6 +102,7 @@ def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
     assert "AI Router" in str(window.v2_ai_status_var.get())
     assert "OpenRouter" in str(window.v2_openrouter_status_var.get())
     assert "Router health OK" == window.v2_router_status_var.get()
+    assert "$25.00" in str(window.v2_usage_var.get())
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Tk smoke is exercised by the RC49 Windows gate")
