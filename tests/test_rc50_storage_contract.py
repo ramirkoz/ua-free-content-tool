@@ -125,11 +125,16 @@ def test_rc50_migration_backup_password_is_validated_before_staging(
 
 
 def test_rc50_active_window_uses_composed_maintenance_boundary() -> None:
-    source = inspect.getsource(MainWindow)
-    assert "self.services.maintenance.create_backup" in source
-    assert "self.services.maintenance.create_migration_backup" in source
-    assert "self.services.maintenance.stage_restore" in source
-    assert "from ...backup import import_backup" not in source
+    # RC53 extracts the canonical shell from the legacy monolith. Verify the
+    # methods resolved by the *active* MainWindow rather than requiring their
+    # source text to live physically in the thin subclass.
+    backup_source = inspect.getsource(MainWindow.create_backup_ui)
+    migration_source = inspect.getsource(MainWindow.create_migration_backup_ui)
+    restore_source = inspect.getsource(MainWindow.import_backup_ui)
+    assert "self.services.maintenance.create_backup" in backup_source
+    assert "self.services.maintenance.create_migration_backup" in migration_source
+    assert "self.services.maintenance.stage_restore" in restore_source
+    assert "from ...backup import import_backup" not in backup_source + migration_source + restore_source
 
 
 def test_rc50_adds_no_new_versioned_mainwindow_layer() -> None:
