@@ -68,6 +68,7 @@ class _OpenRouterAIBackend:
             validator=request.validator,
             max_output_tokens=request.max_output_tokens,
             timeout_seconds=timeout,
+            task=request.task,
             skip_models=tuple(_normalized(request.skip_models)),
         )
 
@@ -228,12 +229,16 @@ def last_result() -> UnifiedAIResult | None:
         return _LAST_RESULT
 
 
-def backend_status() -> dict[str, object]:
+def _status_snapshot(*, openrouter_key: str | None = None) -> dict[str, object]:
     settings = load_backend_settings()
+    if openrouter_key is None:
+        openrouter_configured = OpenRouterBackend(settings).configured()
+    else:
+        openrouter_configured = bool(str(openrouter_key or "").strip())
     status: dict[str, object] = {
         "active_backend": settings.active_backend,
         "process_started_at": _PROCESS_STARTED_AT,
-        "openrouter_configured": OpenRouterBackend(settings).configured(),
+        "openrouter_configured": openrouter_configured,
         "openrouter_strategy": settings.openrouter_strategy,
         "openrouter_budget_usd": settings.openrouter_monthly_budget_usd,
     }
@@ -269,12 +274,73 @@ def backend_status() -> dict[str, object]:
     return status
 
 
-def test_active_backend() -> str:
+def _status_text(backend: str, *, openrouter_key: str | None = None) -> str:
+    target = str(backend or "").strip().casefold()
+    snapshot = _status_snapshot(openrouter_key=openrouter_key)
+    active = str(snapshot.get("active_backend") or BACKEND_ROUTER)
+    prefix = "АКТИВНИЙ" if target == active else "неактивний"
+    if target == BACKEND_OPENROUTER:
+        configured = bool(snapshot.get("openrouter_configured"))
+        state = "налаштовано" if configured else "ключ не налаштовано"
+        return f"OpenRouter: {prefix} · {state}"
+    if target == BACKEND_AGENT:
+        try:
+            from ...codex_runtime import peek_codex_status_cache
+
+            cached = peek_codex_status_cache()
+            if cached is None:
+                return f"Agent / Codex: {prefix} · стан ще не перевірено"
+            if bool(cached.installed and cached.authenticated):
+                return f"Agent / Codex: {prefix} · готовий"
+            return f"Agent / Codex: {prefix} · {cached.detail}"
+        except Exception as exc:
+            return f"Agent / Codex: {prefix} · помилка стану: {exc}"
+    router = snapshot.get("router")
+    if isinstance(router, dict) and "error" not in router:
+        configured = int(router.get("configured_providers") or 0)
+        available = int(router.get("available_providers") or 0)
+        return f"AI Router: {prefix} · доступно {available}/{configured} провайдерів"
+    if isinstance(router, dict) and router.get("error"):
+        return f"AI Router: {prefix} · помилка стану: {router['error']}"
+    return f"AI Router: {prefix}"
+
+
+def backend_status(
+    backend: str | None = None,
+    *,
+    openrouter_key: str | None = None,
+) -> dict[str, object] | str:
+    """Return the canonical status snapshot or one operator-facing backend line.
+
+    RC49 accidentally changed this function to a zero-argument-only API while the
+    shipped Tk UI still called the previous text helper shape. RC50 makes the
+    contract explicit: callers that need telemetry call ``backend_status()`` and
+    receive a dictionary; UI callers pass a backend name and receive text.
+    """
+    if backend is None:
+        return _status_snapshot(openrouter_key=openrouter_key)
+    return _status_text(backend, openrouter_key=openrouter_key)
+
+
+def test_active_backend(
+    backend: str | None = None,
+    *,
+    timeout_seconds: int = 45,
+) -> str:
+    """Probe either the configured backend or one explicitly requested by the UI."""
     settings = load_backend_settings()
-    if settings.active_backend == BACKEND_OPENROUTER:
+    target = str(backend or settings.active_backend or BACKEND_ROUTER)
+    timeout = max(3, int(timeout_seconds or 45))
+    if target == BACKEND_OPENROUTER:
         return OpenRouterBackend(settings).probe()
-    if settings.active_backend == BACKEND_AGENT:
-        result = execute("Відповідай тільки словом OK.", max_output_tokens=16, task_timeout_seconds=45)
+    if target == BACKEND_AGENT:
+        request = AIRequest(
+            "Відповідай тільки словом OK.",
+            max_output_tokens=16,
+            cloud_timeout_seconds=timeout,
+            task_timeout_seconds=timeout,
+        )
+        result = _AgentAIBackend().run(request)
         return f"Agent backend працює: {result.label}"
     from ...ai_router import test_ai_router
 
