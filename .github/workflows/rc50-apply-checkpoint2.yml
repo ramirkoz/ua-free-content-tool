@@ -1,10 +1,10 @@
-name: RC50 apply checkpoint 2
+name: RC50 apply checkpoint 3
 
 on:
   push:
     branches: [rc50-final-roadmap]
     paths:
-      - tools/rc50_patch_checkpoint2.py
+      - tools/rc50_patch_checkpoint3.py
       - .github/workflows/rc50-apply-checkpoint2.yml
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply deterministic RC50 patch
-        run: python tools/rc50_patch_checkpoint2.py
+        run: python tools/rc50_patch_checkpoint3.py
       - name: Commit checkpoint
         shell: bash
         run: |
@@ -33,5 +33,5 @@ jobs:
             echo "No changes"
             exit 0
           fi
-          git commit -m "RC50 checkpoint 2: consolidate UI AI backup and DPI contracts"
+          git commit -m "RC50 checkpoint 3: integrate canonical direct AI transport"
           git push origin HEAD:rc50-final-roadmap
