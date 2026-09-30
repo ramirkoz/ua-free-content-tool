@@ -52,9 +52,6 @@ def _strip_wrappers(raw: str) -> str:
     text = _WRAPPER_RE.sub("", text).strip()
     text = re.sub(r"^```(?:json|markdown|text)?[ \t]*\n?", "", text, flags=re.I)
     text = re.sub(r"\n?```[ \t]*$", "", text, flags=re.I).strip()
-    # Some models emit an opening reasoning tag and forget to close it.  If a
-    # real public marker exists later, everything before that marker is service
-    # chatter and can be discarded deterministically.
     if re.match(r"(?is)^\s*<(?:think|analysis|reasoning)>", text):
         marker = _MARKER_RE.search(text)
         if marker:
@@ -69,7 +66,6 @@ def _trim_service_tail(value: str) -> str:
     marker = _MARKER_RE.search(text)
     if marker:
         text = text[: marker.start()].rstrip()
-    # Trailing XML-ish model reasoning is also never public copy.
     text = re.split(r"(?is)\n[ \t]*<(?:think|analysis|reasoning)>", text, maxsplit=1)[0]
     return text.strip()
 
@@ -84,7 +80,6 @@ def _headline_from_text(value: str) -> str:
 
 def _clean_headline(value: str) -> str:
     text = _trim_service_tail(value)
-    # A headline must be one line even when the model puts commentary below it.
     line = next((row.strip() for row in text.splitlines() if row.strip()), "")
     line = re.sub(r"^[\-*#>\s]+", "", line).strip()
     return line[:240].strip()
@@ -118,8 +113,6 @@ def _marker_payload(text: str) -> dict[str, object] | None:
 
     if not candidates:
         return None
-    # Models sometimes draft, critique, then emit a corrected final pair.  Use
-    # the last complete public pair, not the first draft.
     _, headline, rewrite = candidates[-1]
     return {"headline": headline, "fact_card": "", "rewrite": rewrite}
 
@@ -131,8 +124,6 @@ def _canonical_json_payload(text: str) -> dict[str, object] | None:
         parsed = None
     canonical = rc26._canonical_payload(parsed)
     if canonical is None:
-        # Reuse RC26's truncated/balanced-object recovery, then sanitize the
-        # recovered public fields before old structural QA sees them.
         try:
             canonical = rc26.decode_payload_rc26(text)
         except Exception:
@@ -153,15 +144,7 @@ def _canonical_json_payload(text: str) -> dict[str, object] | None:
 
 
 def decode_payload_rc27(raw: str) -> dict[str, object]:
-    """Recover public copy deterministically and discard model service chatter.
-
-    RC26 made envelopes tolerant, but its marker parser consumed everything from
-    TEXT: to end-of-response.  A perfectly usable rewrite followed by ANALYSIS:
-    was therefore rejected by the historical fail-closed QA.  RC27 separates
-    public and service sections before QA, so formatting mistakes do not trigger
-    another paid AI call.
-    """
-
+    """Recover public copy deterministically and discard model service chatter."""
     text = _strip_wrappers(raw)
     if not text:
         raise AIRouterError("AI повернув порожню відповідь.")
@@ -218,13 +201,10 @@ def cloud_prompt_rc27(
 ) -> str:
     prompt = rc26.cloud_prompt_rc26(group, evidence, examples, graph_memory, language=language)
     merge_rule = _multi_source_instruction(evidence, language=language)
-    # Put the merge rule immediately before the output contract/evidence area so
-    # it is not lost inside long style-memory text.
     if not merge_rule:
         return prompt
     marker = "\n\nCURRENT SOURCE EVIDENCE PACK:" if language == "en" else "\n\nПОТОЧНИЙ SOURCE EVIDENCE PACK:"
     return prompt.replace(marker, merge_rule + marker, 1)
-
 
 
 def local_prompt_rc27(evidence: EvidencePack, *, language: str) -> str:
@@ -234,6 +214,28 @@ def local_prompt_rc27(evidence: EvidencePack, *, language: str) -> str:
         return prompt
     marker = "\n\nCURRENT EVIDENCE:" if language == "en" else "\n\nПОТОЧНІ ДОКАЗИ:"
     return prompt.replace(marker, rule + marker, 1)
+
+
+def _accept_candidate(candidate, *, language: str):
+    """Single RC45 post-AI acceptance gate used by every return path."""
+    if not candidate.guard.allowed:
+        return None, "fact", "; ".join(candidate.guard.issues[:4]), None
+    if language != "uk":
+        return candidate, "ok", "", None
+    clean_rewrite = sanitize_text(candidate.rewrite)
+    clean_headline = sanitize_text(candidate.headline)
+    if clean_rewrite != candidate.rewrite or clean_headline != candidate.headline:
+        candidate = replace(candidate, rewrite=clean_rewrite, headline=clean_headline)
+    slop = assess_ukrainian_slop(candidate.rewrite, profile="news")
+    if slop.publishable:
+        logger.info(
+            "UA Anti-Slop PASS provider=%s model=%s score=%s",
+            candidate.route.provider,
+            candidate.route.model,
+            slop.score,
+        )
+        return candidate, "ok", "", slop
+    return None, "slop", f"{slop.score}/{slop.gate}: {compact_feedback(slop)}", slop
 
 
 def candidate_after_router_rc27(
@@ -247,14 +249,7 @@ def candidate_after_router_rc27(
     deadline: float | None = None,
     cancel_event: object | None = None,
 ):
-    """Stable candidate loop: deterministic format recovery, no format re-query.
-
-    Structural envelope mistakes are now fixed locally by ``decode_payload_rc27``.
-    If a response truly contains no usable public text, skip that model and move
-    to a fresh route.  Do not spend a second provider call merely to move labels.
-    One Fact Guard repair remains available for a structurally valid draft with
-    an actual factual problem.
-    """
+    """Stable candidate loop with one mandatory Fact Guard/sanitize/Anti-Slop gate."""
 
     rc17.install_rc17_fact_guard()
     provider_skip = set(skip_providers or set())
@@ -298,9 +293,6 @@ def candidate_after_router_rc27(
             candidate = base._candidate(route, evidence, language=language)
         except Exception as exc:
             failures.append(f"{route.label}: {exc}")
-            # No same-provider FORMAT REPAIR here.  The local deterministic parser
-            # already handled recoverable envelopes; retrying labels wastes quota
-            # and was the live RC26 failure mode.
             if provider == "local":
                 provider_skip.add("local")
             elif route.model:
@@ -309,23 +301,18 @@ def candidate_after_router_rc27(
                 provider_skip.add(provider)
             continue
 
-        if candidate.guard.allowed:
-            if language != "uk":
-                return candidate
-            clean_rewrite = sanitize_text(candidate.rewrite)
-            clean_headline = sanitize_text(candidate.headline)
-            if clean_rewrite != candidate.rewrite or clean_headline != candidate.headline:
-                candidate = replace(candidate, rewrite=clean_rewrite, headline=clean_headline)
-            slop = assess_ukrainian_slop(candidate.rewrite, profile="news")
-            if slop.publishable:
-                logger.info("UA Anti-Slop PASS provider=%s model=%s score=%s", candidate.route.provider, candidate.route.model, slop.score)
-                return candidate
-            failures.append(f"{route.label}: UA Anti-Slop {slop.score}/{slop.gate}: {compact_feedback(slop)}")
+        accepted, reject_kind, reject_detail, slop = _accept_candidate(candidate, language=language)
+        if accepted is not None:
+            return accepted
+
+        if reject_kind == "slop":
+            failures.append(f"{route.label}: UA Anti-Slop {reject_detail}")
             remaining = rc17._remaining(deadline)
             if (
                 not slop_repair_used
                 and provider in rc17._FACT_REPAIR_PROVIDERS
                 and (remaining is None or remaining >= 16)
+                and slop is not None
             ):
                 slop_repair_used = True
                 repair_prompt = (
@@ -340,62 +327,65 @@ def candidate_after_router_rc27(
                 )
                 try:
                     repaired = rc17._same_provider_repair(
-                        route, repair_prompt, evidence, language=language,
+                        route,
+                        repair_prompt,
+                        evidence,
+                        language=language,
                         timeout=min(24, remaining) if remaining is not None else 24,
                         cancel_event=cancel_event,
                     )
-                    if repaired.guard.allowed:
-                        repaired_slop = assess_ukrainian_slop(repaired.rewrite, profile="news")
-                        if repaired_slop.publishable:
-                            logger.info(
-                                "UA Anti-Slop repair PASS provider=%s model=%s score=%s",
-                                repaired.route.provider, repaired.route.model, repaired_slop.score,
-                            )
-                            return repaired
-                        failures.append(
-                            f"{repaired.route.label} Anti-Slop repair {repaired_slop.score}/{repaired_slop.gate}: "
-                            + compact_feedback(repaired_slop)
-                        )
+                    repaired_ok, repaired_kind, repaired_detail, _ = _accept_candidate(
+                        repaired, language=language
+                    )
+                    if repaired_ok is not None:
+                        return repaired_ok
+                    failures.append(
+                        f"{repaired.route.label}: repair {repaired_kind} rejected: {repaired_detail}"
+                    )
                 except Exception as repair_exc:
                     failures.append(f"{route.label} Anti-Slop repair: {repair_exc}")
 
-        guard_reason = "; ".join(candidate.guard.issues[:4])
-        failures.append(f"{route.label}: Fact Guard: {guard_reason}")
-        remaining = rc17._remaining(deadline)
-        if (
-            not fact_repair_used
-            and provider in rc17._FACT_REPAIR_PROVIDERS
-            and (remaining is None or remaining >= 16)
-        ):
-            fact_repair_used = True
-            repair_prompt = (
-                "FACT-SAFE REPAIR. Re-read CURRENT SOURCE EVIDENCE in the original task. "
-                "The previous public rewrite is structurally usable but Fact Guard found: "
-                + guard_reason[:700]
-                + ". Correct or remove ONLY unsupported factual elements. Keep supported facts and attribution. "
-                "Do not add anything new. Return HEADLINE:/TEXT: fields only; no analysis, explanation or notes.\n\n"
-                "ORIGINAL TASK:\n"
-                + prompt[:7000]
-                + "\n\nPREVIOUS RESPONSE:\n"
-                + str(route.text)[:2600]
-            )
-            try:
-                repaired = rc17._same_provider_repair(
-                    route,
-                    repair_prompt,
-                    evidence,
-                    language=language,
-                    timeout=min(24, remaining) if remaining is not None else 24,
-                    cancel_event=cancel_event,
+        elif reject_kind == "fact":
+            guard_reason = reject_detail
+            failures.append(f"{route.label}: Fact Guard: {guard_reason}")
+            remaining = rc17._remaining(deadline)
+            if (
+                guard_reason
+                and not fact_repair_used
+                and provider in rc17._FACT_REPAIR_PROVIDERS
+                and (remaining is None or remaining >= 16)
+            ):
+                fact_repair_used = True
+                repair_prompt = (
+                    "FACT-SAFE REPAIR. Re-read CURRENT SOURCE EVIDENCE in the original task. "
+                    "The previous public rewrite is structurally usable but Fact Guard found: "
+                    + guard_reason[:700]
+                    + ". Correct or remove ONLY unsupported factual elements. Keep supported facts and attribution. "
+                    "Do not add anything new. Return HEADLINE:/TEXT: fields only; no analysis, explanation or notes.\n\n"
+                    "ORIGINAL TASK:\n"
+                    + prompt[:7000]
+                    + "\n\nPREVIOUS RESPONSE:\n"
+                    + str(route.text)[:2600]
                 )
-                if repaired.guard.allowed:
-                    return repaired
-                failures.append(
-                    f"{repaired.route.label} repair Fact Guard: "
-                    + "; ".join(repaired.guard.issues[:3])
-                )
-            except Exception as repair_exc:
-                failures.append(f"{route.label} fact repair: {repair_exc}")
+                try:
+                    repaired = rc17._same_provider_repair(
+                        route,
+                        repair_prompt,
+                        evidence,
+                        language=language,
+                        timeout=min(24, remaining) if remaining is not None else 24,
+                        cancel_event=cancel_event,
+                    )
+                    repaired_ok, repaired_kind, repaired_detail, _ = _accept_candidate(
+                        repaired, language=language
+                    )
+                    if repaired_ok is not None:
+                        return repaired_ok
+                    failures.append(
+                        f"{repaired.route.label}: repair {repaired_kind} rejected: {repaired_detail}"
+                    )
+                except Exception as repair_exc:
+                    failures.append(f"{route.label} fact repair: {repair_exc}")
 
         if provider == "local":
             provider_skip.add("local")
