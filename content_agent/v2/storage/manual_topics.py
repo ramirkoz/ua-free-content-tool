@@ -141,5 +141,87 @@ class ManualTopicsMixin:
                 bucket["topic_names"].append(topic_name)
         return result
 
+    def list_inbox_groups(
+        self,
+        *,
+        status: str | None = None,
+        source_id: int | None = None,
+        topic_id: int | None = None,
+        search: str = "",
+        limit: int = 200,
+    ):
+        """Return Inbox groups with Source/Topic/Search filtering performed in SQL.
+
+        RC53 deliberately moves these filters out of Treeview post-processing. Each
+        whitespace-separated search token must match the group title/editorial text
+        or at least one article title/body (AND semantics across tokens).
+        """
+        query = """
+            SELECT g.*,
+                   COUNT(a.id) AS source_count,
+                   MIN(a.published_at) AS first_published_at,
+                   MAX(a.published_at) AS last_published_at
+            FROM news_groups g
+            JOIN articles a ON a.group_id=g.id
+        """
+        where: list[str] = []
+        params: list[object] = []
+        if status == "approved":
+            where.append(
+                """g.status='approved' AND (
+                    julianday(g.updated_at) >= julianday('now','-1 day') OR EXISTS (
+                        SELECT 1 FROM publication_batches b
+                        JOIN articles qa ON qa.id=b.article_id
+                        WHERE qa.group_id=g.id AND b.status IN ('pending','in_progress','paused')
+                    )
+                )"""
+            )
+        elif status:
+            where.append("g.status=?")
+            params.append(str(status))
+        else:
+            where.append(
+                """g.status IN ('new','draft') OR (g.status='approved' AND (
+                    julianday(g.updated_at) >= julianday('now','-1 day') OR EXISTS (
+                        SELECT 1 FROM publication_batches b
+                        JOIN articles qa ON qa.id=b.article_id
+                        WHERE qa.group_id=g.id AND b.status IN ('pending','in_progress','paused')
+                    )
+                ))"""
+            )
+        if source_id is not None:
+            where.append(
+                "EXISTS (SELECT 1 FROM articles fs WHERE fs.group_id=g.id AND fs.source_id=?)"
+            )
+            params.append(int(source_id))
+        if topic_id is not None:
+            where.append(
+                """EXISTS (
+                    SELECT 1 FROM articles ft
+                    JOIN sources fts ON fts.id=ft.source_id
+                    WHERE ft.group_id=g.id AND fts.topic_id=?
+                )"""
+            )
+            params.append(int(topic_id))
+        for token in [part for part in str(search or "").split() if part]:
+            pattern = f"%{token}%"
+            where.append(
+                """EXISTS (
+                    SELECT 1 FROM articles fa
+                    WHERE fa.group_id=g.id AND (
+                        g.canonical_title LIKE ? OR g.headline LIKE ? OR g.rewrite_text LIKE ?
+                        OR fa.title LIKE ? OR fa.raw_text LIKE ?
+                    )
+                )"""
+            )
+            params.extend([pattern, pattern, pattern, pattern, pattern])
+        if where:
+            query += " WHERE " + " AND ".join(f"({item})" for item in where)
+        query += " GROUP BY g.id ORDER BY COALESCE(MAX(a.published_at),g.updated_at) DESC LIMIT ?"
+        params.append(max(1, min(5000, int(limit))))
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [self._group_from_row(row, []) for row in rows]
+
 
 __all__ = ["ManualTopicsMixin"]
