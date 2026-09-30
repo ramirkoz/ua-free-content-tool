@@ -23,6 +23,21 @@ class QualityTier(StrEnum):
     PREMIUM = "premium"
 
 
+class AIErrorKind(StrEnum):
+    """Stable failure classes shared by every active AI backend."""
+
+    AUTH = "auth"
+    QUOTA = "quota"
+    CONFIGURATION = "configuration"
+    MODEL = "model"
+    TEMPORARY = "temporary"
+    BAD_RESPONSE = "bad_response"
+    VALIDATION = "validation"
+    REQUEST_TOO_LARGE = "request_too_large"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+
+
 Validator = Callable[[str], object]
 
 
@@ -68,6 +83,7 @@ class AIBackend(Protocol):
 
 __all__ = [
     "AIBackend",
+    "AIErrorKind",
     "AIRequest",
     "AITask",
     "QualityTier",

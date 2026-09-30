@@ -53,7 +53,6 @@ def test_rc49_ai_status_compat_contract_keeps_structured_telemetry(monkeypatch) 
 
 
 def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
-    from content_agent.v2 import ai
     from content_agent.v2.ai.settings import AIBackendSettings, BACKEND_ROUTER
     from content_agent.v2.ui import window as window_module
     from content_agent.v2.ui.manual_topics_window_rc44 import MainWindow
@@ -70,6 +69,11 @@ def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
 
     settings = AIBackendSettings(active_backend=BACKEND_ROUTER)
     monkeypatch.setattr(window_module, "load_backend_settings", lambda: settings)
+    monkeypatch.setattr(window_module, "backend_status", lambda backend=None, **_kwargs: (
+        {"active_backend": BACKEND_ROUTER} if backend is None else
+        "AI Router: провайдерів 1, доступно 1 · активний" if backend == BACKEND_ROUTER else
+        "OpenRouter: API key не задано"
+    ))
     monkeypatch.setattr(window_module, "provider_health_text", lambda: "Router health OK")
     monkeypatch.setattr(window_module, "inspect_codex_cached", lambda: "Codex cached OK")
     monkeypatch.setattr(window_module, "peek_codex_status_cache", lambda: None)
@@ -80,11 +84,6 @@ def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
         "month_cost": 0.0,
         "budget": 25.0,
         "remaining": 25.0,
-    })
-    monkeypatch.setattr(ai, "_raw_backend_status", lambda: {
-        "active_backend": BACKEND_ROUTER,
-        "openrouter_configured": False,
-        "router": {"configured_providers": 1, "available_providers": 1, "rows": []},
     })
 
     window = object.__new__(MainWindow)
@@ -105,12 +104,11 @@ def test_rc49_refresh_ai_status_accepts_stable_ui_calls(monkeypatch) -> None:
     assert "$25.00" in str(window.v2_usage_var.get())
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Tk smoke is exercised by the RC49 Windows gate")
+@pytest.mark.skipif(sys.platform != "win32", reason="Tk smoke is exercised by the RC49+ Windows gate")
 def test_rc49_full_ai_tab_builds_on_windows(monkeypatch) -> None:
     import tkinter as tk
     from tkinter import ttk
 
-    from content_agent.v2 import ai
     from content_agent.v2.ai.settings import AIBackendSettings, BACKEND_ROUTER
     from content_agent.v2.ui import window as window_module
     from content_agent.v2.ui.manual_topics_window_rc44 import MainWindow
@@ -126,11 +124,6 @@ def test_rc49_full_ai_tab_builds_on_windows(monkeypatch) -> None:
         "codex_enabled": False,
         "local_enabled": False,
     })())
-    monkeypatch.setattr(ai, "_raw_backend_status", lambda: {
-        "active_backend": BACKEND_ROUTER,
-        "openrouter_configured": False,
-        "router": {"configured_providers": 0, "available_providers": 0, "rows": []},
-    })
 
     root = tk.Tk()
     root.withdraw()
