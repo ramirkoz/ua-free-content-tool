@@ -4,8 +4,6 @@ import threading
 import time
 from types import SimpleNamespace
 
-import pytest
-
 from content_agent.app.container import build_services
 from content_agent.donation_settings_v1_3_1_rc8 import DonationSettings
 from content_agent.publishers import PublishContext, PublishError, PublishResult
@@ -56,7 +54,7 @@ class FakeConfig:
 
     def platform_ready(self, key):
         if key.startswith("facebook:"):
-            return self.facebook_page(key.split(": 1)[1]) is not None
+            return self.facebook_page(key.split(":", 1)[1]) is not None
         if key == "threads":
             return bool(self.threads_user_id and self.threads_token)
         if key == "linkedin":
@@ -100,7 +98,7 @@ def _adapters(config):
     )
 
 
-def test_registry_has_one_adapter_per_supported_platform(monkeypatch):
+def test_registry_has_one_adapter_per_supported_platform():
     config = FakeConfig()
     registry = DestinationRegistry(config, _adapters(config))
     assert registry.adapter_for("telegram:-1001").platform == "telegram"
@@ -111,7 +109,7 @@ def test_registry_has_one_adapter_per_supported_platform(monkeypatch):
     assert all(adapter.platform != "google_drive" for adapter in registry.adapters)
 
 
-def test_auth_state_is_separate_from_publish(monkeypatch):
+def test_auth_state_is_separate_from_publish():
     config = FakeConfig()
     adapters = _adapters(config)
     assert adapters[0].auth_status("telegram:-1001").state is AuthState.CONNECTED
@@ -211,7 +209,7 @@ def test_drive_is_media_service_not_destination_adapter():
     assert all(adapter.platform != "google_drive" for adapter in service.registry.adapters)
 
 
-def test_app_services_composes_publishing_and_media(monkeypatch):
+def test_app_services_composes_publishing_and_media():
     fake_db = SimpleNamespace()
     services = build_services(config=FakeConfig(), database=fake_db)
     assert services.publishing.registry.adapter_for("threads").platform == "threads"
