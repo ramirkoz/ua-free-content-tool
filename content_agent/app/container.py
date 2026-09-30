@@ -5,22 +5,22 @@ from dataclasses import dataclass
 from ..config import AppConfig
 from ..services.maintenance import MaintenanceService
 from ..v2.ai.gateway import AIGateway
+from ..v2.publishing.media_service import GoogleDriveMediaService
+from ..v2.publishing.service import PublishingService
 from ..v2.storage.factory import create_database
 from ..v2.storage.reliable import Database
 
 
 @dataclass(frozen=True, slots=True)
 class AppServices:
-    """Single runtime composition boundary for the active application.
-
-    Storage/maintenance and the canonical AI gateway are assembled here. Publishing
-    and destination adapters remain the explicit RC52 milestone.
-    """
+    """Single runtime composition boundary for the active application."""
 
     db: Database
     config: AppConfig
     ai: AIGateway
     maintenance: MaintenanceService
+    publishing: PublishingService
+    media: GoogleDriveMediaService
 
 
 def build_services(*, config: AppConfig, database: Database | None = None) -> AppServices:
@@ -30,6 +30,8 @@ def build_services(*, config: AppConfig, database: Database | None = None) -> Ap
         config=config,
         ai=AIGateway(),
         maintenance=MaintenanceService(),
+        publishing=PublishingService(config),
+        media=GoogleDriveMediaService(config),
     )
 
 
