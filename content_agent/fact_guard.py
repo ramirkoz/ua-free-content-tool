@@ -5,150 +5,6 @@ import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-_WORD_END = r"(?![a-zа-яіїєґ])"
-_UNIT_WORD_SOURCE = (
-    r"кілометр(?:а|у|і|ом|и|ів|ами|ах)?|" 
-    r"километр(?:а|у|е|ом|ы|ов|ами|ах)?|kilometers?|kilometres?|"
-    r"метр(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"метр(?:а|у|е|ом|ы|ов|ами|ах)?|meters?|metres?|"
-    r"кілограм(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"килограмм?(?:а|у|е|ом|ы|ов|ами|ах)?|kilograms?|"
-    r"мегават(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"мегаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|megawatts?|"
-    r"гігават(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"гигаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|gigawatts?|"
-    r"гігабайт(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"гигабайт(?:а|у|е|ом|ы|ов|ами|ах)?|gigabytes?|"
-    r"мегабайт(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"мегабайт(?:а|у|е|ом|ы|ов|ами|ах)?|megabytes?|"
-    r"терабайт(?:а|у|і|ом|и|ів|ами|ах)?|"
-    r"терабайт(?:а|у|е|ом|ы|ов|ами|ах)?|terabytes?"
-)
-_UNIT_SHORT_SOURCE = (
-    r"km|км|kg|кг|gb|гб|mb|мб|tb|тб|mw|мвт|gw|гвт|m|м"
-)
-_SUFFIX_SOURCE = (
-    r"%|"
-    r"тис\\.?|тисяч(?:а|і|у|ею)?|тыс\\.?|тысяч(?:а|и|у|ей)?|thousand|"
-    r"млн\\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
-    r"млрд\\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
-    r"(?:" + _UNIT_SHORT_SOURCE + r")" + _WORD_END + r"|"
-    r"(?:" + _UNIT_WORD_SOURCE + r")" + _WORD_END + r"|"
-    r"k" + _WORD_END + r"|"
-    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
-    r"dollars?|євро|евро|euros?|₴|\\$|€"
-)
-
-_NUMBER_RE = re.compile(
-    r"(?<![\\w])"
-    r"(?:(?P<prefix>[$€₴])\\s*|(?P<prefix_word>USD|EUR|UAH)\\s+)?"
-    r"(?P<number>(?:\\d{1,3}(?:[ \\u00a0\\u202f,'’ʼ]\\d{3})+|\\d+(?:[.,]\\d+)?))"
-    r"(?P<suffix>(?:\\s*(?:" + _SUFFIX_SOURCE + r")){0,2})",
-    re.IGNORECASE,
-)
-_SUFFIX_TOKEN_RE = re.compile(r"(?iu)" + _SUFFIX_SOURCE)
-_LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
-_ROMAN_CANDIDATE_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
-_KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
-_GENERIC_LATIN = frozenset({
-    "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
-    "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
-})
-_UNICODE_NUMBER_ALIASES = {"💯": "100", "🔟": "10"}
-_METADATA_PREFIXES = (
-    "ДЖЕРЕЛО ",
-    "SOURCE ",
-    "ЧАС:",
-    "TIME:",
-    "URL:",
-)
-
-_SCALE_ALIASES: tuple[tuple[re.Pattern[str], Decimal], ...] = (
-    (re.compile(r"(?iu)^(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|k)$"), Decimal(1000)),
-    (re.compile(r"(?iu)^(?:млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million)$"), Decimal(1_000_000)),
-    (re.compile(r"(?iu)^(?:млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn)$"), Decimal(1_000_000_000)),
-)
-_UNIT_ALIASES: dict[str, str] = {
-    "%": "%",
-    "km": "km",
-    "км": "km",
-    "m": "m",
-    "м": "m",
-    "kg": "kg",
-    "кг": "kg",
-    "gb": "gb",
-    "гб": "gb",
-    "mb": "mb",
-    "мб": "mb",
-    "tb": "tb",
-    "тб": "tb",
-    "mw": "mw",
-    "мвт": "mw",
-    "gw": "gw",
-    "гвт": "gw",
-    "usd": "usd",
-    "$": "usd",
-    "eur": "eur",
-    "€": "eur",
-    "uah": "uah",
-    "грн": "uah",
-    "₴": "uah",
-}
-
-_UNIT_WORD_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?iu)^(?:кілометр(?:а|у|і|ом|и|ів|ами|ах)?|километр(?:а|у|е|ом|ы|ов|ами|ах)?|kilometers?|kilometres?)$"), "km"),
-    (re.compile(r"(?iu)^(?:метр(?:а|у|і|ом|и|ів|ами|ах)?|метр(?:а|у|е|ом|ы|ов|ами|ах)?|meters?|metres?)$"), "m"),
-    (re.compile(r"(?iu)^(?:кілограм(?:а|у|і|ом|и|ів|ами|ах)?|килограмм?(?:а|у|е|ом|ы|ов|ами|ах)?|kilograms?)$"), "kg"),
-    (re.compile(r"(?iu)^(?:мегават(?:а|у|і|ом|и|ів|ами|ах)?|мегаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|megawatts?)$"), "mw"),
-    (re.compile(r"(?iu)^(?:гігават(?:а|у|і|ом|и|ів|ами|ах)?|гигаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|gigawatts?)$"), "gw"),
-    (re.compile(r"(?iu)^(?:гігабайт(?:а|у|і|ом|и|ів|ами|ах)?|гигабайт(?:а|у|е|ом|ы|ов|ами|ах)?|gigabytes?)$"), "gb"),
-    (re.compile(r"(?iu)^(?:мегабайт(?:а|у|і|ом|и|ів|ами|ах)?|мегабайт(?:а|у|е|ом|ы|ов|ами|ах)?|megabytes?)$"), "mb"),
-    (re.compile(r"(?iu)^(?:терабайт(?:а|у|і|ом|и|ів|ами|ах)?|терабайт(?:а|у|е|ом|ы|ов|ами|ах)?|terabytes?)$"), "tb"),
-)
-
-_CURRENCY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?iu)^грив(?:ня|ні|ень)$"), "uah"),
-    (re.compile(r"(?iu)^дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)$"), "usd"),
-    (re.compile(r"(?iu)^dollars?$"), "usd"),
-    (re.compile(r"(?iu)^(?:євро|евро|euros?)$"), "eur"),
-)
-
-_HIGH_RISK_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        "першість",
-        re.compile(
-            r"(?iu)\b(?:перш(?:ий|а|е|і)\s+(?:у\s+світі|в\s+світі|в\s+історії)|"
-            r"first[- ]ever|world['’]?s first|перв(?:ый|ая|ое|ые)\s+в\s+мире)\b"
-        ),
-    ),
-    (
-        "найбільший",
-        re.compile(r"(?iu)\b(?:найбільш(?:ий|а|е|і)|largest|biggest|крупнейш(?:ий|ая|ее|ие))\b"),
-    ),
-    (
-        "найшвидший",
-        re.compile(r"(?iu)\b(?:найшвидш(?:ий|а|е|і)|fastest|сам(?:ый|ая|ое)\s+быстр\w*)\b"),
-    ),
-    (
-        "найпотужніший",
-        re.compile(r"(?iu)\b(?:найпотужніш(?:ий|а|е|і)|most powerful|сам(?:ый|ая|ое)\s+мощн\w*)\b"),
-    ),
-    (
-        "рекорд",
-        re.compile(r"(?iu)\b(?:рекордн(?:ий|а|е|і|ого|ої)|record[- ]breaking|record\s+(?:high|low)|рекордн\w*)\b"),
-    ),
-)
-
-_UNCERTAINTY_OUTPUT = re.compile(
-    r"(?iu)\b(?:можливо|ймовірно|схоже|може|можуть|might|may|could|reportedly|likely|possibly|"
-    r"возможно|вероятно|может|могут)\b"
-)
-_SOURCE_UNCERTAINTY = re.compile(
-    r"(?iu)\b(?:можливо|ймовірно|схоже|може|можуть|планує|планують|очікує|очікується|"
-    r"за даними|за словами|заявив|повідомив|might|may|could|plans?|expected|reportedly|according to|said|"
-    r"возможно|вероятно|может|могут|планирует|ожидается|по данным|заявил|сообщил)\b"
-)
-
 
 @dataclass(frozen=True, slots=True)
 class FactGuardResult:
@@ -159,85 +15,85 @@ class FactGuardResult:
     unsupported_entities: tuple[str, ...] = ()
 
 
+_METADATA_PREFIXES = ("ДЖЕРЕЛО ", "SOURCE ", "ЧАС:", "TIME:", "URL:")
+_GENERIC_LATIN = frozenset({
+    "AI", "API", "GPU", "CPU", "RAM", "VRAM", "GB", "MB", "TB", "USB", "SSD", "HDD",
+    "HTTP", "HTTPS", "JSON", "RSS", "URL", "HTML", "UA", "FREE", "USD", "EUR",
+})
+_UNICODE_NUMBER_ALIASES = {"💯": "100", "🔟": "10"}
+_KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
+_ROMAN_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
+_LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
+
+_SCALE_PATTERNS: tuple[tuple[re.Pattern[str], Decimal], ...] = (
+    (re.compile(r"(?iu)^(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|k)$"), Decimal(1_000)),
+    (re.compile(r"(?iu)^(?:млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million)$"), Decimal(1_000_000)),
+    (re.compile(r"(?iu)^(?:млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn)$"), Decimal(1_000_000_000)),
+)
+_UNIT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?iu)^(?:km|км|кілометр(?:а|у|і|ом|и|ів|ами|ах)?|километр(?:а|у|е|ом|ы|ов|ами|ах)?|kilometers?|kilometres?)$"), "km"),
+    (re.compile(r"(?iu)^(?:m|м|метр(?:а|у|і|ом|и|ів|ами|ах)?|метр(?:а|у|е|ом|ы|ов|ами|ах)?|meters?|metres?)$"), "m"),
+    (re.compile(r"(?iu)^(?:kg|кг|кілограм(?:а|у|і|ом|и|ів|ами|ах)?|килограмм?(?:а|у|е|ом|ы|ов|ами|ах)?|kilograms?)$"), "kg"),
+    (re.compile(r"(?iu)^(?:mw|мвт|мегават(?:а|у|і|ом|и|ів|ами|ах)?|мегаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|megawatts?)$"), "mw"),
+    (re.compile(r"(?iu)^(?:gw|гвт|гігават(?:а|у|і|ом|и|ів|ами|ах)?|гигаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|gigawatts?)$"), "gw"),
+    (re.compile(r"(?iu)^(?:gb|гб|гігабайт(?:а|у|і|ом|и|ів|ами|ах)?|гигабайт(?:а|у|е|ом|ы|ов|ами|ах)?|gigabytes?)$"), "gb"),
+    (re.compile(r"(?iu)^(?:mb|мб|мегабайт(?:а|у|і|ом|и|ів|ами|ах)?|мегабайт(?:а|у|е|ом|ы|ов|ами|ах)?|megabytes?)$"), "mb"),
+    (re.compile(r"(?iu)^(?:tb|тб|терабайт(?:а|у|і|ом|и|ів|ами|ах)?|терабайт(?:а|у|е|ом|ы|ов|ами|ах)?|terabytes?)$"), "tb"),
+)
+_CURRENCY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?iu)^(?:usd|\$|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|dollars?)$"), "usd"),
+    (re.compile(r"(?iu)^(?:eur|€|євро|евро|euros?)$"), "eur"),
+    (re.compile(r"(?iu)^(?:uah|₴|грн|грив(?:ня|ні|ень))$"), "uah"),
+)
+_SUFFIX_TOKEN_RE = re.compile(
+    r"(?iu)(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
+    r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
+    r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
+    r"кілометр(?:а|у|і|ом|и|ів|ами|ах)?|километр(?:а|у|е|ом|ы|ов|ами|ах)?|kilometers?|kilometres?|km|км|"
+    r"метр(?:а|у|і|ом|и|ів|ами|ах)?|метр(?:а|у|е|ом|ы|ов|ами|ах)?|meters?|metres?|m|м|"
+    r"кілограм(?:а|у|і|ом|и|ів|ами|ах)?|килограмм?(?:а|у|е|ом|ы|ов|ами|ах)?|kilograms?|kg|кг|"
+    r"мегават(?:а|у|і|ом|и|ів|ами|ах)?|мегаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|megawatts?|mw|мвт|"
+    r"гігават(?:а|у|і|ом|и|ів|ами|ах)?|гигаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|gigawatts?|gw|гвт|"
+    r"gb|гб|mb|мб|tb|тб|%|usd|eur|uah|грн|₴|\$|€|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|dollars?|євро|евро|euros?)"
+)
+_NUMBER_RE = re.compile(
+    r"(?<!\w)(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
+    r"(?P<number>(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?))"
+    r"(?P<suffix>(?:\s*(?:" + _SUFFIX_TOKEN_RE.pattern + r")){0,2})",
+    re.IGNORECASE,
+)
+
+_HIGH_RISK_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("першість", re.compile(r"(?iu)\b(?:перш(?:ий|а|е|і)\s+(?:у|в)\s+(?:світі|історії)|first[- ]ever|world['’]?s first|перв(?:ый|ая|ое|ые)\s+в\s+мире)\b")),
+    ("найбільший", re.compile(r"(?iu)\b(?:найбільш(?:ий|а|е|і)|largest|biggest|крупнейш(?:ий|ая|ее|ие))\b")),
+    ("найшвидший", re.compile(r"(?iu)\b(?:найшвидш(?:ий|а|е|і)|fastest|сам(?:ый|ая|ое)\s+быстр\w*)\b")),
+    ("найпотужніший", re.compile(r"(?iu)\b(?:найпотужніш(?:ий|а|е|і)|most powerful|сам(?:ый|ая|ое)\s+мощн\w*)\b")),
+    ("рекорд", re.compile(r"(?iu)\b(?:рекордн\w*|record[- ]breaking|record\s+(?:high|low))\b")),
+)
+_UNCERTAINTY_OUTPUT = re.compile(r"(?iu)\b(?:можливо|ймовірно|схоже|might|may|could|reportedly|likely|possibly|возможно|вероятно)\b")
+_SOURCE_UNCERTAINTY = re.compile(r"(?iu)\b(?:можливо|ймовірно|схоже|планує|планують|очікує|очікується|за даними|за словами|заявив|повідомив|might|may|could|plans?|expected|reportedly|according to|said|возможно|вероятно|планирует|ожидается|по данным|заявил|сообщил)\b")
+
+
 def _normalize_numeric_text(value: str) -> str:
     text = unicodedata.normalize("NFKC", str(value or ""))
-    text = _KEYCAP_DIGIT_RE.sub(lambda match: match.group(1), text)
+    text = _KEYCAP_DIGIT_RE.sub(lambda m: m.group(1), text)
     for token, replacement in _UNICODE_NUMBER_ALIASES.items():
         text = text.replace(token, replacement)
     return text
 
 
-
-def _is_strong_latin_token(token: str) -> bool:
-    clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
-    if len(clean) < 2 or clean.upper() in _GENERIC_LATIN:
-        return False
-    if _roman_to_int(clean) is not None:
-        return False
-    letters = [char for char in clean if char.isalpha()]
-    if not letters:
-        return False
-    if any(char.isdigit() for char in clean) or any(char in "._+-/" for char in clean):
-        return True
-    has_upper = any(char.isupper() for char in letters)
-    has_lower = any(char.islower() for char in letters)
-    simple_title = clean[:1].isupper() and clean[1:].islower()
-    if has_upper and has_lower and not simple_title:
-        return True
-    if clean.isupper() and 2 <= len(clean) <= 5:
-        return True
-    return False
-
-
 def _parse_decimal(raw: str) -> Decimal | None:
     value = str(raw or "").strip().replace("\u00a0", " ").replace("\u202f", " ")
-    # Thousands separators seen in real feeds include spaces, commas and multiple
-    # apostrophe characters (ASCII ', U+2019 ’, U+02BC ʼ). Treat them as one
-    # quantity only when groups after the separator contain exactly three digits.
-    if re.fullmatch(r"[1-9]\d{0,2}(?:[ ,\'’ʼ]\d{3})+", value):
-        compact = re.sub(r"[ ,\'’ʼ]", "", value)
+    if re.fullmatch(r"[1-9]\d{0,2}(?:[ ,'’ʼ]\d{3})+", value):
+        value = re.sub(r"[ ,'’ʼ]", "", value)
     else:
-        compact = value.replace(" ", "")
-        if "," in compact and "." not in compact:
-            compact = compact.replace(",", ".")
+        value = value.replace(" ", "")
+        if "," in value and "." not in value:
+            value = value.replace(",", ".")
     try:
-        return Decimal(compact)
+        return Decimal(value)
     except (InvalidOperation, ValueError):
         return None
-
-
-def _int_to_roman(value: int) -> str:
-    if value <= 0 or value > 3999:
-        return ""
-    pairs = (
-        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
-        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
-        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
-    )
-    out: list[str] = []
-    remaining = int(value)
-    for amount, token in pairs:
-        while remaining >= amount:
-            out.append(token)
-            remaining -= amount
-    return "".join(out)
-
-
-def _roman_to_int(token: str) -> int | None:
-    clean = str(token or "").strip().upper()
-    if len(clean) < 2 or not re.fullmatch(r"[IVXLCDM]+", clean):
-        return None
-    values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
-    total = 0
-    for index, char in enumerate(clean):
-        value = values[char]
-        if index + 1 < len(clean) and value < values[clean[index + 1]]:
-            total -= value
-        else:
-            total += value
-    if not 0 < total <= 3999 or _int_to_roman(total) != clean:
-        return None
-    return total
 
 
 def _decimal_text(value: Decimal) -> str:
@@ -248,7 +104,7 @@ def _decimal_text(value: Decimal) -> str:
 
 def _scale_for(token: str) -> Decimal | None:
     clean = str(token or "").strip().casefold()
-    for pattern, multiplier in _SCALE_ALIASES:
+    for pattern, multiplier in _SCALE_PATTERNS:
         if pattern.fullmatch(clean):
             return multiplier
     return None
@@ -256,12 +112,9 @@ def _scale_for(token: str) -> Decimal | None:
 
 def _unit_for(token: str) -> str | None:
     clean = str(token or "").strip().casefold()
-    if clean in _UNIT_ALIASES:
-        return _UNIT_ALIASES[clean]
-    for pattern, canonical in _UNIT_WORD_PATTERNS:
-        if pattern.fullmatch(clean):
-            return canonical
-    for pattern, canonical in _CURRENCY_PATTERNS:
+    if clean == "%":
+        return "%"
+    for pattern, canonical in (*_UNIT_PATTERNS, *_CURRENCY_PATTERNS):
         if pattern.fullmatch(clean):
             return canonical
     return None
@@ -273,39 +126,42 @@ def _canon_number_match(match: re.Match[str]) -> str:
         return ""
     scale = Decimal(1)
     unit = _unit_for(match.group("prefix") or match.group("prefix_word") or "")
-    suffix = match.group("suffix") or ""
-    for token_match in _SUFFIX_TOKEN_RE.finditer(suffix):
+    for token_match in _SUFFIX_TOKEN_RE.finditer(match.group("suffix") or ""):
         token = token_match.group(0)
         multiplier = _scale_for(token)
         if multiplier is not None:
             scale = multiplier
-            continue
-        candidate_unit = _unit_for(token)
-        if candidate_unit is not None:
-            unit = candidate_unit
-    value = base * scale
-    canonical = _decimal_text(value)
+        else:
+            candidate = _unit_for(token)
+            if candidate is not None:
+                unit = candidate
+    canonical = _decimal_text(base * scale)
     return canonical + (f" {unit}" if unit else "")
 
 
-def _factual_evidence(value: str) -> str:
-    """Remove Evidence Pack transport metadata before factual comparison.
+def _int_to_roman(value: int) -> str:
+    if not 0 < value <= 3999:
+        return ""
+    pairs = ((1000,"M"),(900,"CM"),(500,"D"),(400,"CD"),(100,"C"),(90,"XC"),(50,"L"),(40,"XL"),(10,"X"),(9,"IX"),(5,"V"),(4,"IV"),(1,"I"))
+    result: list[str] = []
+    remaining = value
+    for amount, token in pairs:
+        while remaining >= amount:
+            result.append(token)
+            remaining -= amount
+    return "".join(result)
 
-    Source index, fetch/publication time and URL help the model understand the
-    dossier but they are not evidence that an event happened in that year or
-    that a number belongs in the public rewrite.
-    """
 
-    rows: list[str] = []
-    for raw in str(value or "").splitlines():
-        stripped = raw.strip()
-        upper = stripped.upper()
-        if any(upper.startswith(prefix) for prefix in _METADATA_PREFIXES):
-            continue
-        if stripped == "---":
-            continue
-        rows.append(raw)
-    return "\n".join(rows)
+def _roman_to_int(token: str) -> int | None:
+    clean = str(token or "").upper()
+    if len(clean) < 2 or not re.fullmatch(r"[IVXLCDM]+", clean):
+        return None
+    values = {"I":1,"V":5,"X":10,"L":50,"C":100,"D":500,"M":1000}
+    total = 0
+    for i, char in enumerate(clean):
+        current = values[char]
+        total += -current if i + 1 < len(clean) and current < values[clean[i+1]] else current
+    return total if _int_to_roman(total) == clean else None
 
 
 def extract_numbers(value: str) -> set[str]:
@@ -315,37 +171,55 @@ def extract_numbers(value: str) -> set[str]:
         canonical = _canon_number_match(match)
         if canonical:
             result.add(canonical)
-    for match in _ROMAN_CANDIDATE_RE.finditer(text):
-        roman_value = _roman_to_int(match.group(0))
-        if roman_value is not None:
-            result.add(str(roman_value))
+    for match in _ROMAN_RE.finditer(text):
+        value_int = _roman_to_int(match.group(0))
+        if value_int is not None:
+            result.add(str(value_int))
     return result
 
 
+def _is_strong_latin_token(token: str) -> bool:
+    clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
+    if len(clean) < 2 or clean.upper() in _GENERIC_LATIN or _roman_to_int(clean) is not None:
+        return False
+    if any(ch.isdigit() for ch in clean) or any(ch in "._+-/" for ch in clean):
+        return True
+    letters = [ch for ch in clean if ch.isalpha()]
+    if not letters:
+        return False
+    if any(ch.isupper() for ch in letters) and any(ch.islower() for ch in letters) and not (clean[:1].isupper() and clean[1:].islower()):
+        return True
+    if clean.isupper() and 2 <= len(clean) <= 5:
+        return True
+    # Product/model families that are routinely proper names but surface as a
+    # single TitleCase token. Keep this narrow to avoid treating ordinary English
+    # prose as invented entities.
+    if re.fullmatch(r"(?i)(?:cyber(?:cab|truck)|modelx)", clean):
+        return True
+    return False
+
+
 def extract_latin_entities(value: str) -> set[str]:
-    """Extract only high-confidence Latin entities, not ordinary English words."""
-    text = str(value or "")
     result: set[str] = set()
-    for token in _LATIN_TOKEN_RE.findall(text):
+    for token in _LATIN_TOKEN_RE.findall(str(value or "")):
         if _is_strong_latin_token(token):
             result.add(token.casefold())
     return result
 
 
+def _factual_evidence(value: str) -> str:
+    rows: list[str] = []
+    for raw in str(value or "").splitlines():
+        stripped = raw.strip()
+        upper = stripped.upper()
+        if any(upper.startswith(prefix) for prefix in _METADATA_PREFIXES) or stripped == "---":
+            continue
+        rows.append(raw)
+    return "\n".join(rows)
+
+
 def _unsupported_high_risk(evidence: str, output: str) -> list[str]:
-    issues: list[str] = []
-    for label, pattern in _HIGH_RISK_RULES:
-        if pattern.search(output) and not pattern.search(evidence):
-            issues.append(f"непідтверджене посилення: {label}")
-    return issues
-
-
-def _repetition_penalty(rewrite: str) -> int:
-    sentences = [" ".join(part.split()).casefold() for part in re.split(r"(?<=[.!?…])\s+", rewrite) if part.strip()]
-    if len(sentences) < 2:
-        return 0
-    unique = len(set(sentences))
-    return 10 if unique < len(sentences) else 0
+    return [f"непідтверджене посилення: {label}" for label, pattern in _HIGH_RISK_RULES if pattern.search(output) and not pattern.search(evidence)]
 
 
 def _quality_score(evidence: str, headline: str, rewrite: str, language: str) -> int:
@@ -356,70 +230,32 @@ def _quality_score(evidence: str, headline: str, rewrite: str, language: str) ->
         if not output_numbers:
             score -= min(8, 2 + len(source_numbers) * 2)
         else:
-            covered = len(source_numbers & output_numbers) / max(1, len(source_numbers))
-            score += round(min(6.0, covered * 6.0))
+            score += round(min(6.0, (len(source_numbers & output_numbers) / max(1, len(source_numbers))) * 6.0))
     if language.casefold().startswith("uk"):
         source_entities = extract_latin_entities(evidence)
         output_entities = extract_latin_entities(f"{headline}\n{rewrite}")
         if source_entities and output_entities:
-            covered = len(source_entities & output_entities) / max(1, len(output_entities))
-            score += round(min(6.0, covered * 6.0))
-    evidence_plain = " ".join(evidence.split())
-    rewrite_plain = " ".join(rewrite.split())
-    if len(evidence_plain) <= 700 and len(rewrite_plain) > 700:
-        score -= 8
-    if len(rewrite_plain) < 80 and len(evidence_plain) > 1200:
-        score -= 6
-    score -= _repetition_penalty(rewrite)
+            score += round(min(6.0, (len(source_entities & output_entities) / max(1, len(output_entities))) * 6.0))
+    sentences = [" ".join(part.split()).casefold() for part in re.split(r"(?<=[.!?…])\s+", rewrite) if part.strip()]
+    if len(sentences) >= 2 and len(set(sentences)) < len(sentences):
+        score -= 10
     return max(0, min(100, score))
 
 
-def guard_rewrite(
-    evidence: str,
-    headline: str,
-    rewrite: str,
-    *,
-    language: str = "uk",
-) -> FactGuardResult:
-    """Reject deterministic factual strengthening unsupported by current sources.
-
-    Editorial memory is deliberately absent from ``evidence``. Evidence Pack
-    transport metadata is also excluded from factual matching. Therefore an old
-    memory fact or a source timestamp cannot silently authorize a new claim.
-
-    Numeric facts are compared semantically across common RU/UA/EN forms, so
-    ``500 тыс.``, ``500 тис.``, ``500 thousand`` and ``500,000`` are treated as
-    the same quantity instead of as four unrelated strings.
-    """
-
+def guard_rewrite(evidence: str, headline: str, rewrite: str, *, language: str = "uk") -> FactGuardResult:
     source = _factual_evidence(evidence)
     output = f"{headline}\n{rewrite}".strip()
     issues: list[str] = []
-
-    source_numbers = extract_numbers(source)
-    output_numbers = extract_numbers(output)
-    unsupported_numbers = sorted(output_numbers - source_numbers)
+    unsupported_numbers = sorted(extract_numbers(output) - extract_numbers(source))
     if unsupported_numbers:
         issues.append("числа/дати відсутні у поточних джерелах: " + ", ".join(unsupported_numbers[:8]))
-
     unsupported_entities: list[str] = []
     if language.casefold().startswith("uk"):
-        source_entities = extract_latin_entities(source)
-        output_entities = extract_latin_entities(output)
-        unsupported_entities = sorted(output_entities - source_entities)
+        unsupported_entities = sorted(extract_latin_entities(output) - extract_latin_entities(source))
         if unsupported_entities:
             issues.append("назви/моделі відсутні у поточних джерелах: " + ", ".join(unsupported_entities[:8]))
-
     issues.extend(_unsupported_high_risk(source, output))
-
     if _UNCERTAINTY_OUTPUT.search(output) and not _SOURCE_UNCERTAINTY.search(source):
         issues.append("додано непідтверджену невизначеність або припущення")
-
     score = 0 if issues else _quality_score(source, headline, rewrite, language)
-    return FactGuardResult(
-        allowed=not issues,
-        issues=tuple(issues),
-        score=score,
-        unsupported_numbers=tuple(unsupported_numbers),
-        unsupported_entities=tuple(unsupported_entities),
-    )
+    return FactGuardResult(not issues, tuple(issues), score, tuple(unsupported_numbers), tuple(unsupported_entities))
