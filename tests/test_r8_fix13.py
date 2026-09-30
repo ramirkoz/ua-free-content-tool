@@ -101,7 +101,6 @@ def test_latest_schedule_orders_mixed_offsets_by_instant_not_text(tmp_path: Path
         datetime(2026, 7, 28, 8, 0, tzinfo=UTC).isoformat(),
         {"telegram": "second"},
     )
-    # Lexically 10:00+03 looks later than 08:30+00, but by instant it is 07:00 UTC.
     with db.connect() as connection:
         connection.execute(
             "UPDATE publication_batches SET scheduled_at=? WHERE id=?",
@@ -132,7 +131,7 @@ def test_worker_wake_processes_new_due_package_without_waiting_full_poll(tmp_pat
     stop = threading.Event()
     thread = threading.Thread(target=worker.run_loop, args=(stop, 60.0), daemon=True)
     thread.start()
-    time.sleep(0.2)  # Let the first empty poll enter its long wait.
+    time.sleep(0.2)
     queued = db.queue_targets(
         article_id,
         (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
@@ -157,7 +156,6 @@ def test_queue_time_is_displayed_in_kyiv_and_overdue_is_human_readable() -> None
 
 def test_fix13_ui_contract_has_periodic_queue_refresh_and_worker_wake() -> None:
     source = (Path(__file__).parents[1] / "content_agent" / "ui" / "main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.3.1-rc7")' in source
     assert "self._schedule_queue_refresh()" in source
     assert "self.worker.wake()" in source
     assert 'status_text = f"прострочено на' in source

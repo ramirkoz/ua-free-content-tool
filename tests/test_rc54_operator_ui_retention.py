@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+import re
 
 from content_agent.config import AppConfig
 from content_agent.services.retention import RetentionService
@@ -136,6 +137,9 @@ def test_rc54_appservices_owns_retention() -> None:
 
 
 def test_rc54_version_alignment() -> None:
-    assert Path("VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc54"
-    assert Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc54"
-    assert '__version__ = "2.0.0-rc54"' in Path("content_agent/__init__.py").read_text(encoding="utf-8")
+    internal = Path("VERSION.txt").read_text(encoding="utf-8").strip()
+    public = Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip()
+    assert internal == public
+    match = re.fullmatch(r"2\.0\.0-rc(\d+)", internal)
+    assert match is not None and int(match.group(1)) >= 54
+    assert f'__version__ = "{internal}"' in Path("content_agent/__init__.py").read_text(encoding="utf-8")

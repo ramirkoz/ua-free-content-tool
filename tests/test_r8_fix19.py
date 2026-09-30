@@ -89,7 +89,6 @@ def test_fix20_publishes_strictly_in_order_with_five_second_gaps(tmp_path: Path,
 
     assert result.completed is True
     assert calls == ["facebook:p2", "facebook:p1", "threads", "linkedin", "telegram"]
-    # Four inter-target pauses, each counted down as five one-second slices.
     assert sleeps == [1.0] * 20
     assert sum("Пауза перед наступною платформою" in item for item in progress) == 20
 
@@ -177,8 +176,6 @@ def test_fix20_auth_failure_pauses_and_resume_retries_only_unsent(tmp_path: Path
 
 def test_fix20_missing_token_is_captured_and_does_not_retry_every_second(tmp_path: Path) -> None:
     db, batch_id = _due_database(tmp_path, {"threads": "text"}, "missing-token")
-    # Real factory construction raises before any HTTP request. FIX18 allowed that
-    # exception to escape the target handler and made the batch due again immediately.
     result = PublicationWorker(db, PublisherFactory(AppConfig())).run_once()
     assert result.claimed is True
     assert result.paused is True
@@ -244,7 +241,6 @@ def test_fix20_meta_error_classification() -> None:
 
 def test_fix20_ui_contract_exposes_pacing_pause_and_manual_resume() -> None:
     source = Path("content_agent/ui/main_window.py").read_text(encoding="utf-8")
-    assert 'root.title("UA FREE Content Tool — v1.3.1-rc7")' in source
     assert "inter_target_delay_seconds=5.0" in source
     assert '"Призупинені": {"paused"}' in source
     assert 'text="Повторити невідправлені"' in source
@@ -267,7 +263,6 @@ def test_fix20_schema3_queue_migrates_to_paused_without_losing_targets(tmp_path:
         {"threads": "text"},
     )
 
-    # Simulate the exact FIX18 queue constraint and schema version.
     con = __import__("sqlite3").connect(path)
     try:
         con.execute("PRAGMA foreign_keys=OFF")

@@ -16,6 +16,7 @@ class MainWindow(LegacyStableMainWindow):
 
     ALL_SOURCES_LABEL = ALL_SOURCES
     ALL_TOPICS_LABEL = ALL_TOPICS
+    INBOX_DISPLAY_COLUMNS = ("title", "topic", "sources", "published")
 
     def __init__(self, root, database_or_services, config=None) -> None:
         self._inbox_controller: InboxTabController | None = None
@@ -23,6 +24,7 @@ class MainWindow(LegacyStableMainWindow):
         self._data_controller: DataBackupsTabController | None = None
         super().__init__(root, database_or_services, config)
         self._apply_rc54_dpi_layout()
+        self._apply_rc55_inbox_cleanup()
         self._inbox_controller = InboxTabController(self, self._rc53_filter_bar)
         self._inbox_controller.refresh_choices()
         self._platforms_controller = PlatformsTabController(self)
@@ -116,8 +118,14 @@ class MainWindow(LegacyStableMainWindow):
     def refresh_groups(self) -> None:
         controller = getattr(self, "_inbox_controller", None)
         if controller is None:
-            return super().refresh_groups()
-        controller.refresh()
+            super().refresh_groups()
+        else:
+            controller.refresh()
+        self._enforce_rc55_inbox_columns()
+
+    def reset_inbox_columns(self) -> None:
+        """Keep RC55's four-column operator contract; never resurrect legacy columns."""
+        self._enforce_rc55_inbox_columns()
 
     def _apply_rc48_shell_layout(self) -> None:
         super()._apply_rc48_shell_layout()
@@ -133,7 +141,6 @@ class MainWindow(LegacyStableMainWindow):
         self.operation_progress = bar.progress
 
     def _apply_rc54_dpi_layout(self) -> None:
-        """Respect Windows DPI while keeping the product usable at compact acceptance sizes."""
         try:
             pixels_per_inch = float(self.root.winfo_fpixels("1i"))
             scaling = max(1.0, min(2.5, pixels_per_inch / 72.0))
@@ -147,7 +154,6 @@ class MainWindow(LegacyStableMainWindow):
             pass
 
     def _apply_rc54_publication_layout(self) -> None:
-        """Favor always-visible destinations over oversized media preview space."""
         canvas = getattr(self, "targets_canvas", None)
         if canvas is not None:
             try:
@@ -160,6 +166,44 @@ class MainWindow(LegacyStableMainWindow):
                 media_tree.configure(height=2)
             except tk.TclError:
                 pass
+
+    def _apply_rc55_inbox_cleanup(self) -> None:
+        """Remove obsolete search/column controls without touching block composition."""
+        old_search = getattr(self, "_rc14_keyword_entry", None)
+        legacy_parent = getattr(old_search, "master", None)
+        if legacy_parent is not None:
+            for widget in tuple(legacy_parent.winfo_children()):
+                if widget is old_search:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
+                    continue
+                text = ""
+                try:
+                    text = str(widget.cget("text") or "").strip()
+                except (tk.TclError, TypeError):
+                    pass
+                if text in {"Пошук у Вхідних:", "Пошук у Вхідних", "Знайти", "Колонки", "Відновити стандартні колонки"}:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
+        self._rc14_keyword_entry = None
+        self._enforce_rc55_inbox_columns()
+
+    def _enforce_rc55_inbox_columns(self) -> None:
+        tree = getattr(self, "groups_tree", None)
+        if tree is None:
+            return
+        try:
+            tree.configure(displaycolumns=self.INBOX_DISPLAY_COLUMNS)
+            tree.heading("title", text="Подія")
+            tree.heading("topic", text="Тема")
+            tree.heading("sources", text="Джерел")
+            tree.heading("published", text="Час")
+        except tk.TclError:
+            pass
 
     def _install_rc48_history_unknown_controls(self) -> None:
         retry = getattr(self, "history_retry_button", None)

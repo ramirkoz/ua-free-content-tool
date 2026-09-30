@@ -76,7 +76,7 @@ def test_rc28_codex_install_is_side_by_side(monkeypatch: pytest.MonkeyPatch, tmp
     def fake_run(command, **_kwargs):
         target = Path(command[command.index("--target") + 1])
         (target / "openai_codex").mkdir(parents=True)
-        (target / "openai_codex-0.147.0.dist-info").mkdir()
+        (target / "openai_codex-0.156.1.dist-info").mkdir()
         return SimpleNamespace(returncode=0, stdout="installed")
 
     monkeypatch.setattr(codex.subprocess, "run", fake_run)
