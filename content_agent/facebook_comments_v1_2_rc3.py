@@ -17,15 +17,6 @@ def _reset_started(
     context: PublishContext,
     started_key: str,
 ) -> dict[str, object]:
-    """Clear a write marker only after a definite API rejection.
-
-    ``PublishError`` from the platform helpers means an HTTP/API response was
-    received. In that case the request was explicitly rejected and a later
-    retry may safely re-enter the phase after the user fixes permissions or a
-    rate limit. Transport/programming failures keep the marker so Facebook is
-    never called blindly a second time.
-    """
-
     updated = {**progress, started_key: False}
     context.save_progress(updated)
     return updated
@@ -44,15 +35,6 @@ def _known_phase_error(phase: str, exc: PublishError) -> PublishError:
 
 
 def _local_unknown_phase_error(phase: str, exc: BaseException | None = None) -> PublishError:
-    """Represent an ambiguous Facebook sub-write without killing other targets.
-
-    The durable ``*_started`` marker remains set, therefore the Facebook write
-    itself cannot be repeated automatically. ``outcome_unknown`` is deliberately
-    false at worker level so independent Threads/LinkedIn/Telegram targets in
-    the same package can still be processed. The ambiguity is contained by the
-    Facebook phase marker instead of aborting the whole package.
-    """
-
     detail = f" Причина: {exc}" if exc is not None and str(exc).strip() else ""
     return PublishError(
         f"Facebook: результат етапу «{phase}» невідомий. Facebook повторно не викликається автоматично; "
@@ -72,6 +54,10 @@ def _unresolved_marker_error(phase: str) -> PublishError:
 
 
 class CommentedFacebookPublisher(FacebookPagePublisher):
+    def __init__(self, *args, donation_comment: str | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.donation_comment = DONATION_COMMENT if donation_comment is None else str(donation_comment or "").strip()
+
     def _prepare_gallery(self, gallery: ImageGalleryPayload, progress: dict[str, object], context: PublishContext) -> tuple[list[str], dict[str, object]]:
         photo_ids = list(progress.get("facebook_gallery_photo_ids") or [])
         for item in gallery.items[len(photo_ids):]:
@@ -126,7 +112,8 @@ class CommentedFacebookPublisher(FacebookPagePublisher):
             post_id = str(main.remote_id or "")
             progress = finish_phase(progress, context, completed_key=_KEYS.main_completed, id_key=_KEYS.main_id, remote_id=post_id)
 
-        if DONATION_COMMENT in text:
+        donation_comment = self.donation_comment
+        if not donation_comment or donation_comment in text:
             return PublishResult(remote_id=post_id, progress=progress)
         if bool(progress.get(_KEYS.comment_completed)):
             return PublishResult(remote_id=post_id, progress=progress)
@@ -137,7 +124,7 @@ class CommentedFacebookPublisher(FacebookPagePublisher):
         try:
             payload = _post_form(
                 f"https://graph.facebook.com/{self.graph_version}/{quote(post_id, safe='')}/comments",
-                {"message": DONATION_COMMENT, "access_token": self.token},
+                {"message": donation_comment, "access_token": self.token},
             )
         except PublishError as exc:
             _reset_started(progress, context, _KEYS.comment_started)
