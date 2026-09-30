@@ -1,0 +1,189 @@
+name: RC50 one-shot structural patches
+
+on:
+  push:
+    branches: [rc50-roadmap-final]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[rc50-structural-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rc50-roadmap-final
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply RC50 structural patches
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'pattern not found in {path}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Finish AI/UI API migration. RC49 called a method removed from OpenRouterBackend.
+          replace(
+              'content_agent/v2/ui/window.py',
+              '            return backend.test_connection()\n',
+              '            return backend.probe()\n',
+          )
+
+          # New V2 service surfaces used by the final UI tabs.
+          replace(
+              'content_agent/v2/ui/window.py',
+              'from ..publishing.retry import assess_failed_target\n',
+              'from ..publishing.retry import assess_failed_target\nfrom ..publishing.destinations import DestinationRegistry\nfrom ..storage.backup_api import BackupService\n',
+          )
+
+          replace(
+              'content_agent/v2/ui/window.py',
+              '        self._build_v2_ai_tab()\n        self._build_v2_supervisor_tab()\n',
+              '        self._build_v2_platforms_tab()\n        self._build_v2_data_tab()\n        self._build_v2_ai_tab()\n        self._build_v2_supervisor_tab()\n',
+          )
+
+          marker = '    def _build_v2_ai_tab(self) -> None:\n'
+          methods = r'''    def _build_v2_platforms_tab(self) -> None:
+              tab = ttk.Frame(self.notebook, padding=10)
+              self.notebook.add(tab, text="Платформи")
+              ttk.Label(tab, text="ПЛАТФОРМИ Й ОБЛІКОВІ ЗАПИСИ", font="TkHeadingFont").pack(anchor="w")
+              ttk.Label(
+                  tab,
+                  text="Єдиний список напрямків публікації. Ключі та OAuth залишаються у зашифрованих налаштуваннях; тут показується тільки готовність.",
+                  foreground="#555",
+                  wraplength=1150,
+              ).pack(anchor="w", pady=(5, 8))
+              tree = ttk.Treeview(tab, columns=("platform", "account", "state"), show="headings", height=10)
+              tree.heading("platform", text="Платформа")
+              tree.heading("account", text="Обліковий запис / напрямок")
+              tree.heading("state", text="Стан")
+              tree.column("platform", width=150, stretch=False)
+              tree.column("account", width=430, stretch=True)
+              tree.column("state", width=220, stretch=False)
+              tree.pack(fill="both", expand=True, pady=(0, 8))
+              self.v2_platforms_tree = tree
+              row = ttk.Frame(tab)
+              row.pack(fill="x")
+              ttk.Button(row, text="Оновити стан", command=self.refresh_v2_platforms).pack(side="left")
+              if hasattr(self, "run_connection_diagnostics"):
+                  ttk.Button(row, text="Перевірити підключення", command=self.run_connection_diagnostics).pack(side="left", padx=(6, 0))
+              self.refresh_v2_platforms()
+
+          def refresh_v2_platforms(self) -> None:
+              tree = getattr(self, "v2_platforms_tree", None)
+              if tree is None:
+                  return
+              tree.delete(*tree.get_children(""))
+              registry = DestinationRegistry(self.config)
+              for spec in registry.all():
+                  state = "готово" if spec.ready else ("вимкнено" if not spec.enabled else "не налаштовано")
+                  tree.insert("", "end", iid=spec.key, values=(spec.platform, spec.label, state))
+
+          def _build_v2_data_tab(self) -> None:
+              tab = ttk.Frame(self.notebook, padding=10)
+              self.notebook.add(tab, text="Дані й резервні копії")
+              ttk.Label(tab, text="ДАНІ Й РЕЗЕРВНІ КОПІЇ", font="TkHeadingFont").pack(anchor="w")
+              ttk.Label(
+                  tab,
+                  text=("Звичайний backup містить робочу базу, durable sidecars і publication receipts, але не переносимі credentials. "
+                        "Для перенесення credentials на інший комп’ютер використовуйте окрему захищену migration-копію."),
+                  wraplength=1150,
+                  foreground="#555",
+              ).pack(anchor="w", pady=(5, 12))
+              buttons = ttk.Frame(tab)
+              buttons.pack(fill="x")
+              ttk.Button(buttons, text="Створити backup", command=self.create_backup_ui).pack(side="left")
+              ttk.Button(buttons, text="Імпортувати backup", command=self.import_backup_ui).pack(side="left", padx=(6, 0))
+              migration = ttk.LabelFrame(tab, text="Захищене перенесення credentials", padding=10)
+              migration.pack(fill="x", pady=(14, 0))
+              self.v2_migration_password_var = tk.StringVar(master=self.root, value="")
+              ttk.Label(migration, text="Пароль migration-копії:").pack(side="left")
+              ttk.Entry(migration, textvariable=self.v2_migration_password_var, show="•", width=30).pack(side="left", padx=8)
+              ttk.Button(migration, text="Створити migration backup", command=self.create_v2_migration_backup).pack(side="left")
+
+          def create_v2_migration_backup(self) -> None:
+              password = str(self.v2_migration_password_var.get() or "")
+              if len(password) < 8:
+                  self.msg.showwarning("Migration backup", "Пароль має містити щонайменше 8 символів.", parent=self.root)
+                  return
+              target = self.files.askdirectory(parent=self.root, title="Куди зберегти migration backup")
+              if not target:
+                  return
+              service = BackupService()
+              self.run_async(
+                  lambda: service.create_migration(password, Path(target)),
+                  lambda path: self.msg.showinfo("Migration backup", f"Створено: {path}", parent=self.root),
+                  label="Створюю захищену migration-копію",
+                  done_label="Migration backup створено",
+              )
+
+'''
+          replace('content_agent/v2/ui/window.py', marker, methods + marker)
+
+          # Human label for the supervisor surface.
+          replace(
+              'content_agent/v2/ui/window.py',
+              '        self.notebook.add(tab, text="Supervisor")\n',
+              '        self.notebook.add(tab, text="Стан системи")\n',
+          )
+          replace(
+              'content_agent/v2/ui/window.py',
+              'text="TECH SUPERVISOR · локальний діагност і окремий контур телеметрії"',
+              'text="СТАН СИСТЕМИ · локальна діагностика й телеметрія"',
+          )
+
+          # Use the shared StatusBar component in the active RC44 shell.
+          replace(
+              'content_agent/v2/ui/manual_topics_window_rc44.py',
+              'from .manual_topics_window import ALL_SOURCES, ALL_TOPICS, MainWindow as Rc43MainWindow\n',
+              'from .manual_topics_window import ALL_SOURCES, ALL_TOPICS, MainWindow as Rc43MainWindow\nfrom .components import StatusBar\n',
+          )
+          old_status = '''        bar = ttk.Frame(self.root, padding=(10, 4))
+          bar.pack(side="bottom", fill="x")
+          self._rc48_status_bar = bar
+          ttk.Label(bar, textvariable=self.operation_var).pack(side="left")
+          ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+          ttk.Label(bar, textvariable=self.status_var, anchor="w").pack(side="left", fill="x", expand=True)
+          self.operation_progress = ttk.Progressbar(bar, mode="indeterminate", length=130)
+          self.operation_progress.pack(side="right", padx=(8, 0))
+'''
+          new_status = '''        bar = StatusBar(self.root, operation_var=self.operation_var, status_var=self.status_var)
+          bar.pack(side="bottom", fill="x")
+          self._rc48_status_bar = bar
+          self.operation_progress = bar.progress
+'''
+          replace('content_agent/v2/ui/manual_topics_window_rc44.py', old_status, new_status)
+
+          # DPI awareness is deliberately enabled only now, after RC48 adaptive layout.
+          replace(
+              'content_agent/main.py',
+              'from .v2.ui.manual_topics_window_rc44 import MainWindow\n',
+              'from .v2.ui.manual_topics_window_rc44 import MainWindow\nfrom .v2.ui.dpi import enable_process_dpi_awareness\n',
+          )
+          replace(
+              'content_agent/main.py',
+              'def main() -> int:\n    logger = configure_logging()\n',
+              'def main() -> int:\n    enable_process_dpi_awareness()\n    logger = configure_logging()\n',
+          )
+
+      - name: Commit structural patch checkpoint
+        shell: bash
+        run: |
+          git config user.name "rc50-roadmap-bot"
+          git config user.email "rc50-roadmap-bot@users.noreply.github.com"
+          git add content_agent
+          if git diff --cached --quiet; then
+            echo "No structural changes"
+            exit 0
+          fi
+          git commit -m "RC50 block 3: finish UI surfaces and DPI [rc50-structural-patched]"
+          git push origin HEAD:rc50-roadmap-final
