@@ -21,8 +21,13 @@ class MaintenanceService:
     def create_migration_backup(self, password: str, destination_dir: Path | None = None) -> Path:
         return backup_api.create_migration_backup(password, destination_dir)
 
-    def stage_restore(self, archive_path: Path) -> StagedRestore:
-        return stage_restore(Path(archive_path))
+    def stage_restore(
+        self,
+        archive_path: Path,
+        *,
+        credential_password: str | None = None,
+    ) -> StagedRestore:
+        return stage_restore(Path(archive_path), credential_password=credential_password)
 
     def backup_requires_password(self, archive_path: Path) -> bool:
         return backup_api.backup_requires_password(Path(archive_path))
