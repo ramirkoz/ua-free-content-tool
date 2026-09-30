@@ -148,13 +148,13 @@ class ManualTopicsMixin:
         source_id: int | None = None,
         topic_id: int | None = None,
         search: str = "",
-        limit: int = 200,
+        limit: int | None = None,
     ):
-        """Return Inbox groups with Source/Topic/Search filtering performed in SQL.
+        """Return all matching Inbox groups unless an explicit caller limit is given.
 
-        RC53 deliberately moves these filters out of Treeview post-processing. Each
-        whitespace-separated search token must match the group title/editorial text
-        or at least one article title/body (AND semantics across tokens).
+        Source/Topic/Search filtering is performed in SQLite. Each whitespace-separated
+        search token must match the group title/editorial text or at least one article
+        title/body (AND semantics across tokens). RC54 removes the old hidden 200-row cap.
         """
         query = """
             SELECT g.*,
@@ -190,9 +190,7 @@ class ManualTopicsMixin:
                 ))"""
             )
         if source_id is not None:
-            where.append(
-                "EXISTS (SELECT 1 FROM articles fs WHERE fs.group_id=g.id AND fs.source_id=?)"
-            )
+            where.append("EXISTS (SELECT 1 FROM articles fs WHERE fs.group_id=g.id AND fs.source_id=?)")
             params.append(int(source_id))
         if topic_id is not None:
             where.append(
@@ -217,8 +215,10 @@ class ManualTopicsMixin:
             params.extend([pattern, pattern, pattern, pattern, pattern])
         if where:
             query += " WHERE " + " AND ".join(f"({item})" for item in where)
-        query += " GROUP BY g.id ORDER BY COALESCE(MAX(a.published_at),g.updated_at) DESC LIMIT ?"
-        params.append(max(1, min(5000, int(limit))))
+        query += " GROUP BY g.id ORDER BY COALESCE(MAX(a.published_at),g.updated_at) DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(max(1, min(5000, int(limit))))
         with self.connect() as db:
             rows = db.execute(query, params).fetchall()
         return [self._group_from_row(row, []) for row in rows]
