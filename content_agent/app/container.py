@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..config import AppConfig
+from ..paths import database_path
 from ..services.maintenance import MaintenanceService
 from ..services.retention import RetentionService
 from ..v2.ai.gateway import AIGateway
@@ -28,10 +29,18 @@ class AppServices:
     media: GoogleDriveMediaService
 
 
+def _is_live_database(db: Database) -> bool:
+    try:
+        return db.path.resolve() == database_path().resolve()
+    except OSError:
+        return db.path.absolute() == database_path().absolute()
+
+
 def build_services(*, config: AppConfig, database: Database | None = None) -> AppServices:
     db = database if database is not None else create_database()
     retention = RetentionService(db, days=7)
-    retention.run_startup()
+    if _is_live_database(db):
+        retention.run_startup()
     destinations = build_destination_registry(config)
     publishing = PublicationService(destinations)
     return AppServices(
