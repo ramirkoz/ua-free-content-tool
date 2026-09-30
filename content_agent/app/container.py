@@ -13,9 +13,8 @@ from ..v2.storage.reliable import Database
 class AppServices:
     """Single runtime composition boundary for the active application.
 
-    RC50 keeps concrete legacy publishing/editorial implementations behind their
-    existing boundaries for the later RC51/RC52 work, but storage and maintenance
-    are now composed explicitly here instead of being selected by the UI.
+    Storage/maintenance and the canonical AI gateway are assembled here. Publishing
+    and destination adapters remain the explicit RC52 milestone.
     """
 
     db: Database
