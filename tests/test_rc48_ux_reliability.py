@@ -155,6 +155,7 @@ def test_rewrite_continues_after_explicit_confirmation(monkeypatch: pytest.Monke
 
 def test_legacy_router_execution_is_serialized(monkeypatch: pytest.MonkeyPatch) -> None:
     from content_agent import ai_router
+    from content_agent.v2.ai.settings import AIBackendSettings, BACKEND_ROUTER
 
     active = 0
     max_active = 0
@@ -172,14 +173,14 @@ def test_legacy_router_execution_is_serialized(monkeypatch: pytest.MonkeyPatch) 
         return SimpleNamespace(text="ok", provider="fake", model="m", label="fake", attempted=())
 
     monkeypatch.setattr(ai_router, "run_ai_router", fake_run)
-    backend = ai_service._RouterAIBackend()
+    monkeypatch.setattr(ai_service, "load_backend_settings", lambda: AIBackendSettings(active_backend=BACKEND_ROUTER))
     request = AIRequest(prompt="test")
     errors: list[BaseException] = []
 
     def runner():
         try:
             start.wait(timeout=2)
-            backend.run(request)
+            ai_service.execute_request(request)
         except BaseException as exc:  # pragma: no cover - assertion below reports it
             errors.append(exc)
 
