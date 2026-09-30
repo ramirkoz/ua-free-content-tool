@@ -3,11 +3,16 @@ from __future__ import annotations
 from content_agent.clean_import import _STABLE_TABLES
 from content_agent.database import Database as BaseDatabase
 from content_agent.v2.storage.manual_topics import ManualTopicsMixin
+from content_agent.v2.storage.migrations import apply_v2_migrations
 from content_agent.v2.ui.manual_topics_window import UNASSIGNED_TOPIC, _ManualSourceTopicStore
 
 
 class TopicDatabase(ManualTopicsMixin, BaseDatabase):
-    pass
+    """Legacy regression fixture composed through the current numbered migration contract."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        apply_v2_migrations(self)
 
 
 def _group_with_article(db: TopicDatabase, source_id: int, *, suffix: str) -> int:
