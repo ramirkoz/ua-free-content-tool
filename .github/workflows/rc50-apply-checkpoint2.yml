@@ -1,0 +1,37 @@
+name: RC50 apply checkpoint 2
+
+on:
+  push:
+    branches: [rc50-final-roadmap]
+    paths:
+      - tools/rc50_patch_checkpoint2.py
+      - .github/workflows/rc50-apply-checkpoint2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rc50-final-roadmap
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply deterministic RC50 patch
+        run: python tools/rc50_patch_checkpoint2.py
+      - name: Commit checkpoint
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "RC50 checkpoint 2: consolidate UI AI backup and DPI contracts"
+          git push origin HEAD:rc50-final-roadmap
