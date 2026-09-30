@@ -8,7 +8,9 @@ on:
     paths:
       - content_agent/v2/publishing/**
       - content_agent/app/**
+      - content_agent/publisher_factory_v1_4.py
       - tests/test_rc52_publication_architecture.py
+      - tests/test_rc52_active_factory.py
       - tests/test_rc51_ai_architecture.py
       - VERSION.txt
       - PUBLIC_VERSION.txt
@@ -36,7 +38,7 @@ jobs:
         run: python -m compileall -q content_agent tests
       - name: RC52 publication platform architecture regressions
         shell: pwsh
-        run: python -m pytest -q tests/test_rc52_publication_architecture.py
+        run: python -m pytest -q tests/test_rc52_publication_architecture.py tests/test_rc52_active_factory.py
       - name: Keep RC51 AI final architecture green
         shell: pwsh
         run: python -m pytest -q tests/test_rc51_ai_architecture.py
