@@ -4,10 +4,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from content_agent.i18n import original_text, tr
+from content_agent.i18n import original_text
 from content_agent.paths import data_dir
 from content_agent.scheduling import KYIV, parse_iso
-from content_agent.ui.main_window import GROUP_FILTERS, GROUP_STATUS_LABELS
+from content_agent.ui.main_window import GROUP_FILTERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,18 +18,15 @@ class InboxFilterState:
 
 
 class InboxTabController:
-    """First extracted tab controller: state, SQL query and Inbox rendering."""
+    """Operator-facing Inbox controller: filters, SQL query and compact rendering."""
 
     DEFAULT_WIDTHS = {
-        "id": 70,
-        "status": 100,
-        "title": 560,
-        "topic": 150,
-        "source": 190,
+        "title": 760,
+        "topic": 180,
         "sources": 80,
-        "published": 145,
-        "score": 105,
+        "published": 78,
     }
+    DISPLAY_COLUMNS = ("title", "topic", "sources", "published")
 
     def __init__(self, host, filter_bar) -> None:
         self.host = host
@@ -46,25 +43,22 @@ class InboxTabController:
 
     def _configure_columns(self) -> None:
         columns = [str(value) for value in self.tree.cget("columns")]
-        for name in ("topic", "source"):
-            if name not in columns:
-                columns.append(name)
+        if "topic" not in columns:
+            columns.append("topic")
         self.tree.configure(columns=tuple(columns))
-        headings = {"topic": "Тема", "source": "Джерело"}
+        headings = {
+            "title": "Подія",
+            "topic": "Тема",
+            "sources": "Джерел",
+            "published": "Час",
+        }
         for name, label in headings.items():
+            if name not in columns:
+                continue
             self.tree.heading(name, text=label)
-            self.tree.column(name, width=self.DEFAULT_WIDTHS[name], minwidth=80, anchor="w")
-        display = [
-            name for name in ("id", "status", "title", "topic", "source", "sources", "published", "score")
-            if name in columns
-        ]
-        self.tree.configure(displaycolumns=tuple(display))
-        for name, width in self.DEFAULT_WIDTHS.items():
-            if name in columns:
-                try:
-                    self.tree.column(name, width=max(width, int(self.tree.column(name, "width") or 0)))
-                except Exception:
-                    pass
+            anchor = "center" if name in {"sources", "published"} else "w"
+            self.tree.column(name, width=self.DEFAULT_WIDTHS[name], minwidth=55, anchor=anchor)
+        self.tree.configure(displaycolumns=tuple(name for name in self.DISPLAY_COLUMNS if name in columns))
 
     def _load_widths(self) -> None:
         try:
@@ -73,21 +67,18 @@ class InboxTabController:
             raw = {}
         if not isinstance(raw, dict):
             return
-        columns = {str(value) for value in self.tree.cget("columns")}
-        for name, value in raw.items():
-            if name not in columns:
+        for name in self.DISPLAY_COLUMNS:
+            if name not in raw:
                 continue
             try:
-                width = max(45, min(1200, int(value)))
-                self.tree.column(name, width=width)
+                self.tree.column(name, width=max(55, min(1200, int(raw[name]))))
             except Exception:
                 continue
 
     def _save_widths(self, _event=None) -> None:
         try:
             self._column_path.parent.mkdir(parents=True, exist_ok=True)
-            columns = [str(value) for value in self.tree.cget("columns")]
-            payload = {name: int(self.tree.column(name, "width")) for name in columns}
+            payload = {name: int(self.tree.column(name, "width")) for name in self.DISPLAY_COLUMNS}
             tmp = self._column_path.with_suffix(".tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
             tmp.replace(self._column_path)
@@ -130,7 +121,7 @@ class InboxTabController:
         parsed = parse_iso(str(value or ""))
         if parsed is None:
             return "—"
-        return parsed.astimezone(KYIV).strftime("%d.%m.%Y %H:%M")
+        return parsed.astimezone(KYIV).strftime("%H:%M")
 
     @staticmethod
     def _compact_names(values: object) -> str:
@@ -154,7 +145,7 @@ class InboxTabController:
                 source_id=current.source_id,
                 topic_id=current.topic_id,
                 search=current.search,
-                limit=200,
+                limit=None,
             )
             metadata = self.db.group_manual_topics([group.id for group in groups]) if groups else {}
         except Exception as exc:
@@ -170,17 +161,11 @@ class InboxTabController:
                 {"source_names": [], "topic_names": [], "source_ids": [], "topic_ids": []},
             )
             topic_label = self._compact_names(info.get("topic_names", []))
-            source_label = self._compact_names(info.get("source_names", []))
-            score = f"{group.explosiveness_score}/100" if group.explosiveness_score else "—"
             values = {
-                "id": group.id,
-                "status": tr(GROUP_STATUS_LABELS.get(group.status, group.status), self.host.config.ui_language),
                 "title": group.canonical_title,
                 "topic": topic_label,
-                "source": source_label,
                 "sources": group.source_count,
                 "published": self._format_time(group.last_published_at),
-                "score": score,
             }
             self.tree.insert(
                 "",
@@ -204,7 +189,7 @@ class InboxTabController:
                 pass
         count = len(groups)
         if count:
-            self.host.set_status(f"Вхідні: показано {count} блоків.")
+            self.host.set_status(f"Вхідні: показано всі {count} блоків за поточними фільтрами.")
         else:
             self.host.set_status("Вхідні: за поточними фільтрами нічого не знайдено.")
 
