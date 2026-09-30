@@ -28,7 +28,7 @@ def test_real_main_window_builds_all_tabs_and_ai_refreshes(tmp_path, monkeypatch
         window._ui_ready = True
         window.refresh_v2_ai_status()
         root.deiconify()
-        root.update_idletasks()
+        root.update()
 
         labels = [window.notebook.tab(tab_id, "text") for tab_id in window.notebook.tabs()]
         assert "AI" in labels
@@ -42,7 +42,8 @@ def test_real_main_window_builds_all_tabs_and_ai_refreshes(tmp_path, monkeypatch
         # mapped active shell at the logical sizes that correspond to 100/125/150/175%.
         for width, height in ((1440, 920), (1536, 824), (1280, 680), (1097, 577)):
             root.geometry(f"{width}x{height}")
-            root.update_idletasks()
+            root.update()
+            assert window.notebook.winfo_ismapped()
             assert window.notebook.winfo_width() > 600
             assert window.notebook.winfo_height() > 350
             assert window._rc48_status_bar.winfo_ismapped()
