@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..config import AppConfig
+from ..services.maintenance import MaintenanceService
 from ..v2.ai.gateway import AIGateway
 from ..v2.storage.factory import create_database
 from ..v2.storage.reliable import Database
@@ -12,20 +13,25 @@ from ..v2.storage.reliable import Database
 class AppServices:
     """Single runtime composition boundary for the active application.
 
-    RC47 intentionally starts small: the active database, configuration and AI
-    gateway are composed here. Legacy UI layers still receive the concrete objects
-    they already understand, but they no longer decide which database composition
-    or AI entry point is authoritative.
+    RC50 keeps concrete legacy publishing/editorial implementations behind their
+    existing boundaries for the later RC51/RC52 work, but storage and maintenance
+    are now composed explicitly here instead of being selected by the UI.
     """
 
     db: Database
     config: AppConfig
     ai: AIGateway
+    maintenance: MaintenanceService
 
 
 def build_services(*, config: AppConfig, database: Database | None = None) -> AppServices:
     db = database if database is not None else create_database()
-    return AppServices(db=db, config=config, ai=AIGateway())
+    return AppServices(
+        db=db,
+        config=config,
+        ai=AIGateway(),
+        maintenance=MaintenanceService(),
+    )
 
 
 __all__ = ["AppServices", "build_services"]
