@@ -7,17 +7,11 @@ from datetime import datetime
 from typing import Callable
 
 from .contracts import AIBackend, AIRequest, UnifiedAIResult
-from .direct_router_runtime import install_direct_router_runtime
 from .openrouter_backend import OpenRouterBackend, recent_events
 from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_backend_settings
 
 
 logger = logging.getLogger("content_agent.v2.ai_service")
-
-# Compatibility transport bridge. RC50 keeps this active until the direct Router
-# transport is moved into ai_router.py itself; the public V2 contract below is stable.
-install_direct_router_runtime()
-
 
 class AIServiceError(RuntimeError):
     pass
@@ -312,12 +306,20 @@ def backend_status(name: str | None = None, *, openrouter_key: str | None = None
     return backend_status_text(name, openrouter_key=openrouter_key)
 
 
-def test_active_backend() -> str:
+def test_active_backend(name: str | None = None, *, timeout_seconds: int = 45) -> str:
+    """Probe one backend without changing the operator-selected active backend."""
     settings = load_backend_settings()
-    if settings.active_backend == BACKEND_OPENROUTER:
+    backend_name = str(name or settings.active_backend or BACKEND_ROUTER)
+    if backend_name == BACKEND_OPENROUTER:
         return OpenRouterBackend(settings).probe()
-    if settings.active_backend == BACKEND_AGENT:
-        result = execute("Відповідай тільки словом OK.", max_output_tokens=16, task_timeout_seconds=45)
+    if backend_name == BACKEND_AGENT:
+        result = _AgentAIBackend().run(
+            AIRequest(
+                prompt="Відповідай тільки словом OK.",
+                max_output_tokens=16,
+                task_timeout_seconds=max(3, int(timeout_seconds)),
+            )
+        )
         return f"Agent backend працює: {result.label}"
     from ...ai_router import test_ai_router
 
