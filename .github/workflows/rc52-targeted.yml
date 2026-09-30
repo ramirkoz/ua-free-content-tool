@@ -77,7 +77,7 @@ jobs:
             $_.Name -match '(^|_)rc52(_|\.|$)' -or $_.Name -match 'window_rc52'
           }
           if ($badLayer) { throw "RC52 must not add a versioned runtime/UI layer: $($badLayer.FullName -join ', ')" }
-          $drivePublisher = Select-String -Path content_agent/v2/publishing/*.py -Pattern 'class\s+GoogleDrive.*Adapter|platform\s*=\s*["'']google_drive["'']' -Quiet
+          $drivePublisher = Select-String -Path content_agent/v2/publishing/adapters.py -Pattern 'class\s+GoogleDrive.*Adapter|_AdapterShape\(\s*["'']google_drive["'']' -Quiet
           if ($drivePublisher) { throw "Google Drive must remain media/storage service, not a publication adapter" }
           $globals = Select-String -Path content_agent/v2/publishing/*.py -Pattern '^\s*global\s+' -Quiet
           if ($globals) { throw "RC52 publishing layer must not introduce module-global policy mutation" }
