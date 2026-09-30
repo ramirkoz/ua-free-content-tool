@@ -14,9 +14,8 @@ from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_ba
 
 logger = logging.getLogger("content_agent.v2.ai_service")
 
-# Compatibility layer for the historical direct Router implementation. RC47 puts
-# a typed request/backend contract in front of it; removing the legacy runtime
-# patch itself is a separate consolidation step so behavior does not change here.
+# Compatibility transport bridge. RC50 keeps this active until the direct Router
+# transport is moved into ai_router.py itself; the public V2 contract below is stable.
 install_direct_router_runtime()
 
 
@@ -25,10 +24,6 @@ class AIServiceError(RuntimeError):
 
 
 _LOCK = threading.RLock()
-# The historical router persists cooldown/model-health state through read-modify-
-# write JSON operations. All active V2 router executions use this lock so two AI
-# jobs cannot overwrite each other's state. This is deliberately narrower than a
-# global AI lock: OpenRouter and Agent remain independent.
 _ROUTER_EXECUTION_LOCK = threading.RLock()
 _LAST_RESULT: UnifiedAIResult | None = None
 _PROCESS_STARTED_AT = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -146,7 +141,6 @@ def _backend_for(name: str, settings: object) -> AIBackend:
 
 
 def execute_request(request: AIRequest) -> UnifiedAIResult:
-    """Execute one typed AI request through the selected backend contract."""
     global _LAST_RESULT
     if request.cancel_event is not None and bool(
         getattr(request.cancel_event, "is_set", lambda: False)()
@@ -184,7 +178,6 @@ def execute(
     suppress_provider_on_quota: bool = False,
     cancel_event: object | None = None,
 ) -> UnifiedAIResult:
-    """Compatibility signature that now builds the canonical typed request."""
     return execute_request(
         AIRequest(
             prompt=str(prompt),
@@ -228,7 +221,7 @@ def last_result() -> UnifiedAIResult | None:
         return _LAST_RESULT
 
 
-def backend_status() -> dict[str, object]:
+def _backend_status_dict() -> dict[str, object]:
     settings = load_backend_settings()
     status: dict[str, object] = {
         "active_backend": settings.active_backend,
@@ -269,6 +262,56 @@ def backend_status() -> dict[str, object]:
     return status
 
 
+def backend_status_text(name: str, *, openrouter_key: str | None = None) -> str:
+    """Human-readable status for one backend, used by Tk without hidden probes.
+
+    This function is deliberately side-effect free: opening the AI tab must never
+    perform a live provider request or mutate cooldown state.
+    """
+    target = str(name or "").strip().casefold()
+    status = _backend_status_dict()
+    settings = load_backend_settings()
+    if target == BACKEND_OPENROUTER:
+        configured = bool(str(openrouter_key or "").strip()) or bool(status.get("openrouter_configured"))
+        return (
+            "OpenRouter: налаштовано · strategy " + str(settings.openrouter_strategy)
+            if configured
+            else "OpenRouter: API key не налаштовано"
+        )
+    if target == BACKEND_AGENT:
+        try:
+            from ...codex_runtime import peek_codex_status_cache
+
+            cached = peek_codex_status_cache()
+            if cached is None:
+                return "Agent / Codex: стан ще не перевірено"
+            if bool(getattr(cached, "installed", False)) and bool(getattr(cached, "authenticated", False)):
+                return "Agent / Codex: готовий"
+            return "Agent / Codex: " + str(getattr(cached, "detail", "не готовий") or "не готовий")
+        except Exception as exc:
+            return f"Agent / Codex: помилка стану · {exc}"
+    router = status.get("router")
+    if isinstance(router, dict):
+        if router.get("error"):
+            return "AI Router: помилка стану · " + str(router.get("error"))
+        configured = int(router.get("configured_providers") or 0)
+        available = int(router.get("available_providers") or 0)
+        return f"AI Router: {available}/{configured} провайдерів доступні"
+    return "AI Router: стан невідомий"
+
+
+def backend_status(name: str | None = None, *, openrouter_key: str | None = None):
+    """Stable status API.
+
+    No arguments returns structured telemetry. The optional arguments remain a
+    compatibility bridge for RC49-era UI code so a stale widget cannot crash the
+    whole application while RC50 completes the UI migration.
+    """
+    if name is None:
+        return _backend_status_dict()
+    return backend_status_text(name, openrouter_key=openrouter_key)
+
+
 def test_active_backend() -> str:
     settings = load_backend_settings()
     if settings.active_backend == BACKEND_OPENROUTER:
@@ -286,6 +329,7 @@ __all__ = [
     "AIServiceError",
     "active_backend",
     "backend_status",
+    "backend_status_text",
     "execute",
     "execute_request",
     "last_result",
