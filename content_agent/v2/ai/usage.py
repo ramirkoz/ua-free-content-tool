@@ -59,7 +59,17 @@ def _iter_events() -> Iterable[dict[str, object]]:
     return rows
 
 
-def usage_summary(*, backend: str | None = None) -> dict[str, float | int]:
+def usage_summary(
+    budget: float | None = None,
+    *,
+    backend: str | None = None,
+) -> dict[str, float | int]:
+    """Return usage totals and, when supplied, budget/remaining values.
+
+    The positional ``budget`` argument is intentionally retained for the Tk UI,
+    while telemetry/service callers use the explicit ``backend=`` filter. RC49
+    accidentally made these two call sites incompatible.
+    """
     now = datetime.now().astimezone()
     month_prefix = now.strftime("%Y-%m")
     day_prefix = now.strftime("%Y-%m-%d")
@@ -95,4 +105,8 @@ def usage_summary(*, backend: str | None = None) -> dict[str, float | int]:
             result["today_prompt_tokens"] = int(result["today_prompt_tokens"]) + prompt
             result["today_completion_tokens"] = int(result["today_completion_tokens"]) + completion
             result["today_requests"] = int(result["today_requests"]) + 1
+    if budget is not None:
+        normalized_budget = max(0.0, float(budget or 0.0))
+        result["budget"] = normalized_budget
+        result["remaining"] = max(0.0, normalized_budget - float(result["month_cost"])) if normalized_budget > 0 else 0.0
     return result
