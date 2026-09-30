@@ -35,6 +35,9 @@ from ..ai.usage import usage_summary
 from ..supervisor.diagnostics import instance_identity
 from ..supervisor.resilient_runtime import ResilientSupervisorRuntime
 from ..publishing.retry import assess_failed_target
+from ..publishing.destinations import DestinationRegistry
+from ..storage.backup_api import BackupService
+from pathlib import Path
 from .media_drive import ReadableMediaDriveClient
 
 
@@ -81,6 +84,8 @@ class MainWindow(LegacyMainWindow):
         self._apply_v2_inbox_contract()
         self._install_v2_inbox_reset_button()
         self._install_v2_history_retry_button()
+        self._build_v2_platforms_tab()
+        self._build_v2_data_tab()
         self._build_v2_ai_tab()
         self._build_v2_supervisor_tab()
         self._apply_v2_labels()
@@ -469,6 +474,63 @@ class MainWindow(LegacyMainWindow):
         except Exception as exc:
             self._show_error(exc)
 
+    def _build_v2_platforms_tab(self) -> None:
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="Платформи")
+        ttk.Label(tab, text="ПЛАТФОРМИ Й ОБЛІКОВІ ЗАПИСИ", font="TkHeadingFont").pack(anchor="w")
+        ttk.Label(tab, text="Єдиний список напрямків публікації. Credentials залишаються у зашифрованих налаштуваннях; тут показується тільки готовність.", foreground="#555", wraplength=1150).pack(anchor="w", pady=(5, 8))
+        tree = ttk.Treeview(tab, columns=("platform", "account", "state"), show="headings", height=10)
+        tree.heading("platform", text="Платформа")
+        tree.heading("account", text="Обліковий запис / напрямок")
+        tree.heading("state", text="Стан")
+        tree.column("platform", width=150, stretch=False)
+        tree.column("account", width=430, stretch=True)
+        tree.column("state", width=220, stretch=False)
+        tree.pack(fill="both", expand=True, pady=(0, 8))
+        self.v2_platforms_tree = tree
+        row = ttk.Frame(tab)
+        row.pack(fill="x")
+        ttk.Button(row, text="Оновити стан", command=self.refresh_v2_platforms).pack(side="left")
+        if hasattr(self, "run_connection_diagnostics"):
+            ttk.Button(row, text="Перевірити підключення", command=self.run_connection_diagnostics).pack(side="left", padx=(6, 0))
+        self.refresh_v2_platforms()
+
+    def refresh_v2_platforms(self) -> None:
+        tree = getattr(self, "v2_platforms_tree", None)
+        if tree is None:
+            return
+        tree.delete(*tree.get_children(""))
+        for spec in DestinationRegistry(self.config).all():
+            state = "готово" if spec.ready else ("вимкнено" if not spec.enabled else "не налаштовано")
+            tree.insert("", "end", iid=spec.key, values=(spec.platform, spec.label, state))
+
+    def _build_v2_data_tab(self) -> None:
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="Дані й резервні копії")
+        ttk.Label(tab, text="ДАНІ Й РЕЗЕРВНІ КОПІЇ", font="TkHeadingFont").pack(anchor="w")
+        ttk.Label(tab, text="Звичайний backup містить базу, durable sidecars і publication receipts, але не переносимі credentials. Для credentials використовуйте окрему захищену migration-копію.", wraplength=1150, foreground="#555").pack(anchor="w", pady=(5, 12))
+        buttons = ttk.Frame(tab)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Створити backup", command=self.create_backup_ui).pack(side="left")
+        ttk.Button(buttons, text="Імпортувати backup", command=self.import_backup_ui).pack(side="left", padx=(6, 0))
+        migration = ttk.LabelFrame(tab, text="Захищене перенесення credentials", padding=10)
+        migration.pack(fill="x", pady=(14, 0))
+        self.v2_migration_password_var = tk.StringVar(master=self.root, value="")
+        ttk.Label(migration, text="Пароль migration-копії:").pack(side="left")
+        ttk.Entry(migration, textvariable=self.v2_migration_password_var, show="•", width=30).pack(side="left", padx=8)
+        ttk.Button(migration, text="Створити migration backup", command=self.create_v2_migration_backup).pack(side="left")
+
+    def create_v2_migration_backup(self) -> None:
+        password = str(self.v2_migration_password_var.get() or "")
+        if len(password) < 8:
+            self.msg.showwarning("Migration backup", "Пароль має містити щонайменше 8 символів.", parent=self.root)
+            return
+        target = self.files.askdirectory(parent=self.root, title="Куди зберегти migration backup")
+        if not target:
+            return
+        service = BackupService()
+        self.run_async(lambda: service.create_migration(password, Path(target)), lambda path: self.msg.showinfo("Migration backup", f"Створено: {path}", parent=self.root), label="Створюю захищену migration-копію", done_label="Migration backup створено")
+
     def _build_v2_ai_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(tab, text="AI")
@@ -610,7 +672,7 @@ class MainWindow(LegacyMainWindow):
             return
         def action() -> object:
             backend = OpenRouterBackend(load_backend_settings())
-            return backend.test_connection()
+            return backend.probe()
         def success(result: object) -> None:
             self.v2_openrouter_status_var.set(str(result))
             self.refresh_v2_ai_status()
@@ -663,9 +725,9 @@ class MainWindow(LegacyMainWindow):
 
     def _build_v2_supervisor_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="Supervisor")
+        self.notebook.add(tab, text="Стан системи")
         identity = instance_identity()
-        ttk.Label(tab, text="TECH SUPERVISOR · локальний діагност і окремий контур телеметрії", font="TkHeadingFont").pack(anchor="w")
+        ttk.Label(tab, text="СТАН СИСТЕМИ · локальна діагностика й телеметрія", font="TkHeadingFont").pack(anchor="w")
         ttk.Label(
             tab,
             text=(

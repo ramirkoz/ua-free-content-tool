@@ -21,6 +21,7 @@ from ...i18n import language_label
 from ..publishing.outcomes import PublicationOutcome
 from ..storage.factory import create_database
 from .manual_topics_window import ALL_SOURCES, ALL_TOPICS, MainWindow as Rc43MainWindow
+from .components import StatusBar
 
 logger = logging.getLogger("content_agent.v2.ui.rc44")
 
@@ -269,14 +270,10 @@ class MainWindow(Rc43MainWindow):
             old_status.pack_forget()
         notebook.pack_forget()
 
-        bar = ttk.Frame(self.root, padding=(10, 4))
+        bar = StatusBar(self.root, operation_var=self.operation_var, status_var=self.status_var)
         bar.pack(side="bottom", fill="x")
         self._rc48_status_bar = bar
-        ttk.Label(bar, textvariable=self.operation_var).pack(side="left")
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Label(bar, textvariable=self.status_var, anchor="w").pack(side="left", fill="x", expand=True)
-        self.operation_progress = ttk.Progressbar(bar, mode="indeterminate", length=130)
-        self.operation_progress.pack(side="right", padx=(8, 0))
+        self.operation_progress = bar.progress
         notebook.pack(side="top", fill="both", expand=True, padx=8, pady=(2, 2))
 
     def _apply_rc48_publication_layout(self) -> None:

@@ -18,6 +18,7 @@ from .paths import data_dir, portable_mode
 from .readable_media_names import install_runtime as install_readable_media_names_runtime
 from .v2.storage.factory import create_database
 from .v2.ui.manual_topics_window_rc44 import MainWindow
+from .v2.ui.dpi import enable_process_dpi_awareness
 from .version import APP_VERSION
 
 
@@ -331,6 +332,7 @@ def _run_ui_startup(root: tk.Tk, logger: object) -> int:
 
 
 def main() -> int:
+    enable_process_dpi_awareness()
     logger = configure_logging()
     install_readable_media_names_runtime()
     _raise_windows_stdio_limit(logger)
