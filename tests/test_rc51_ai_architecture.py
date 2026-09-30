@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import threading
+from typing import get_type_hints
 
 import pytest
 
@@ -83,7 +84,7 @@ def test_rc51_gateway_is_the_composed_ai_entrypoint() -> None:
     from content_agent.app.container import AppServices
     from content_agent.v2.ai.gateway import AIGateway
 
-    assert AppServices.__annotations__["ai"] is AIGateway
+    assert get_type_hints(AppServices)["ai"] is AIGateway
 
 
 def test_rc51_gateway_runs_typed_requests(monkeypatch) -> None:
