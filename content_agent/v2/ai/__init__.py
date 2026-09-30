@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 from . import service as _service
+from . import usage as _usage
 from .contracts import AIRequest
 from .openrouter_backend import OpenRouterBackend
 from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_backend_settings
 
 _raw_backend_status = _service.backend_status
 _raw_test_active_backend = _service.test_active_backend
+_raw_usage_summary = _usage.usage_summary
 
 
 def backend_status(backend: str | None = None, *, openrouter_key: str | None = None):
     """Compatibility facade for V2 UI and structured telemetry.
 
     The service-level zero-argument call remains the canonical structured telemetry
-    API.  The stable GUI historically asks for one backend at a time and expects a
-    short human-readable string.  RC49 keeps both contracts explicit instead of
+    API. The stable GUI historically asks for one backend at a time and expects a
+    short human-readable string. RC49 keeps both contracts explicit instead of
     letting the GUI crash during startup after the telemetry refactor.
     """
     status = _raw_backend_status()
@@ -42,6 +44,22 @@ def backend_status(backend: str | None = None, *, openrouter_key: str | None = N
         return f"Agent / Codex: {'активний' if selected == active else 'неактивний'}"
 
     return f"AI backend: {backend or 'невідомий'}{marker}"
+
+
+def usage_summary(monthly_budget_usd: float | None = None, *, backend: str | None = None):
+    """Keep telemetry and the stable GUI usage panel on one contract.
+
+    New telemetry uses keyword-only backend filtering. The stable UI still passes
+    the configured OpenRouter budget positionally and renders budget/remaining.
+    """
+    summary = dict(_raw_usage_summary(backend=backend))
+    if monthly_budget_usd is None:
+        return summary
+    budget = max(0.0, float(monthly_budget_usd or 0.0))
+    month_cost = float(summary.get("month_cost") or 0.0)
+    summary["budget"] = budget
+    summary["remaining"] = max(0.0, budget - month_cost)
+    return summary
 
 
 def test_active_backend(backend: str | None = None, *, timeout_seconds: int = 45) -> str:
@@ -73,14 +91,22 @@ def test_active_backend(backend: str | None = None, *, timeout_seconds: int = 45
     raise _service.AIServiceError(f"Невідомий AI backend: {selected}")
 
 
-# The stable UI imports these functions directly from service.py.  Rebind the
-# module exports once at package import so old GUI call sites and new telemetry
-# call sites share one explicit compatibility contract.
+# The stable UI imports these functions directly from service.py / usage.py.
+# Rebind the module exports once at package import so old GUI call sites and new
+# telemetry call sites share one explicit compatibility contract.
 _service.backend_status = backend_status
 _service.test_active_backend = test_active_backend
+_usage.usage_summary = usage_summary
 
 active_backend = _service.active_backend
 execute = _service.execute
 run_ai_compat = _service.run_ai_compat
 
-__all__ = ["active_backend", "backend_status", "execute", "run_ai_compat", "test_active_backend"]
+__all__ = [
+    "active_backend",
+    "backend_status",
+    "execute",
+    "run_ai_compat",
+    "test_active_backend",
+    "usage_summary",
+]
