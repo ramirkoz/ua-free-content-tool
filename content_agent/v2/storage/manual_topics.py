@@ -6,32 +6,9 @@ from typing import Iterable
 class ManualTopicsMixin:
     """Durable operator-owned topic catalog and per-source assignment.
 
-    Topics are deliberately source metadata, not an AI classification result.
-    A source owns zero or one manually selected topic. Inbox groups derive their
-    visible/filterable topics from the sources of their member articles.
+    Schema evolution is owned by v2.storage.migrations. This mixin contains only
+    runtime data operations and never mutates the schema from its constructor.
     """
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._ensure_manual_topics_schema()
-
-    def _ensure_manual_topics_schema(self) -> None:
-        with self.connect() as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS manual_topics(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-                )
-                """
-            )
-            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(sources)").fetchall()}
-            if "topic_id" not in columns:
-                db.execute("ALTER TABLE sources ADD COLUMN topic_id INTEGER")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_sources_topic_id ON sources(topic_id)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_manual_topics_name ON manual_topics(name COLLATE NOCASE)")
 
     @staticmethod
     def _clean_topic_name(value: object) -> str:

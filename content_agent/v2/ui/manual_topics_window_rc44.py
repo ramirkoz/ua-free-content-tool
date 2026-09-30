@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import subprocess
+import sys
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import simpledialog, ttk
 
 from ...ai_router import (
     AIProviderSecrets,
@@ -15,14 +18,14 @@ from ...ai_router import (
     test_ai_router,
 )
 from ...app.container import AppServices, build_services
-from ...backup import import_backup
 from ...config import AppConfig, ConfigError, load_config
 from ...i18n import language_label
+from ...paths import portable_mode
 from ..publishing.outcomes import PublicationOutcome
-from ..storage.factory import create_database
 from .manual_topics_window import ALL_SOURCES, ALL_TOPICS, MainWindow as Rc43MainWindow
 
 logger = logging.getLogger("content_agent.v2.ui.rc44")
+_RESTORE_PASSWORD_ENV = "UA_FREE_RESTORE_PASSWORD"
 
 
 class MainWindow(Rc43MainWindow):
@@ -53,6 +56,7 @@ class MainWindow(Rc43MainWindow):
         self._apply_rc48_inbox_labels()
         self._install_rc48_history_unknown_controls()
         self._install_rc48_keyboard_shortcuts()
+        self._install_rc50_migration_backup_button()
 
     def save_ai_provider_keys(self) -> None:
         """Persist the direct-provider fields owned by the canonical V2 AI tab."""
@@ -122,8 +126,122 @@ class MainWindow(Rc43MainWindow):
             except tk.TclError:
                 self._ui_dispatch_after_id = None
 
+    def create_backup_ui(self) -> None:
+        """Create the credential-free durable RC50 backup."""
+        self.run_async(
+            self.services.maintenance.create_backup,
+            lambda path: self.msg.showinfo("Backup", f"Створено:\n{path}", parent=self.root),
+            label="Створюю резервну копію",
+            done_label="Резервну копію створено",
+        )
+
+    def create_migration_backup_ui(self) -> None:
+        """Create an explicit password-protected cross-machine credential backup."""
+        password = simpledialog.askstring(
+            "Migration backup",
+            "Введіть пароль для захисту credentials (мінімум 10 символів):",
+            parent=self.root,
+            show="*",
+        )
+        if password is None:
+            return
+        confirmation = simpledialog.askstring(
+            "Migration backup",
+            "Повторіть пароль:",
+            parent=self.root,
+            show="*",
+        )
+        if confirmation is None:
+            return
+        if password != confirmation:
+            self.msg.showerror("Migration backup", "Паролі не збігаються.", parent=self.root)
+            return
+        if len(password) < 10:
+            self.msg.showerror(
+                "Migration backup",
+                "Пароль має містити щонайменше 10 символів.",
+                parent=self.root,
+            )
+            return
+        self.run_async(
+            lambda: self.services.maintenance.create_migration_backup(password),
+            lambda path: self.msg.showinfo(
+                "Migration backup",
+                "Створено захищену копію для перенесення на інший комп’ютер:\n" + str(path),
+                parent=self.root,
+            ),
+            label="Створюю migration backup",
+            done_label="Migration backup створено",
+        )
+
+    def _install_rc50_migration_backup_button(self) -> None:
+        if hasattr(self, "_rc50_migration_backup_button"):
+            return
+        for widget in self._rc48_walk(self.root):
+            if not isinstance(widget, (ttk.Button, tk.Button)):
+                continue
+            try:
+                if str(widget.cget("text") or "") != "Створити backup":
+                    continue
+            except Exception:
+                continue
+            button = ttk.Button(
+                widget.master,
+                text="Migration backup…",
+                command=self.create_migration_backup_ui,
+            )
+            try:
+                button.pack(side="left", padx=6, after=widget)
+            except tk.TclError:
+                button.pack(side="left", padx=6)
+            self._rc50_migration_backup_button = button
+            return
+
+    def _rc50_restart_after_restore(self, credential_password: str | None) -> None:
+        executable = Path(sys.executable).resolve()
+        if portable_mode() and executable.name.casefold() == "ua_free_content_tool.exe":
+            env = os.environ.copy()
+            if credential_password:
+                env[_RESTORE_PASSWORD_ENV] = credential_password
+            command = (
+                f"Wait-Process -Id {os.getpid()}; "
+                f"Start-Process -FilePath '{str(executable).replace("'", "''")}'"
+            )
+            try:
+                subprocess.Popen(
+                    [
+                        "powershell.exe",
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-WindowStyle",
+                        "Hidden",
+                        "-Command",
+                        command,
+                    ],
+                    cwd=str(executable.parent),
+                    env=env,
+                    close_fds=True,
+                )
+            except Exception as exc:
+                logger.exception("Could not schedule portable restart after restore")
+                self.msg.showwarning(
+                    "Відновлення підготовлено",
+                    "Backup підготовлено, але автоматичний перезапуск не вдався. "
+                    "Закрийте програму і запустіть її знову.\n\n" + str(exc),
+                    parent=self.root,
+                )
+                return
+            self.close()
+            return
+        self.msg.showinfo(
+            "Відновлення підготовлено",
+            "Backup перевірено й підготовлено. Закрийте програму та запустіть її знову, "
+            "щоб застосувати відновлення до створення бази даних.",
+            parent=self.root,
+        )
+
     def import_backup_ui(self) -> None:
-        """Restore through the same reliable database composition as startup."""
+        """Validate now, apply only after restart before database construction."""
         selected = self.files.askopenfilename(
             parent=self.root,
             title="Оберіть backup",
@@ -131,41 +249,48 @@ class MainWindow(Rc43MainWindow):
         )
         if not selected:
             return
+        archive = Path(selected)
+        try:
+            requires_password = self.services.maintenance.backup_requires_password(archive)
+        except Exception as exc:
+            self._show_error(exc)
+            return
+        password: str | None = None
+        if requires_password:
+            password = simpledialog.askstring(
+                "Migration backup",
+                "Цей backup містить захищені credentials. Введіть пароль:",
+                parent=self.root,
+                show="*",
+            )
+            if password is None:
+                return
         if not self.msg.askyesno(
             "Імпорт",
-            "Поточні дані спочатку буде збережено в safety backup. Продовжити?",
+            "Backup буде перевірено й підготовлено. Поточні дані спочатку збережуться "
+            "в safety backup, а відновлення застосовується тільки після перезапуску. Продовжити?",
             parent=self.root,
         ):
             return
 
         def success(result: object) -> None:
-            try:
-                self.config = load_config()
-            except ConfigError:
-                self.config = AppConfig()
-            self.publisher_factory.config = self.config
-            self.db = create_database()
-            self.services = build_services(config=self.config, database=self.db)
-            self.worker.database = self.db
-            self.refresh_sources()
-            self.refresh_groups()
-            self.refresh_queue()
-            self.refresh_history()
-            self._update_target_availability()
-            self.ui_language_var.set(language_label(self.config.ui_language))
-            self._apply_language()
-            self.refresh_learning_stats()
+            safety = getattr(result, "safety_backup", "")
             self.msg.showinfo(
-                "Імпорт",
-                f"Імпорт завершено. Safety backup: {getattr(result, 'safety_backup', '')}",
+                "Відновлення підготовлено",
+                f"Backup перевірено. Safety backup: {safety}\n\n"
+                "Зараз програма перезапуститься й застосує відновлення до створення робочої бази.",
                 parent=self.root,
             )
+            self._rc50_restart_after_restore(password)
 
         self.run_async(
-            lambda: import_backup(Path(selected)),
+            lambda: self.services.maintenance.stage_restore(
+                archive,
+                credential_password=password,
+            ),
             success,
-            label="Імпортую резервну копію",
-            done_label="Імпорт завершено",
+            label="Перевіряю та готую backup",
+            done_label="Відновлення підготовлено",
         )
 
     # ------------------------------------------------------------------

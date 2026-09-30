@@ -13,6 +13,30 @@ def _columns(db: Connection, table: str) -> set[str]:
     return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _migration_0008_manual_topics(db: Connection) -> None:
+    """Adopt the RC43 manual-topic schema into the numbered registry.
+
+    Existing installations may already contain the table/column because RC43/RC44
+    created them from a mixin constructor. The migration is deliberately idempotent
+    so those installations are simply recorded as migrated.
+    """
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS manual_topics(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    if "topic_id" not in _columns(db, "sources"):
+        db.execute("ALTER TABLE sources ADD COLUMN topic_id INTEGER")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_sources_topic_id ON sources(topic_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_manual_topics_name ON manual_topics(name COLLATE NOCASE)")
+
+
 def _migration_0009_publication_target_outcome(db: Connection) -> None:
     if "outcome" not in _columns(db, "publication_targets"):
         db.execute(
@@ -49,6 +73,7 @@ def _migration_0010_articles_discovered_at_index(db: Connection) -> None:
 
 
 MIGRATIONS: tuple[Migration, ...] = (
+    ("0008_manual_topics", _migration_0008_manual_topics),
     ("0009_publication_target_outcome", _migration_0009_publication_target_outcome),
     ("0010_articles_discovered_at_index", _migration_0010_articles_discovered_at_index),
 )
@@ -58,8 +83,8 @@ def apply_v2_migrations(database: object) -> tuple[str, ...]:
     """Apply additive V2 migrations after the legacy R8 schema is initialized.
 
     `PRAGMA user_version=8` remains the compatibility baseline for the historical
-    database. New V2 changes are tracked explicitly here so constructors no longer
-    need to become the source of truth for every future schema addition.
+    database. V2 schema changes are tracked explicitly here and must not be added
+    to UI or mixin constructors.
     """
 
     applied_now: list[str] = []

@@ -2,15 +2,11 @@ from __future__ import annotations
 
 from content_agent.clean_import import _STABLE_TABLES
 from content_agent.database import Database as BaseDatabase
-from content_agent.v2.storage.manual_topics import ManualTopicsMixin
+from content_agent.v2.storage.factory import create_database
 from content_agent.v2.ui.manual_topics_window import UNASSIGNED_TOPIC, _ManualSourceTopicStore
 
 
-class TopicDatabase(ManualTopicsMixin, BaseDatabase):
-    pass
-
-
-def _group_with_article(db: TopicDatabase, source_id: int, *, suffix: str) -> int:
+def _group_with_article(db, source_id: int, *, suffix: str) -> int:
     with db.connect() as con:
         now = "2026-09-28T12:00:00+00:00"
         cursor = con.execute(
@@ -33,7 +29,8 @@ def _group_with_article(db: TopicDatabase, source_id: int, *, suffix: str) -> in
 
 
 def test_manual_topics_are_arbitrary_and_persist_on_source(tmp_path):
-    db = TopicDatabase(tmp_path / "content.sqlite3")
+    path = tmp_path / "content.sqlite3"
+    db = create_database(path)
     culture = db.create_manual_topic("Культура / дивні штуки")
     tech = db.create_manual_topic("AI та технології")
     assert culture != tech
@@ -46,7 +43,7 @@ def test_manual_topics_are_arbitrary_and_persist_on_source(tmp_path):
     assert int(row["topic_id"]) == culture
     assert row["topic_name"] == "Культура / дивні штуки"
 
-    reopened = TopicDatabase(tmp_path / "content.sqlite3")
+    reopened = create_database(path)
     row = next(item for item in reopened.source_topic_rows() if int(item["id"]) == source_id)
     assert int(row["topic_id"]) == culture
     assert row["topic_name"] == "Культура / дивні штуки"
@@ -60,10 +57,12 @@ def test_rc42_database_upgrades_in_place_without_losing_existing_sources(tmp_pat
         columns_before = {str(row[1]) for row in con.execute("PRAGMA table_info(sources)").fetchall()}
         assert "topic_id" not in columns_before
 
-    upgraded = TopicDatabase(path)
+    upgraded = create_database(path)
     with upgraded.connect() as con:
         columns_after = {str(row[1]) for row in con.execute("PRAGMA table_info(sources)").fetchall()}
+        migrations = {str(row[0]) for row in con.execute("SELECT id FROM schema_migrations").fetchall()}
         assert "topic_id" in columns_after
+        assert "0008_manual_topics" in migrations
         assert con.execute("SELECT 1 FROM manual_topics LIMIT 1").fetchone() is None
     row = next(item for item in upgraded.source_topic_rows() if int(item["id"]) == source_id)
     assert row["name"] == "Existing RC42 source"
@@ -76,7 +75,7 @@ def test_manual_topics_are_part_of_future_clean_import_contract():
 
 
 def test_group_topics_are_derived_only_from_member_sources(tmp_path):
-    db = TopicDatabase(tmp_path / "content.sqlite3")
+    db = create_database(tmp_path / "content.sqlite3")
     topic_a = db.create_manual_topic("Тема А")
     topic_b = db.create_manual_topic("Тема Б")
     source_a = db.add_source("rss", "Source A", "https://a.test/feed")
@@ -105,7 +104,7 @@ def test_group_topics_are_derived_only_from_member_sources(tmp_path):
 
 
 def test_renaming_topic_updates_source_and_inbox_view_without_reclassifying(tmp_path):
-    db = TopicDatabase(tmp_path / "content.sqlite3")
+    db = create_database(tmp_path / "content.sqlite3")
     topic_id = db.create_manual_topic("Стара назва")
     source_id = db.add_source("rss", "Source", "https://source.test/feed")
     db.set_source_topic(source_id, topic_id)
@@ -120,7 +119,7 @@ def test_renaming_topic_updates_source_and_inbox_view_without_reclassifying(tmp_
 
 
 def test_deleting_topic_unassigns_sources_but_never_deletes_news(tmp_path):
-    db = TopicDatabase(tmp_path / "content.sqlite3")
+    db = create_database(tmp_path / "content.sqlite3")
     topic_id = db.create_manual_topic("Тимчасова")
     source_id = db.add_source("rss", "Source", "https://source.test/rss")
     db.set_source_topic(source_id, topic_id)
