@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from .google_drive import GoogleDriveClient
 from .worker import WorkerResult
@@ -91,3 +92,20 @@ class V14PublicationWorker(Rc4PublicationWorker):
             # v1.4 treats the error as terminal history instead of a retry queue.
             self._cleanup_terminal_group_media(int(result.batch_id))
         return result
+
+    def run_loop(self, stop_event: threading.Event, poll_seconds: float = 15.0) -> None:
+        """Drain the current external write before the worker thread exits.
+
+        Publication calls are synchronous in this worker. Setting ``stop_event``
+        prevents the next polling iteration; any already-started platform write
+        reaches its result boundary first. The publication service then closes
+        and rejects any later write request.
+        """
+        try:
+            super().run_loop(stop_event, poll_seconds)
+        finally:
+            service = getattr(self.factory, "publication_service", None)
+            if service is not None:
+                clean = bool(service.close(timeout=max(30.0, self.media_target_timeout_seconds)))
+                if not clean:
+                    logger.error("Publication service shutdown timed out with an external write still in flight.")
