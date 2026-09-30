@@ -121,8 +121,10 @@ class MainWindow(LegacyStableMainWindow):
             super().refresh_groups()
         else:
             controller.refresh()
-        # RC55: the operator contract is authoritative. No legacy callback may
-        # resurrect block/status/score/prediction columns after a refresh.
+        self._enforce_rc55_inbox_columns()
+
+    def reset_inbox_columns(self) -> None:
+        """Keep RC55's four-column operator contract; never resurrect legacy columns."""
         self._enforce_rc55_inbox_columns()
 
     def _apply_rc48_shell_layout(self) -> None:
@@ -139,7 +141,6 @@ class MainWindow(LegacyStableMainWindow):
         self.operation_progress = bar.progress
 
     def _apply_rc54_dpi_layout(self) -> None:
-        """Respect Windows DPI while keeping the product usable at compact acceptance sizes."""
         try:
             pixels_per_inch = float(self.root.winfo_fpixels("1i"))
             scaling = max(1.0, min(2.5, pixels_per_inch / 72.0))
@@ -153,7 +154,6 @@ class MainWindow(LegacyStableMainWindow):
             pass
 
     def _apply_rc54_publication_layout(self) -> None:
-        """Favor always-visible destinations over oversized media preview space."""
         canvas = getattr(self, "targets_canvas", None)
         if canvas is not None:
             try:
@@ -168,7 +168,7 @@ class MainWindow(LegacyStableMainWindow):
                 pass
 
     def _apply_rc55_inbox_cleanup(self) -> None:
-        """Remove obsolete RC14/RC48 controls without touching block composition."""
+        """Remove obsolete search/column controls without touching block composition."""
         old_search = getattr(self, "_rc14_keyword_entry", None)
         legacy_parent = getattr(old_search, "master", None)
         if legacy_parent is not None:
@@ -184,9 +184,6 @@ class MainWindow(LegacyStableMainWindow):
                     text = str(widget.cget("text") or "").strip()
                 except (tk.TclError, TypeError):
                     pass
-                # Keep "Склад блоку…": it is the operator tool for removing a
-                # wrongly grouped source item. Only the duplicate search and the
-                # dangerous legacy column-reset control are removed.
                 if text in {"Пошук у Вхідних:", "Пошук у Вхідних", "Знайти", "Колонки", "Відновити стандартні колонки"}:
                     try:
                         widget.destroy()
