@@ -25,15 +25,15 @@ _KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
 _ROMAN_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
 _LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
 _NUMBER_TOKEN_RE = re.compile(
-    r"(?<!\w)(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?)(?!\w)",
+    r"(?<!\w)(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?)(?!\d)",
     re.UNICODE,
 )
 _FOLLOWING_TOKEN_RE = re.compile(r"(?iu)^(%|[$€₴]|[A-Za-zА-Яа-яІіЇїЄєҐґ]+\.?)")
 
 _SCALE_PATTERNS: tuple[tuple[re.Pattern[str], Decimal], ...] = (
-    (re.compile(r"(?iu)^(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|k)$"), Decimal(1_000)),
-    (re.compile(r"(?iu)^(?:млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million)$"), Decimal(1_000_000)),
-    (re.compile(r"(?iu)^(?:млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn)$"), Decimal(1_000_000_000)),
+    (re.compile(r"(?iu)^(?:тис|тисяч(?:а|і|у|ею)?|тыс|тысяч(?:а|и|у|ей)?|thousand|k)$"), Decimal(1_000)),
+    (re.compile(r"(?iu)^(?:млн|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million)$"), Decimal(1_000_000)),
+    (re.compile(r"(?iu)^(?:млрд|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn)$"), Decimal(1_000_000_000)),
 )
 _UNIT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?iu)^(?:km|км|кілометр(?:а|у|і|ом|и|ів|ами|ах)?|километр(?:а|у|е|ом|ы|ов|ами|ах)?|kilometers?|kilometres?)$"), "km"),
@@ -46,7 +46,7 @@ _UNIT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?iu)^(?:tb|тб|терабайт(?:а|у|і|ом|и|ів|ами|ах)?|терабайт(?:а|у|е|ом|ы|ов|ами|ах)?|terabytes?)$"), "tb"),
 )
 _CURRENCY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?iu)^(?:usd|\$|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|dollars?)$"), "usd"),
+    (re.compile(r"(?iu)^(?:usd|\$|дол(?:л?|ар(?:и|а|ів)?|лар(?:а|ів)?)|dollars?)$"), "usd"),
     (re.compile(r"(?iu)^(?:eur|€|євро|евро|euros?)$"), "eur"),
     (re.compile(r"(?iu)^(?:uah|₴|грн|грив(?:ня|ні|ень))$"), "uah"),
 )
@@ -91,7 +91,7 @@ def _decimal_text(value: Decimal) -> str:
 
 
 def _scale_for(token: str) -> Decimal | None:
-    clean = str(token or "").strip().casefold()
+    clean = str(token or "").strip().rstrip(".").casefold()
     for pattern, multiplier in _SCALE_PATTERNS:
         if pattern.fullmatch(clean):
             return multiplier
@@ -99,7 +99,7 @@ def _scale_for(token: str) -> Decimal | None:
 
 
 def _unit_for(token: str) -> str | None:
-    clean = str(token or "").strip().casefold()
+    clean = str(token or "").strip().rstrip(".").casefold()
     if clean == "%":
         return "%"
     for pattern, canonical in (*_UNIT_PATTERNS, *_CURRENCY_PATTERNS):
