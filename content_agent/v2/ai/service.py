@@ -8,6 +8,7 @@ from typing import Callable
 
 from .contracts import AIBackend, AIErrorKind, AIRequest, UnifiedAIResult
 from .openrouter_backend import OpenRouterBackend, recent_events
+from .router_backend import CanonicalRouterBackend
 from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_backend_settings
 
 
@@ -44,17 +45,6 @@ def _cancelled(request: AIRequest) -> bool:
 def _require_not_cancelled(request: AIRequest) -> None:
     if _cancelled(request):
         raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED)
-
-
-def _legacy_result_to_unified(result: object, backend: str) -> UnifiedAIResult:
-    return UnifiedAIResult(
-        text=str(getattr(result, "text", "") or ""),
-        backend=backend,
-        provider=str(getattr(result, "provider", backend) or backend),
-        model=str(getattr(result, "model", "") or ""),
-        label=str(getattr(result, "label", "") or backend),
-        attempted=tuple(getattr(result, "attempted", ()) or ()),
-    )
 
 
 def _normalized(values: object) -> set[str]:
@@ -165,45 +155,13 @@ class _AgentAIBackend:
         )
 
 
-class _RouterAIBackend:
-    name = BACKEND_ROUTER
-
-    def run(self, request: AIRequest) -> UnifiedAIResult:
-        _require_not_cancelled(request)
-        from ... import ai_router as legacy
-
-        try:
-            with _ROUTER_EXECUTION_LOCK:
-                result = legacy.run_ai_router(
-                    request.prompt,
-                    validator=request.validator,
-                    max_output_tokens=request.max_output_tokens,
-                    local_prompt=request.local_prompt,
-                    local_max_output_tokens=request.local_max_output_tokens,
-                    local_timeout_seconds=request.local_timeout_seconds,
-                    local_repair=request.local_repair,
-                    cloud_timeout_seconds=request.cloud_timeout_seconds,
-                    task_timeout_seconds=request.task_timeout_seconds,
-                    skip_providers=request.skip_providers,
-                    skip_models=request.skip_models,
-                    suppress_provider_on_quota=request.suppress_provider_on_quota,
-                    cancel_event=request.cancel_event,
-                )
-        except Exception as exc:
-            if _cancelled(request):
-                raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED) from exc
-            raise AIServiceError(str(exc), kind=_error_kind(exc)) from exc
-        _require_not_cancelled(request)
-        return _legacy_result_to_unified(result, BACKEND_ROUTER)
-
-
 def _backend_for(name: str, settings: object) -> AIBackend:
     if name == BACKEND_OPENROUTER:
         return _OpenRouterAIBackend(settings)
     if name == BACKEND_AGENT:
         return _AgentAIBackend()
     if name == BACKEND_ROUTER:
-        return _RouterAIBackend()
+        return CanonicalRouterBackend()
     raise AIServiceError(f"Невідомий AI backend: {name}", kind=AIErrorKind.CONFIGURATION)
 
 
@@ -220,7 +178,19 @@ def execute_request(request: AIRequest) -> UnifiedAIResult:
         request.quality_tier.value,
         request.max_output_tokens,
     )
-    result = _backend_for(backend_name, settings).run(request)
+    backend = _backend_for(backend_name, settings)
+    try:
+        if backend_name == BACKEND_ROUTER:
+            with _ROUTER_EXECUTION_LOCK:
+                result = backend.run(request)
+        else:
+            result = backend.run(request)
+    except AIServiceError:
+        raise
+    except Exception as exc:
+        if _cancelled(request):
+            raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED) from exc
+        raise AIServiceError(str(exc), kind=_error_kind(exc)) from exc
     _require_not_cancelled(request)
     with _LOCK:
         _LAST_RESULT = result
@@ -367,10 +337,9 @@ def test_active_backend(backend: str | None = None, *, timeout_seconds: int = 45
         result = _backend_for(BACKEND_AGENT, settings).run(request)
         return f"Agent backend працює: {result.label}"
     if selected == BACKEND_ROUTER:
-        from ...ai_router import test_ai_router
-
         with _ROUTER_EXECUTION_LOCK:
-            return test_ai_router()
+            result = _backend_for(BACKEND_ROUTER, settings).run(request)
+        return f"AI Router працює: {result.label}"
     raise AIServiceError(f"Невідомий AI backend: {selected}", kind=AIErrorKind.CONFIGURATION)
 
 
