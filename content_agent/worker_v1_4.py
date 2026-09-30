@@ -5,6 +5,7 @@ import logging
 from .google_drive import GoogleDriveClient
 from .worker import WorkerResult
 from .worker_v1_2_rc4 import Rc4CleanupDriveProxy, Rc4PublicationWorker
+from .v2.publishing.service import PublishingService
 
 
 logger = logging.getLogger("content_agent.worker.v14")
@@ -34,11 +35,38 @@ class V14CleanupDriveProxy(Rc4CleanupDriveProxy):
 
 
 class V14PublicationWorker(Rc4PublicationWorker):
-    """One destination per batch, no automatic re-publication after an error."""
+    """One destination per batch, routed through the RC52 platform boundary."""
 
     def __init__(self, *args, **kwargs):
         kwargs["max_automatic_attempts"] = 1
+
+        legacy_factory = kwargs.get("factory")
+        positional = list(args)
+        if legacy_factory is None and len(positional) >= 2:
+            legacy_factory = positional[1]
+
+        self.publishing_service: PublishingService | None = None
+        if legacy_factory is not None and hasattr(legacy_factory, "config"):
+            service = PublishingService(
+                legacy_factory.config,
+                donation_settings=getattr(legacy_factory, "donation_settings", None),
+            )
+            self.publishing_service = service
+            if "factory" in kwargs:
+                kwargs["factory"] = service.publisher_factory
+            elif len(positional) >= 2:
+                positional[1] = service.publisher_factory
+                args = tuple(positional)
+
         super().__init__(*args, **kwargs)
+
+    def begin_graceful_shutdown(self, timeout_seconds: float = 30.0) -> bool:
+        """Block new platform writes and wait for the current external call boundary."""
+        service = self.publishing_service
+        if service is None:
+            return True
+        service.begin_shutdown()
+        return service.wait_for_safe_boundary(timeout_seconds)
 
     @staticmethod
     def _is_meta_platform(platform: str) -> bool:
@@ -86,8 +114,5 @@ class V14PublicationWorker(Rc4PublicationWorker):
     def _run_once_locked(self) -> WorkerResult:
         result = super()._run_once_locked()
         if result.batch_id is not None:
-            # Successful last destination is normally cleaned by the inherited
-            # worker. Failed last destination also reaches this point now because
-            # v1.4 treats the error as terminal history instead of a retry queue.
             self._cleanup_terminal_group_media(int(result.batch_id))
         return result
