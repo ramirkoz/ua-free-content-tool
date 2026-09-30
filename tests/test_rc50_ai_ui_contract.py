@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from content_agent.v2.ai import service
-from content_agent.v2.ai.settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER
+from content_agent.v2.ai.settings import (
+    AIBackendSettings,
+    BACKEND_AGENT,
+    BACKEND_OPENROUTER,
+    BACKEND_ROUTER,
+)
 from content_agent.v2.ai.usage import usage_summary
 
 
 def test_backend_status_supports_telemetry_and_ui_shapes(monkeypatch) -> None:
-    class Settings:
-        active_backend = BACKEND_OPENROUTER
-        openrouter_strategy = "balanced"
-        openrouter_monthly_budget_usd = 10.0
-        openrouter_api_key = ""
-    monkeypatch.setattr(service, "load_backend_settings", lambda: Settings())
+    settings = AIBackendSettings(
+        active_backend=BACKEND_OPENROUTER,
+        openrouter_strategy="balanced",
+        openrouter_monthly_budget_usd=10.0,
+    )
+    monkeypatch.setattr(service, "load_backend_settings", lambda: settings)
     monkeypatch.setattr(service.OpenRouterBackend, "configured", lambda self: False)
     snapshot = service.backend_status()
     assert isinstance(snapshot, dict)
@@ -23,9 +28,8 @@ def test_backend_status_supports_telemetry_and_ui_shapes(monkeypatch) -> None:
 
 
 def test_test_active_backend_accepts_explicit_backend(monkeypatch) -> None:
-    class Settings:
-        active_backend = BACKEND_ROUTER
-    monkeypatch.setattr(service, "load_backend_settings", lambda: Settings())
+    settings = AIBackendSettings(active_backend=BACKEND_ROUTER)
+    monkeypatch.setattr(service, "load_backend_settings", lambda: settings)
     monkeypatch.setattr(service.OpenRouterBackend, "probe", lambda self: "openrouter-ok")
     assert service.test_active_backend(BACKEND_OPENROUTER) == "openrouter-ok"
 
