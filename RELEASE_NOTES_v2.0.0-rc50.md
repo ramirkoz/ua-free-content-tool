@@ -56,5 +56,6 @@ RC50 closes the reliability, architecture and UI/UX roadmap reviewed for the RC4
 - Add full V2 Tk startup/UI smoke regression that builds the real active window and refreshes the AI status path.
 - Add architecture/reliability tests for AI contract, signed manifests, maintenance concurrency, composition root, destination registry, numbered migrations, no active direct-router monkey-patch and no new RC50 window layer.
 - Existing RC41–RC49 regression gates remain part of the RC50 Windows gate.
+- RC50 checkpoint 3 moved the direct-provider transport into canonical `ai_router.py`; the old runtime monkey-patch module is no longer part of the active tree.
 
 RC50 remains a manual-test candidate until live operator acceptance. ProductVault/Drive CURRENT must not be promoted before that acceptance.
