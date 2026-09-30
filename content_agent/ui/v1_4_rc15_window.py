@@ -34,13 +34,18 @@ def visible_group_ids_for_source(
 
 
 class MainWindow(Rc14MainWindow):
-    """v1.4.0-rc15: full Inbox review workspaces and source filtering."""
+    """v1.4.0-rc15: historical Inbox source filter kept for legacy shells only.
+
+    Current V2 owns its source/topic filter bar. RC48 gives the RC15 filter private
+    state and an explicit opt-out so the old layer can no longer reset the V2
+    ``Назва [#id]`` selection during ``refresh_groups``.
+    """
 
     VERSION_LABEL = "1.4.0-rc15"
 
     def __init__(self, root: tk.Tk, database, config) -> None:
         self._rc15_source_filter_box: ttk.Combobox | None = None
-        self.inbox_source_filter_var = tk.StringVar(master=root, value=ALL_SOURCES_LABEL)
+        self._rc15_source_filter_var = tk.StringVar(master=root, value=ALL_SOURCES_LABEL)
         super().__init__(root, database, config)
         self._apply_v14_labels()
         self.refresh_groups()
@@ -54,6 +59,8 @@ class MainWindow(Rc14MainWindow):
 
     def _install_rc14_inbox_tools(self) -> None:
         super()._install_rc14_inbox_tools()
+        if bool(getattr(self, "_disable_rc15_source_filter", False)):
+            return
         if self._rc15_source_filter_box is not None:
             return
         bar = getattr(self, "_rc14_inbox_tools_frame", None)
@@ -64,7 +71,7 @@ class MainWindow(Rc14MainWindow):
         ttk.Label(bar, text="Джерело:").pack(side="left")
         combo = ttk.Combobox(
             bar,
-            textvariable=self.inbox_source_filter_var,
+            textvariable=self._rc15_source_filter_var,
             values=(ALL_SOURCES_LABEL,),
             state="readonly",
             width=28,
@@ -75,6 +82,8 @@ class MainWindow(Rc14MainWindow):
 
     def refresh_groups(self) -> None:
         super().refresh_groups()
+        if bool(getattr(self, "_disable_rc15_source_filter", False)):
+            return
         tree = getattr(self, "groups_tree", None)
         if tree is None:
             return
@@ -83,8 +92,8 @@ class MainWindow(Rc14MainWindow):
         if not raw_iids:
             if self._rc15_source_filter_box is not None:
                 self._rc15_source_filter_box.configure(values=(ALL_SOURCES_LABEL,))
-            if self.inbox_source_filter_var.get() != ALL_SOURCES_LABEL:
-                self.inbox_source_filter_var.set(ALL_SOURCES_LABEL)
+            if self._rc15_source_filter_var.get() != ALL_SOURCES_LABEL:
+                self._rc15_source_filter_var.set(ALL_SOURCES_LABEL)
             return
 
         group_ids = [int(iid) for iid in raw_iids]
@@ -107,10 +116,10 @@ class MainWindow(Rc14MainWindow):
         if self._rc15_source_filter_box is not None:
             self._rc15_source_filter_box.configure(values=values)
 
-        selected_source = str(self.inbox_source_filter_var.get() or ALL_SOURCES_LABEL).strip()
+        selected_source = str(self._rc15_source_filter_var.get() or ALL_SOURCES_LABEL).strip()
         if selected_source not in values:
             selected_source = ALL_SOURCES_LABEL
-            self.inbox_source_filter_var.set(selected_source)
+            self._rc15_source_filter_var.set(selected_source)
 
         visible_ids = set(visible_group_ids_for_source(group_ids, source_names_by_group, selected_source))
         if len(visible_ids) == len(group_ids):

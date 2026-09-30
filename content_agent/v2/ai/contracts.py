@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Callable
+from typing import Callable, Protocol, runtime_checkable
 
 
 class AITask(StrEnum):
@@ -23,6 +23,28 @@ class QualityTier(StrEnum):
     PREMIUM = "premium"
 
 
+Validator = Callable[[str], object]
+
+
+@dataclass(frozen=True, slots=True)
+class AIRequest:
+    prompt: str
+    validator: Validator | None = None
+    max_output_tokens: int = 4096
+    local_prompt: str | None = None
+    local_max_output_tokens: int | None = None
+    local_timeout_seconds: int = 120
+    local_repair: bool = True
+    cloud_timeout_seconds: int = 120
+    task_timeout_seconds: int | None = None
+    skip_providers: tuple[str, ...] = ()
+    skip_models: tuple[str, ...] = ()
+    suppress_provider_on_quota: bool = False
+    cancel_event: object | None = None
+    task: AITask = AITask.GENERIC
+    quality_tier: QualityTier = QualityTier.BALANCED
+
+
 @dataclass(frozen=True, slots=True)
 class UnifiedAIResult:
     text: str
@@ -36,4 +58,19 @@ class UnifiedAIResult:
     cost_usd: float = 0.0
 
 
-Validator = Callable[[str], object]
+@runtime_checkable
+class AIBackend(Protocol):
+    name: str
+
+    def run(self, request: AIRequest) -> UnifiedAIResult:
+        ...
+
+
+__all__ = [
+    "AIBackend",
+    "AIRequest",
+    "AITask",
+    "QualityTier",
+    "UnifiedAIResult",
+    "Validator",
+]

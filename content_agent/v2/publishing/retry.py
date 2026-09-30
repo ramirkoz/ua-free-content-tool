@@ -93,6 +93,17 @@ def _has_uncertain_side_effect(progress: Mapping[str, Any]) -> str:
     return ""
 
 
+def uncertain_publication_reason(last_error: object, progress_raw: object) -> str:
+    """Return a human-readable fail-closed reason for an ambiguous external write."""
+    error = str(last_error or "").strip().casefold()
+    if any(marker in error for marker in _UNKNOWN_MARKERS):
+        return "Результат попередньої зовнішньої операції невідомий."
+    side_effect = _has_uncertain_side_effect(_as_dict(progress_raw))
+    if side_effect:
+        return side_effect
+    return ""
+
+
 def sanitize_retry_progress(raw: object, *, requested_at: str, old_target_id: int, old_batch_id: int) -> dict[str, Any]:
     source = _as_dict(raw)
     clean = {key: source[key] for key in _SAFE_PROGRESS_KEYS if key in source}
@@ -127,10 +138,11 @@ def assess_failed_target(row: Mapping[str, Any] | Any) -> RetryAssessment:
         return RetryAssessment(False, "Попередня спроба ще не є завершеною.", progress)
     if remote_id:
         return RetryAssessment(False, "Платформа вже повернула remote ID; автоматичний повтор може створити дубль.", progress)
-    low_error = error.casefold()
-    if any(marker in low_error for marker in _UNKNOWN_MARKERS):
-        return RetryAssessment(False, "Результат попередньої зовнішньої операції невідомий. Спочатку потрібна ручна перевірка платформи.", progress)
-    side_effect = _has_uncertain_side_effect(progress)
-    if side_effect:
-        return RetryAssessment(False, side_effect + " Автоматичний повтор заблоковано проти дублювання.", progress)
+    uncertain = uncertain_publication_reason(error, progress)
+    if uncertain:
+        return RetryAssessment(
+            False,
+            uncertain + " Спочатку потрібна ручна перевірка платформи; автоматичний повтор заблоковано проти дублювання.",
+            progress,
+        )
     return RetryAssessment(True, "Попередня спроба завершилася відомою помилкою до підтвердженої публікації.", progress)

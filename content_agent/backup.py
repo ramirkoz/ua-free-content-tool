@@ -64,6 +64,14 @@ _REQUIRED_TABLES = {
         "old_length", "new_length", "limit_value", "created_at",
     },
 }
+_OPTIONAL_TABLES = {
+    "manual_topics": {"id", "name", "created_at", "updated_at"},
+    "schema_migrations": {"id", "applied_at"},
+}
+_OPTIONAL_COLUMNS = {
+    "sources": {"topic_id"},
+    "publication_targets": {"outcome"},
+}
 _ALLOWED = {"content_agent.sqlite3", "config.dpapi", "config.portable", "portable.key", "manifest.json"}
 _MAX_BACKUP_ARCHIVE_BYTES = 512 * 1024 * 1024
 _MAX_BACKUP_FILE_BYTES = 1024 * 1024 * 1024
@@ -114,9 +122,32 @@ def _validate_database(path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        if tables != set(_REQUIRED_TABLES):
-            raise BackupError("Backup database has an unexpected table set.")
+        required_tables = set(_REQUIRED_TABLES)
+        optional_tables = set(_OPTIONAL_TABLES)
+        if not required_tables.issubset(tables):
+            missing = sorted(required_tables - tables)
+            raise BackupError("Backup database is missing required tables: " + ", ".join(missing))
+        unexpected_tables = tables - required_tables - optional_tables
+        if unexpected_tables:
+            raise BackupError(
+                "Backup database has unsupported tables: " + ", ".join(sorted(unexpected_tables))
+            )
         for table, expected_columns in _REQUIRED_TABLES.items():
+            columns = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+            if not expected_columns.issubset(columns):
+                missing = sorted(expected_columns - columns)
+                raise BackupError(
+                    f"Backup database table {table} is missing required columns: " + ", ".join(missing)
+                )
+            unexpected_columns = columns - expected_columns - _OPTIONAL_COLUMNS.get(table, set())
+            if unexpected_columns:
+                raise BackupError(
+                    f"Backup database table {table} has unsupported columns: "
+                    + ", ".join(sorted(unexpected_columns))
+                )
+        for table, expected_columns in _OPTIONAL_TABLES.items():
+            if table not in tables:
+                continue
             columns = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
             if columns != expected_columns:
                 raise BackupError(f"Backup database table {table} has an unexpected schema.")
@@ -151,7 +182,10 @@ def _create_backup_unlocked(destination_dir: Path | None = None) -> Path:
     with tempfile.TemporaryDirectory(prefix="uafree-backup-") as temp_name:
         temp = Path(temp_name)
         snapshot = temp / "content_agent.sqlite3"
-        _sqlite_snapshot(db_path, snapshot)
+        # Keep the maintenance lock only for the consistent SQLite snapshot. ZIP
+        # compression can be comparatively slow and must not block normal UI reads.
+        with DATA_MAINTENANCE_LOCK:
+            _sqlite_snapshot(db_path, snapshot)
         files = [snapshot]
         cfg = config_path()
         if cfg.exists():
@@ -188,10 +222,9 @@ def _create_backup_unlocked(destination_dir: Path | None = None) -> Path:
     return final_zip
 
 
-
 def create_backup(destination_dir: Path | None = None) -> Path:
-    with DATA_MAINTENANCE_LOCK:
-        return _create_backup_unlocked(destination_dir)
+    return _create_backup_unlocked(destination_dir)
+
 
 def _validate_archive(archive_path: Path, destination: Path) -> dict[str, object]:
     try:

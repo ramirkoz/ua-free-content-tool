@@ -11,27 +11,8 @@ class ManualTopicsMixin:
     visible/filterable topics from the sources of their member articles.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._ensure_manual_topics_schema()
-
-    def _ensure_manual_topics_schema(self) -> None:
-        with self.connect() as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS manual_topics(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-                )
-                """
-            )
-            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(sources)").fetchall()}
-            if "topic_id" not in columns:
-                db.execute("ALTER TABLE sources ADD COLUMN topic_id INTEGER")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_sources_topic_id ON sources(topic_id)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_manual_topics_name ON manual_topics(name COLLATE NOCASE)")
+    # Schema ownership lives in v2.storage.migrations. This mixin contains only
+    # behavior and queries; constructors no longer mutate schema ad hoc.
 
     @staticmethod
     def _clean_topic_name(value: object) -> str:
@@ -163,6 +144,34 @@ class ManualTopicsMixin:
                 bucket["topic_ids"].append(int(topic_id))
                 bucket["topic_names"].append(topic_name)
         return result
+
+    def filter_manual_group_ids(
+        self,
+        group_ids: Iterable[int],
+        *,
+        source_id: int | None = None,
+        topic_id: int | None = None,
+    ) -> set[int]:
+        """Return matching Inbox group ids using indexed SQL predicates."""
+        ids = list(dict.fromkeys(int(value) for value in group_ids if int(value) > 0))
+        if not ids:
+            return set()
+        placeholders = ",".join("?" for _ in ids)
+        query = (
+            "SELECT DISTINCT a.group_id FROM articles a "
+            "JOIN sources s ON s.id=a.source_id "
+            f"WHERE a.group_id IN ({placeholders})"
+        )
+        params: list[object] = list(ids)
+        if source_id is not None:
+            query += " AND s.id=?"
+            params.append(int(source_id))
+        if topic_id is not None:
+            query += " AND s.topic_id=?"
+            params.append(int(topic_id))
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return {int(row[0]) for row in rows if row[0] is not None}
 
 
 __all__ = ["ManualTopicsMixin"]

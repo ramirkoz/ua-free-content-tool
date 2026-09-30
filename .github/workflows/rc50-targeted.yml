@@ -1,0 +1,92 @@
+name: RC50 final roadmap gate
+
+on:
+  push:
+    branches: [rc50-final-roadmap]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+      - name: Compile application
+        shell: pwsh
+        run: python -m compileall -q content_agent tests
+      - name: RC50 final roadmap contracts
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc50_final_roadmap.py
+      - name: RC50 full Tk startup UI smoke
+        shell: pwsh
+        run: python -m pytest -q tests/test_rc50_full_ui_smoke.py
+      - name: RC49 to RC41 regressions
+        shell: pwsh
+        run: >-
+          python -m pytest -q
+          tests/test_rc49_startup_contract.py
+          tests/test_rc49_runtime_smoke.py
+          tests/test_rc48_ux_reliability.py
+          tests/test_rc47_composition_contracts.py
+          tests/test_rc46_clean_import_wrapper.py
+          tests/test_rc45_reliability.py
+          tests/test_rc44_inbox_topic_filter.py
+          tests/test_rc43_manual_source_topics.py
+          tests/test_rc42_instagram_multi_ui.py
+          tests/test_v1_4_destinations.py
+          tests/test_v1_4_rc2_instagram.py
+          tests/test_drive_auth_recovery_rc41.py
+          tests/test_google_drive_r8.py
+      - name: RC50 adds no versioned runtime layer
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem content_agent -Recurse -File -Filter *.py | Where-Object { $_.Name -match '(^|_)rc50(_|\.|$)' -or $_.Name -match 'window_rc50' }
+          if ($bad) { throw "RC50 must not add versioned runtime layer: $($bad.FullName -join ', ')" }
+      - name: Build signed portable
+        shell: cmd
+        run: Build_Portable_Windows.bat
+      - name: Package portable
+        shell: pwsh
+        run: |
+          $version = (Get-Content PUBLIC_VERSION.txt -Raw).Trim()
+          if ($version -ne '2.0.0-rc50') { throw "unexpected version $version" }
+          $root = "Release\UA_FREE_Content_Tool_v$version\UA_FREE_Content_Tool"
+          if (-not (Test-Path "$root\UA_FREE_Content_Tool.exe")) { throw "portable exe missing" }
+          $zip = "UA_FREE_Content_Tool_v${version}_Windows_Portable_MANUAL_TEST.zip"
+          Compress-Archive -Path $root -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content SHA256SUMS_RC50.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UA_FREE_Content_Tool_v2.0.0-rc50_Windows_Portable_MANUAL_TEST
+          path: |
+            UA_FREE_Content_Tool_v2.0.0-rc50_Windows_Portable_MANUAL_TEST.zip
+            SHA256SUMS_RC50.txt
+          if-no-files-found: error
+
+  full-suite:
+    runs-on: windows-2025
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-test.txt
+      - name: Repository-wide pytest
+        shell: pwsh
+        run: python -m pytest -q

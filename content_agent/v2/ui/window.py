@@ -20,7 +20,7 @@ from ...readable_media_names import readable_post_media_filename
 from ...ui.media_workflow import format_media_size
 from ...version import APP_VERSION
 from ..ai.openrouter_backend import OpenRouterBackend
-from ..ai.service import backend_status, test_active_backend
+from ..ai.service import backend_status_text, test_active_backend
 from ..ai.settings import (
     AIBackendSettings,
     BACKEND_AGENT,
@@ -215,9 +215,6 @@ class MainWindow(LegacyMainWindow):
         if hasattr(self, "groups_tree"):
             self._apply_v2_inbox_contract()
 
-    # ------------------------------------------------------------------
-    # Inbox contract: source count and current-day time are independent columns.
-    # ------------------------------------------------------------------
     def _inbox_headings(self) -> dict[str, str]:
         labels = dict(super()._inbox_headings())
         language = str(getattr(self.config, "ui_language", "uk"))
@@ -235,13 +232,11 @@ class MainWindow(LegacyMainWindow):
         tree.column("sources", width=max(90, int(tree.column("sources", "width") or 0)), minwidth=75, stretch=False, anchor="center")
         tree.column("published", width=max(110, min(145, int(tree.column("published", "width") or 110))), minwidth=90, stretch=False, anchor="center")
         labels = self._inbox_headings()
-        # Re-install the inherited multi-sort callbacks after fixing labels.
         if hasattr(self, "_install_inbox_multisort_headings"):
             self._install_inbox_multisort_headings(tree)
         for column in ("sources", "published"):
             try:
                 base = labels[column]
-                # _update_inbox_sort_headings may append an arrow immediately.
                 state = getattr(self, "_inbox_sort_state", [])
                 match = next((item for item in state if item[0] == column), None)
                 if match:
@@ -287,7 +282,6 @@ class MainWindow(LegacyMainWindow):
 
     @staticmethod
     def _v2_time_only(value: object) -> str:
-        """Render Inbox publication time only; the Inbox contains current-day news."""
         text = str(value or "").strip()
         if not text or text == "—":
             return "—"
@@ -322,14 +316,12 @@ class MainWindow(LegacyMainWindow):
             self._apply_inbox_sort()
 
     def _apply_inbox_sort(self) -> None:
-        """Keep inherited multi-sort, but sort the current-day Time column by seconds."""
         tree = getattr(self, "groups_tree", None)
         if tree is None:
             return
         ordered = list(tree.get_children(""))
         if not getattr(self, "_inbox_sort_state", None):
             return
-        # Import locally to avoid coupling V2 UI startup to the legacy sorter.
         from ...ui.main_window_enhancements import tree_sort_key
         for column, descending in reversed(self._inbox_sort_state):
             nonempty = []
@@ -354,9 +346,6 @@ class MainWindow(LegacyMainWindow):
             tree.move(item_id, "", position)
         self._update_inbox_sort_headings(tree)
 
-    # ------------------------------------------------------------------
-    # Publication history recovery: retry only known failed destinations.
-    # ------------------------------------------------------------------
     def _install_v2_history_retry_button(self) -> None:
         if self.history_retry_button is not None:
             return
@@ -460,9 +449,6 @@ class MainWindow(LegacyMainWindow):
         try:
             result = self.db.retry_failed_publications(group_id)
             if result.created_batch_ids:
-                # A manual retry means the operator has had a chance to repair
-                # credentials. Clear process-local auth breakers before wake-up;
-                # the normal preflight will validate Drive/platform credentials.
                 try:
                     self.worker.clear_auth_blocks("google_drive", *result.created_platforms)
                 except Exception:
@@ -483,12 +469,9 @@ class MainWindow(LegacyMainWindow):
         except Exception as exc:
             self._show_error(exc)
 
-    # ------------------------------------------------------------------
-    # AI tab: one hard backend switch, three isolated backends.
-    # ------------------------------------------------------------------
     def _build_v2_ai_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="Нейронки")
+        self.notebook.add(tab, text="AI")
 
         selector = ttk.LabelFrame(tab, text="Активний AI backend · жорсткий перемикач", padding=10)
         selector.pack(fill="x", pady=(0, 8))
@@ -537,224 +520,159 @@ class MainWindow(LegacyMainWindow):
             row=3, column=0, columnspan=4, sticky="w", pady=(3, 0)
         )
 
-        router = ttk.LabelFrame(tab, text="2. Наш AI Router · прямі провайдери / локальний резерв", padding=10)
+        router = ttk.LabelFrame(tab, text="2. Наш AI Router · прямі провайдери", padding=10)
         router.pack(fill="x", pady=(0, 8))
-        ttk.Label(
-            router,
-            text="NVIDIA, Gemini, Groq, Cloudflare, Local та Codex використовуються тільки коли активний режим AI ROUTER.",
-            foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(router, textvariable=self.v2_router_status_var, wraplength=1250).pack(anchor="w", pady=(5, 5))
-        actions = ttk.Frame(router)
-        actions.pack(fill="x")
-        ttk.Button(actions, text="Зберегти ключі Router", command=self.save_ai_provider_settings).pack(side="left")
-        ttk.Button(actions, text="Тест AI Router", command=self.test_ai_router_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Скинути cooldown", command=self.clear_ai_router_cooldowns_ui).pack(side="left", padx=(6, 0))
-        ttk.Label(actions, text="Ключі зберігаються в одному захищеному сховищі.", foreground="#666").pack(side="left", padx=(12, 0))
+        router.columnconfigure(1, weight=1)
+        self.ai_provider_vars = {}
+        secrets = load_provider_secrets()
+        for index, (key, label) in enumerate((
+            ("gemini_api_key", "Gemini API key"),
+            ("nvidia_api_key", "NVIDIA API key"),
+            ("groq_api_key", "Groq API key"),
+            ("cloudflare_account_id", "Cloudflare Account ID"),
+            ("cloudflare_api_token", "Cloudflare API token"),
+        )):
+            var = tk.StringVar(value=str(getattr(secrets, key)))
+            self.ai_provider_vars[key] = var
+            ttk.Label(router, text=label).grid(row=index, column=0, sticky="w", pady=2)
+            entry_box = ttk.Frame(router)
+            entry = ttk.Entry(entry_box, textvariable=var, show="•" if "key" in key or "token" in key else "", width=58)
+            entry.pack(side="left", fill="x", expand=True)
+            if "key" in key or "token" in key:
+                ttk.Button(entry_box, text="👁", width=3, command=lambda widget=entry: widget.configure(show="" if str(widget.cget("show") or "") else "•")).pack(side="left", padx=(3,2))
+            ttk.Button(entry_box, text="Копіювати", command=lambda secret_var=var, title=label: self._copy_secret_value(secret_var, title)).pack(side="left")
+            entry_box.grid(row=index, column=1, sticky="ew", padx=(8, 8), pady=2)
+        options_row = ttk.Frame(router)
+        options_row.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 2))
+        self.codex_enabled_var = tk.BooleanVar(value=secrets.codex_enabled)
+        self.local_enabled_var = tk.BooleanVar(value=secrets.local_enabled)
+        ttk.Checkbutton(options_row, text="Codex/ChatGPT увімкнено", variable=self.codex_enabled_var).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(options_row, text="Локальний AI увімкнено", variable=self.local_enabled_var).pack(side="left")
+        ttk.Button(router, text="Зберегти прямі провайдери", command=self.save_ai_provider_keys).grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ttk.Button(router, text="Перевірити Router", command=self.test_ai_router_ui).grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(router, textvariable=self.v2_router_status_var, wraplength=1250).grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        agent = ttk.LabelFrame(tab, text="3. Agent · ChatGPT/Codex account backend", padding=10)
+        agent = ttk.LabelFrame(tab, text="3. Agent · Codex / ChatGPT", padding=10)
         agent.pack(fill="x", pady=(0, 8))
         ttk.Label(
             agent,
-            text="У цьому режимі використовується локально авторизований Codex/ChatGPT runtime.",
+            text=(
+                "Окремий backend для Codex. Працює через штатний sign-in; якщо Codex недоступний або вперся в ліміт, "
+                "Agent повертає помилку і НЕ переходить самовільно на Router/OpenRouter."
+            ),
             foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(agent, textvariable=self.v2_agent_status_var, wraplength=1250).pack(anchor="w", pady=(5, 5))
-        row2 = ttk.Frame(agent)
-        row2.pack(fill="x")
-        ttk.Button(row2, text="Перевірити Codex", command=self.check_codex_ui).pack(side="left")
-        ttk.Button(row2, text="Встановити / відновити Codex", command=self.install_codex_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(row2, text="Увійти через ChatGPT", command=self.login_codex_ui).pack(side="left", padx=(6, 0))
-        ttk.Button(row2, text="Тест активного backend", command=self.test_v2_active_backend).pack(side="left", padx=(16, 0))
+            wraplength=1250,
+        ).pack(anchor="w", pady=(0, 5))
+        agent_buttons = ttk.Frame(agent)
+        agent_buttons.pack(fill="x")
+        ttk.Button(agent_buttons, text="ПЕРЕВІРИТИ CODEX", command=self.test_v2_agent).pack(side="left")
+        if hasattr(self, "ensure_codex_ready_ui"):
+            ttk.Button(agent_buttons, text="ВСТАНОВИТИ / ОНОВИТИ CODEX", command=self.ensure_codex_ready_ui).pack(side="left", padx=(6, 0))
+        if hasattr(self, "start_codex_login_ui"):
+            ttk.Button(agent_buttons, text="УВІЙТИ", command=self.start_codex_login_ui).pack(side="left", padx=(6, 0))
+        ttk.Label(agent, textvariable=self.v2_agent_status_var, wraplength=1250).pack(anchor="w", pady=(5, 0))
 
-    def check_codex_ui(self) -> None:
-        # A live Codex probe is an AI execution. Under the hard-switch contract
-        # OpenRouter mode must not touch Codex at all. We still allow a local
-        # install/authentication inspection because it consumes no model request.
-        if load_backend_settings().active_backend == BACKEND_OPENROUTER:
-            try:
-                codex = inspect_codex_cached(max_age_seconds=1.0, force=True)
-                if not codex.installed:
-                    text = "Agent/Codex: не встановлено"
-                elif not codex.authenticated:
-                    text = f"Agent/Codex {codex.version}: встановлено, потрібен вхід через ChatGPT"
-                else:
-                    account = f" · {codex.account_label}" if codex.account_label else ""
-                    text = f"Agent/Codex {codex.version}: авторизований{account}; живий AI-запит не виконувався, бо активний OPENROUTER"
-                self.v2_agent_status_var.set(text)
-                self.set_status(text)
-            except Exception as exc:
-                self._show_error(exc)
-            return
-        return super().check_codex_ui()
+        ttk.Label(tab, text="Використання OpenRouter:", font="TkHeadingFont").pack(anchor="w", pady=(4, 2))
+        self.v2_usage_var = tk.StringVar(value="")
+        ttk.Label(tab, textvariable=self.v2_usage_var, wraplength=1250).pack(anchor="w")
 
-    def test_ai_router_ui(self) -> None:
-        if load_backend_settings().active_backend != BACKEND_ROUTER:
-            self.msg.showwarning(
-                "Жорсткий AI backend",
-                "AI Router зараз не активний. Для живого тесту спочатку перемкніть активний backend на AI ROUTER.",
-                parent=self.root,
-            )
+    def _copy_secret_value(self, variable: tk.StringVar, title: str) -> None:
+        value = str(variable.get() or "").strip()
+        if not value:
+            self.msg.showinfo(title, "Поле порожнє.", parent=self.root)
             return
-        return super().test_ai_router_ui()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(value)
+        self.root.update_idletasks()
+        self.set_status(f"{title}: скопійовано в буфер обміну.")
 
-    def test_local_ai_ui(self) -> None:
-        if load_backend_settings().active_backend != BACKEND_ROUTER:
-            self.msg.showwarning(
-                "Жорсткий AI backend",
-                "Локальний AI є частиною AI Router і не запускається, поки активний інший backend.",
-                parent=self.root,
-            )
-            return
-        return super().test_local_ai_ui()
-
-    def _switch_v2_backend(self, selected: str) -> None:
-        current = load_backend_settings()
-        if selected == BACKEND_OPENROUTER and not self.v2_openrouter_key_var.get().strip():
-            self.v2_backend_var.set(current.active_backend)
-            self.msg.showwarning("OpenRouter", "Спочатку введіть і збережіть OpenRouter API key.", parent=self.root)
-            return
-        try:
-            budget = float(self.v2_openrouter_budget_var.get().replace(",", "."))
-        except Exception:
-            budget = current.openrouter_monthly_budget_usd
-        saved = save_backend_settings(AIBackendSettings(
-            active_backend=selected,
-            openrouter_strategy=current.openrouter_strategy,
-            openrouter_monthly_budget_usd=budget,
-            supervisor_enabled=current.supervisor_enabled,
-            supervisor_interval_seconds=current.supervisor_interval_seconds,
-            supervisor_summary_interval_minutes=current.supervisor_summary_interval_minutes,
-            supervisor_drive_root=current.supervisor_drive_root,
-        ))
-        self.v2_backend_settings = saved
-        self.v2_backend_var.set(saved.active_backend)
-        self.refresh_v2_ai_status()
-        self.set_status(f"AI backend перемкнено жорстко: {saved.active_backend.upper()}.")
+    def _switch_v2_backend(self, value: str) -> None:
+        self.v2_backend_settings.active_backend = value
+        self.v2_backend_settings = save_backend_settings(self.v2_backend_settings)
+        self.v2_ai_status_var.set(backend_status_text(self.v2_backend_settings.active_backend))
+        self.set_status(f"AI backend: {self.v2_backend_settings.active_backend}.")
 
     def save_v2_openrouter_settings(self) -> None:
         try:
+            budget = float(str(self.v2_openrouter_budget_var.get()).replace(",", "."))
             save_openrouter_api_key(self.v2_openrouter_key_var.get())
-            current = load_backend_settings()
-            budget = float(self.v2_openrouter_budget_var.get().replace(",", "."))
-            save_backend_settings(AIBackendSettings(
-                active_backend=current.active_backend,
-                openrouter_strategy=current.openrouter_strategy,
-                openrouter_monthly_budget_usd=budget,
-                supervisor_enabled=current.supervisor_enabled,
-                supervisor_interval_seconds=current.supervisor_interval_seconds,
-                supervisor_summary_interval_minutes=current.supervisor_summary_interval_minutes,
-                supervisor_drive_root=current.supervisor_drive_root,
-            ))
+            self.v2_backend_settings.openrouter_monthly_budget_usd = budget
+            self.v2_backend_settings = save_backend_settings(self.v2_backend_settings)
             self.refresh_v2_ai_status()
-            self.set_status("OpenRouter налаштування збережено.")
+            self.set_status("OpenRouter: ключ і бюджет збережено.")
         except Exception as exc:
             self._show_error(exc)
 
     def test_v2_openrouter(self) -> None:
-        self.save_v2_openrouter_settings()
-        settings = load_backend_settings()
-        backend = OpenRouterBackend(settings)
-
+        try:
+            self.save_v2_openrouter_settings()
+        except Exception:
+            return
+        def action() -> object:
+            backend = OpenRouterBackend(load_backend_settings())
+            return backend.probe()
         def success(result: object) -> None:
+            self.v2_openrouter_status_var.set(str(result))
             self.refresh_v2_ai_status()
-            self.set_status(str(result))
+        self.run_async(action, success, label="Перевіряю OpenRouter", done_label="OpenRouter перевірено")
 
+    def test_v2_agent(self) -> None:
         self.run_async(
-            backend.probe,
-            success,
-            label="OpenRouter: живий тест і автоматичний вибір моделі",
-            done_label="OpenRouter перевірено",
-            timeout_seconds=60,
-            timeout_message="OpenRouter не завершив тест за 60 секунд.",
-            modal_errors=True,
-            modal_timeout=True,
-            timeout_is_error=True,
-        )
-
-    def test_v2_active_backend(self) -> None:
-        def success(result: object) -> None:
-            self.refresh_v2_ai_status()
-            self.set_status(str(result))
-        self.run_async(
-            test_active_backend,
-            success,
-            label="Перевіряю активний AI backend",
-            done_label="Активний AI backend перевірено",
-            timeout_seconds=90,
-            timeout_message="Активний backend не завершив тест за 90 секунд.",
-            modal_errors=True,
-            modal_timeout=True,
-            timeout_is_error=True,
+            lambda: test_active_backend(BACKEND_AGENT, timeout_seconds=45),
+            lambda result: self.v2_agent_status_var.set(str(result)),
+            label="Перевіряю Agent / Codex",
+            done_label="Agent перевірено",
         )
 
     def refresh_v2_ai_status(self) -> None:
-        status: dict[str, object] = {}
-        try:
-            status = backend_status()
-            active = str(status.get("active_backend") or "router").upper()
-            self.v2_ai_status_var.set(f"АКТИВНИЙ: {active}")
-            usage = usage_summary(backend="openrouter")
-            configured = bool(status.get("openrouter_configured"))
-            self.v2_openrouter_status_var.set(
-                f"OpenRouter: {'налаштовано' if configured else 'ключ не задано'} · "
-                f"сьогодні ${float(usage.get('today_cost') or 0):.4f} / {int(usage.get('today_requests') or 0)} запитів · "
-                f"місяць ${float(usage.get('month_cost') or 0):.4f} · "
-                f"tokens in/out {int(usage.get('month_prompt_tokens') or 0):,}/{int(usage.get('month_completion_tokens') or 0):,}"
-            )
-        except Exception as exc:
-            self.v2_openrouter_status_var.set(f"OpenRouter status: {exc}")
+        settings = load_backend_settings()
+        self.v2_backend_settings = settings
+        self.v2_backend_var.set(settings.active_backend)
+        self.v2_ai_status_var.set(backend_status_text(settings.active_backend))
+        self.v2_openrouter_status_var.set(backend_status_text(BACKEND_OPENROUTER, openrouter_key=self.v2_openrouter_key_var.get()))
         try:
             self.v2_router_status_var.set(provider_health_text())
         except Exception as exc:
-            self.v2_router_status_var.set(f"AI Router status: {exc}")
+            self.v2_router_status_var.set(f"AI Router: помилка стану · {exc}")
         try:
-            active_backend = str(status.get("active_backend") or "router").strip().casefold()
-            # RC25: a passive status refresh must not launch a Codex app-server.
-            # Probe only while Agent/Codex is the selected backend; otherwise show
-            # the last cached result (manual test/login actions can refresh it).
-            codex = (
-                inspect_codex_cached(max_age_seconds=300.0, force=False)
-                if active_backend == "agent"
-                else peek_codex_status_cache()
-            )
-            if codex is None:
-                text = "Agent/Codex: не перевіряється, backend не активний"
-            elif not codex.installed:
-                text = "Agent/Codex: не встановлено"
-            elif not codex.authenticated:
-                text = f"Agent/Codex {codex.version}: потрібен вхід через ChatGPT"
+            agent = inspect_codex_cached()
+            cached = peek_codex_status_cache()
+            if cached is None:
+                self.v2_agent_status_var.set("Agent / Codex: стан ще не перевірено; натисніть «ПЕРЕВІРИТИ CODEX».")
             else:
-                account = f" · {codex.account_label}" if codex.account_label else ""
-                text = f"Agent/Codex {codex.version}: авторизований{account}"
-            self.v2_agent_status_var.set(text)
+                self.v2_agent_status_var.set(f"Agent / Codex: {agent.detail}")
         except Exception as exc:
-            self.v2_agent_status_var.set(f"Agent status: {exc}")
+            self.v2_agent_status_var.set(f"Agent / Codex: {exc}")
+        summary = usage_summary(backend="openrouter")
+        budget = max(0.0, float(settings.openrouter_monthly_budget_usd or 0.0))
+        remaining = max(0.0, budget - float(summary['month_cost']))
+        self.v2_usage_var.set(
+            f"Сьогодні: {summary['today_requests']} запитів · ${summary['today_cost']:.4f} · "
+            f"місяць: {summary['month_requests']} запитів · ${summary['month_cost']:.4f} / ${budget:.2f} · "
+            f"залишок: ${remaining:.2f}"
+        )
 
     def _schedule_v2_status_refresh(self) -> None:
-        if getattr(self, "_closing", False):
-            return
-        self.refresh_v2_ai_status()
-        if self.v2_supervisor is not None:
-            self.v2_supervisor_status_var.set(self.v2_supervisor.status_text())
         try:
-            self._v2_refresh_after_id = self.root.after(10000, self._schedule_v2_status_refresh)
-        except tk.TclError:
+            if self.stop_event.is_set():
+                return
+            self.refresh_v2_ai_status()
+            if self.v2_supervisor is not None:
+                self.v2_supervisor_status_var.set(self.v2_supervisor.status_text())
+            self._v2_refresh_after_id = self.root.after(30000, self._schedule_v2_status_refresh)
+        except Exception:
             self._v2_refresh_after_id = None
 
-    # ------------------------------------------------------------------
-    # Supervisor UI. Monitoring logic lives in supervisor/, never here.
-    # ------------------------------------------------------------------
     def _build_v2_supervisor_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="Нагляд")
+        self.notebook.add(tab, text="Стан системи")
         identity = instance_identity()
-        ttk.Label(tab, text="Автоматичний Supervisor V2", font="TkHeadingFont").pack(anchor="w")
+        ttk.Label(tab, text="TECH SUPERVISOR · локальний діагност і окремий контур телеметрії", font="TkHeadingFont").pack(anchor="w")
         ttk.Label(
             tab,
             text=(
-                "Локально збирає health/помилки/чергу/джерела/AI/UI/БД. OpenRouter використовується лише як незалежний аналізатор діагностики. "
-                "Звіти двох Content Tool розділяються стабільним instance ID і вивантажуються в спільну папку RESUME на Google Drive."
+                "Supervisor читає статус локально, відрізняє збій програми від зовнішньої помилки, формує Markdown-звіт через OpenRouter "
+                "і синхронізує status/incident/diagnostics у Google Drive. Це окремий сервісний контур, не частина звичайного публікаційного worker-а."
             ),
             wraplength=1250,
             foreground="#555",
@@ -787,11 +705,66 @@ class MainWindow(LegacyMainWindow):
             timeout_is_error=False,
         )
 
+    def _finish_v2_close_when_publication_safe(self) -> None:
+        worker = getattr(self, "worker", None)
+        active = worker.active_batch_id() if worker is not None and hasattr(worker, "active_batch_id") else None
+        if active is not None:
+            self.set_status(
+                f"Закриття: пакет #{active} завершує поточний зовнішній запис. "
+                "Новий target не буде розпочато."
+            )
+            self._v2_close_wait_after_id = self.root.after(250, self._finish_v2_close_when_publication_safe)
+            return
+        self._v2_close_wait_after_id = None
+        self.settings_dirty = False
+        super().close()
+
     def close(self) -> None:
+        if getattr(self, "_v2_graceful_closing", False):
+            return
+        if getattr(self, "_closing", False):
+            return
+
+        if getattr(self, "settings_dirty", False):
+            answer = self.msg.askyesnocancel(
+                "Незбережені налаштування",
+                "У налаштуваннях є незбережені зміни. Зберегти їх перед закриттям?",
+                parent=self.root,
+            )
+            if answer is None:
+                return
+            if answer and not self.save_settings(show_confirmation=False):
+                return
+            self.settings_dirty = False
+
+        self._v2_graceful_closing = True
         if self._v2_refresh_after_id is not None:
             try:
                 self.root.after_cancel(self._v2_refresh_after_id)
             except tk.TclError:
                 pass
             self._v2_refresh_after_id = None
-        super().close()
+        if getattr(self, "_autocollect_watchdog_id", None) is not None:
+            try:
+                self.root.after_cancel(self._autocollect_watchdog_id)
+            except tk.TclError:
+                pass
+            self._autocollect_watchdog_id = None
+
+        worker = getattr(self, "worker", None)
+        active = worker.active_batch_id() if worker is not None and hasattr(worker, "active_batch_id") else None
+        if active is None:
+            self._finish_v2_close_when_publication_safe()
+            return
+
+        self.stop_event.set()
+        try:
+            worker.request_cancel(active, reason="application_close")
+            worker.wake()
+        except Exception:
+            pass
+        self.set_status(
+            f"Закриття: чекаю безпечного завершення публікації #{active}. "
+            "Не вимикайте процес примусово, щоб не отримати невідомий результат."
+        )
+        self._v2_close_wait_after_id = self.root.after(250, self._finish_v2_close_when_publication_safe)

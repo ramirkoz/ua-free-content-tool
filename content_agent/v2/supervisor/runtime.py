@@ -37,6 +37,13 @@ class SupervisorRuntime:
         self._last_error = ""
         self._hooks_installed = False
         self._resource_exhaustion_until = 0.0
+        self._deferred_start_scheduled = False
+
+    def _resume_deferred_start(self) -> None:
+        self._deferred_start_scheduled = False
+        if self.stop_event.is_set():
+            return
+        self.start()
 
     def start(self) -> None:
         if self.thread is not None and self.thread.is_alive():
@@ -44,9 +51,28 @@ class SupervisorRuntime:
         settings = load_backend_settings()
         if not settings.supervisor_enabled:
             return
+        # RC49: V2 window construction is still wrapped by compatibility UI layers.
+        # Starting Supervisor from the inner constructor made its PRAGMA quick_check
+        # contend for DATA_MAINTENANCE_LOCK while the outer Source/Topic controls were
+        # still reading SQLite.  That produced a real ~12s startup pause and a false
+        # UI_STALLED incident.  The application entrypoint marks the *complete* shell
+        # ready only after MainWindow(...) returns.  Until then, defer without starting
+        # a thread, heartbeat, Drive I/O or OpenRouter incident analysis.
+        if not bool(getattr(self.window, "_ui_ready", False)):
+            if self._deferred_start_scheduled:
+                return
+            root = getattr(self.window, "root", None)
+            if root is None or not hasattr(root, "after_idle"):
+                return
+            self._deferred_start_scheduled = True
+            try:
+                root.after_idle(self._resume_deferred_start)
+            except Exception:
+                self._deferred_start_scheduled = False
+            return
         self._install_exception_hooks()
-        # Update rollback waits for this marker. It is written only after the V2
-        # window and SupervisorRuntime were constructed successfully.
+        # Update rollback waits for this marker. It is written only after the entire
+        # V2 shell is constructed and the Supervisor is actually allowed to start.
         mark_startup_healthy(self.version)
         self.thread = threading.Thread(target=self._loop, name="content-v2-supervisor", daemon=True)
         self.thread.start()
