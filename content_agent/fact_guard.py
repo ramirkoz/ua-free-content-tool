@@ -24,6 +24,11 @@ _UNICODE_NUMBER_ALIASES = {"💯": "100", "🔟": "10"}
 _KEYCAP_DIGIT_RE = re.compile(r"([0-9])\ufe0f?\u20e3")
 _ROMAN_RE = re.compile(r"\b[IVXLCDM]{2,}\b")
 _LATIN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._+\-/]*\b")
+_NUMBER_TOKEN_RE = re.compile(
+    r"(?<!\w)(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?)(?!\w)",
+    re.UNICODE,
+)
+_FOLLOWING_TOKEN_RE = re.compile(r"(?iu)^(%|[$€₴]|[A-Za-zА-Яа-яІіЇїЄєҐґ]+\.?)")
 
 _SCALE_PATTERNS: tuple[tuple[re.Pattern[str], Decimal], ...] = (
     (re.compile(r"(?iu)^(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|k)$"), Decimal(1_000)),
@@ -44,23 +49,6 @@ _CURRENCY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?iu)^(?:usd|\$|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|dollars?)$"), "usd"),
     (re.compile(r"(?iu)^(?:eur|€|євро|евро|euros?)$"), "eur"),
     (re.compile(r"(?iu)^(?:uah|₴|грн|грив(?:ня|ні|ень))$"), "uah"),
-)
-_SUFFIX_TOKEN_RE = re.compile(
-    r"(?iu)(?:тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
-    r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
-    r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
-    r"кілометр(?:а|у|і|ом|и|ів|ами|ах)?|километр(?:а|у|е|ом|ы|ов|ами|ах)?|kilometers?|kilometres?|km|км|"
-    r"метр(?:а|у|і|ом|и|ів|ами|ах)?|метр(?:а|у|е|ом|ы|ов|ами|ах)?|meters?|metres?|m|м|"
-    r"кілограм(?:а|у|і|ом|и|ів|ами|ах)?|килограмм?(?:а|у|е|ом|ы|ов|ами|ах)?|kilograms?|kg|кг|"
-    r"мегават(?:а|у|і|ом|и|ів|ами|ах)?|мегаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|megawatts?|mw|мвт|"
-    r"гігават(?:а|у|і|ом|и|ів|ами|ах)?|гигаватт?(?:а|у|е|ом|ы|ов|ами|ах)?|gigawatts?|gw|гвт|"
-    r"gb|гб|mb|мб|tb|тб|%|usd|eur|uah|грн|₴|\$|€|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|dollars?|євро|евро|euros?)"
-)
-_NUMBER_RE = re.compile(
-    r"(?<!\w)(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
-    r"(?P<number>(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?))"
-    r"(?P<suffix>(?:\s*(?:" + _SUFFIX_TOKEN_RE.pattern + r")){0,2})",
-    re.IGNORECASE,
 )
 
 _HIGH_RISK_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -120,23 +108,26 @@ def _unit_for(token: str) -> str | None:
     return None
 
 
-def _canon_number_match(match: re.Match[str]) -> str:
-    base = _parse_decimal(match.group("number"))
-    if base is None:
-        return ""
-    scale = Decimal(1)
-    unit = _unit_for(match.group("prefix") or match.group("prefix_word") or "")
-    for token_match in _SUFFIX_TOKEN_RE.finditer(match.group("suffix") or ""):
-        token = token_match.group(0)
-        multiplier = _scale_for(token)
-        if multiplier is not None:
-            scale = multiplier
-        else:
-            candidate = _unit_for(token)
-            if candidate is not None:
-                unit = candidate
-    canonical = _decimal_text(base * scale)
-    return canonical + (f" {unit}" if unit else "")
+def _following_tokens(text: str, end: int, *, maximum: int = 2) -> list[str]:
+    tail = text[end:end + 64]
+    tokens: list[str] = []
+    offset = 0
+    for _ in range(maximum):
+        chunk = tail[offset:]
+        whitespace = len(chunk) - len(chunk.lstrip())
+        offset += whitespace
+        match = _FOLLOWING_TOKEN_RE.match(tail[offset:])
+        if match is None:
+            break
+        tokens.append(match.group(1))
+        offset += match.end()
+    return tokens
+
+
+def _prefix_unit(text: str, start: int) -> str | None:
+    before = text[max(0, start - 8):start]
+    match = re.search(r"(?iu)([$€₴]|USD|EUR|UAH)\s*$", before)
+    return _unit_for(match.group(1)) if match else None
 
 
 def _int_to_roman(value: int) -> str:
@@ -167,10 +158,24 @@ def _roman_to_int(token: str) -> int | None:
 def extract_numbers(value: str) -> set[str]:
     text = _normalize_numeric_text(value)
     result: set[str] = set()
-    for match in _NUMBER_RE.finditer(text):
-        canonical = _canon_number_match(match)
-        if canonical:
-            result.add(canonical)
+    for match in _NUMBER_TOKEN_RE.finditer(text):
+        base = _parse_decimal(match.group(0))
+        if base is None:
+            continue
+        scale = Decimal(1)
+        unit = _prefix_unit(text, match.start())
+        for token in _following_tokens(text, match.end()):
+            multiplier = _scale_for(token)
+            if multiplier is not None:
+                scale = multiplier
+                continue
+            candidate = _unit_for(token)
+            if candidate is not None:
+                unit = candidate
+                continue
+            break
+        canonical = _decimal_text(base * scale)
+        result.add(canonical + (f" {unit}" if unit else ""))
     for match in _ROMAN_RE.finditer(text):
         value_int = _roman_to_int(match.group(0))
         if value_int is not None:
@@ -191,20 +196,13 @@ def _is_strong_latin_token(token: str) -> bool:
         return True
     if clean.isupper() and 2 <= len(clean) <= 5:
         return True
-    # Product/model families that are routinely proper names but surface as a
-    # single TitleCase token. Keep this narrow to avoid treating ordinary English
-    # prose as invented entities.
     if re.fullmatch(r"(?i)(?:cyber(?:cab|truck)|modelx)", clean):
         return True
     return False
 
 
 def extract_latin_entities(value: str) -> set[str]:
-    result: set[str] = set()
-    for token in _LATIN_TOKEN_RE.findall(str(value or "")):
-        if _is_strong_latin_token(token):
-            result.add(token.casefold())
-    return result
+    return {token.casefold() for token in _LATIN_TOKEN_RE.findall(str(value or "")) if _is_strong_latin_token(token)}
 
 
 def _factual_evidence(value: str) -> str:
