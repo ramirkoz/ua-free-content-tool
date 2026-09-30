@@ -6,32 +6,44 @@ import time
 from datetime import datetime
 from typing import Callable
 
-from .contracts import AIBackend, AIRequest, UnifiedAIResult
-from .direct_router_runtime import install_direct_router_runtime
+from .contracts import AIBackend, AIErrorKind, AIRequest, UnifiedAIResult
 from .openrouter_backend import OpenRouterBackend, recent_events
 from .settings import BACKEND_AGENT, BACKEND_OPENROUTER, BACKEND_ROUTER, load_backend_settings
 
 
 logger = logging.getLogger("content_agent.v2.ai_service")
 
-# Compatibility layer for the historical direct Router implementation. RC47 puts
-# a typed request/backend contract in front of it; removing the legacy runtime
-# patch itself is a separate consolidation step so behavior does not change here.
-install_direct_router_runtime()
-
 
 class AIServiceError(RuntimeError):
-    pass
+    """Canonical AI failure surfaced by the V2 gateway."""
+
+    def __init__(self, message: str, *, kind: AIErrorKind | str = AIErrorKind.TEMPORARY) -> None:
+        super().__init__(message)
+        try:
+            self.kind = AIErrorKind(str(kind))
+        except ValueError:
+            self.kind = AIErrorKind.TEMPORARY
 
 
 _LOCK = threading.RLock()
-# The historical router persists cooldown/model-health state through read-modify-
-# write JSON operations. All active V2 router executions use this lock so two AI
-# jobs cannot overwrite each other's state. This is deliberately narrower than a
-# global AI lock: OpenRouter and Agent remain independent.
+# Router state is a read/modify/write JSON contract. Serialize Router execution so
+# parallel jobs cannot overwrite cooldown/model-health state. Other backends remain
+# independent.
 _ROUTER_EXECUTION_LOCK = threading.RLock()
 _LAST_RESULT: UnifiedAIResult | None = None
 _PROCESS_STARTED_AT = datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _cancelled(request: AIRequest) -> bool:
+    return bool(
+        request.cancel_event is not None
+        and getattr(request.cancel_event, "is_set", lambda: False)()
+    )
+
+
+def _require_not_cancelled(request: AIRequest) -> None:
+    if _cancelled(request):
+        raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED)
 
 
 def _legacy_result_to_unified(result: object, backend: str) -> UnifiedAIResult:
@@ -53,6 +65,36 @@ def _normalized(values: object) -> set[str]:
     }
 
 
+def _error_kind(exc: BaseException) -> AIErrorKind:
+    explicit = str(getattr(exc, "kind", "") or "").strip().casefold()
+    aliases = {
+        "auth": AIErrorKind.AUTH,
+        "quota": AIErrorKind.QUOTA,
+        "configuration": AIErrorKind.CONFIGURATION,
+        "model": AIErrorKind.MODEL,
+        "temporary": AIErrorKind.TEMPORARY,
+        "bad_response": AIErrorKind.BAD_RESPONSE,
+        "validation": AIErrorKind.VALIDATION,
+        "request_too_large": AIErrorKind.REQUEST_TOO_LARGE,
+        "timeout": AIErrorKind.TIMEOUT,
+        "cancelled": AIErrorKind.CANCELLED,
+    }
+    if explicit in aliases:
+        return aliases[explicit]
+    text = str(exc or "").casefold()
+    if any(token in text for token in ("скасовано", "cancelled", "canceled")):
+        return AIErrorKind.CANCELLED
+    if any(token in text for token in ("timeout", "timed out", "перевищено ліміт")):
+        return AIErrorKind.TIMEOUT
+    if any(token in text for token in ("unauthorized", "authentication", "http 401", "http 403", "не авториз")):
+        return AIErrorKind.AUTH
+    if any(token in text for token in ("quota", "usage limit", "billing", "daily quota")):
+        return AIErrorKind.QUOTA
+    if any(token in text for token in ("порожн", "invalid json", "bad_response", "reasoning but no final")):
+        return AIErrorKind.BAD_RESPONSE
+    return AIErrorKind.TEMPORARY
+
+
 class _OpenRouterAIBackend:
     name = BACKEND_OPENROUTER
 
@@ -60,26 +102,41 @@ class _OpenRouterAIBackend:
         self.settings = settings
 
     def run(self, request: AIRequest) -> UnifiedAIResult:
+        _require_not_cancelled(request)
         if "openrouter" in _normalized(request.skip_providers):
-            raise AIServiceError("OpenRouter пропущено safety contract цього AI-завдання.")
-        timeout = int(request.task_timeout_seconds or request.cloud_timeout_seconds or 120)
-        return OpenRouterBackend(self.settings).run(
-            request.prompt,
-            validator=request.validator,
-            max_output_tokens=request.max_output_tokens,
-            timeout_seconds=timeout,
-            skip_models=tuple(_normalized(request.skip_models)),
-        )
+            raise AIServiceError(
+                "OpenRouter пропущено safety contract цього AI-завдання.",
+                kind=AIErrorKind.VALIDATION,
+            )
+        timeout = max(3, int(request.task_timeout_seconds or request.cloud_timeout_seconds or 120))
+        try:
+            result = OpenRouterBackend(self.settings).run(
+                request.prompt,
+                validator=request.validator,
+                max_output_tokens=request.max_output_tokens,
+                timeout_seconds=timeout,
+                skip_models=tuple(_normalized(request.skip_models)),
+            )
+        except Exception as exc:
+            if _cancelled(request):
+                raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED) from exc
+            raise AIServiceError(str(exc), kind=_error_kind(exc)) from exc
+        _require_not_cancelled(request)
+        return result
 
 
 class _AgentAIBackend:
     name = BACKEND_AGENT
 
     def run(self, request: AIRequest) -> UnifiedAIResult:
+        _require_not_cancelled(request)
         skipped_providers = _normalized(request.skip_providers)
         skipped_models = _normalized(request.skip_models)
         if skipped_providers.intersection({"agent", "codex"}) or "codex-chatgpt" in skipped_models:
-            raise AIServiceError("Codex / ChatGPT пропущено safety contract цього AI-завдання.")
+            raise AIServiceError(
+                "Codex / ChatGPT пропущено safety contract цього AI-завдання.",
+                kind=AIErrorKind.VALIDATION,
+            )
         from ... import ai_router as legacy
 
         timeout = max(3, int(request.task_timeout_seconds or request.cloud_timeout_seconds or 120))
@@ -87,19 +144,17 @@ class _AgentAIBackend:
         try:
             text = str(legacy._invoke_codex_limited(request.prompt, timeout)).strip()
         except Exception as exc:
-            if request.cancel_event is not None and bool(
-                getattr(request.cancel_event, "is_set", lambda: False)()
-            ):
-                raise AIServiceError("AI-завдання скасовано.") from exc
-            raise AIServiceError(f"Agent backend (Codex) не завершив запит: {exc}") from exc
+            if _cancelled(request):
+                raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED) from exc
+            raise AIServiceError(f"Agent backend (Codex) не завершив запит: {exc}", kind=_error_kind(exc)) from exc
+        _require_not_cancelled(request)
         if not text:
-            raise AIServiceError("Agent backend повернув порожню відповідь.")
-        if request.cancel_event is not None and bool(
-            getattr(request.cancel_event, "is_set", lambda: False)()
-        ):
-            raise AIServiceError("AI-завдання скасовано.")
+            raise AIServiceError("Agent backend повернув порожню відповідь.", kind=AIErrorKind.BAD_RESPONSE)
         if request.validator is not None:
-            request.validator(text)
+            try:
+                request.validator(text)
+            except Exception as exc:
+                raise AIServiceError(f"Agent backend: відповідь не пройшла перевірку: {exc}", kind=AIErrorKind.VALIDATION) from exc
         return UnifiedAIResult(
             text=text,
             backend=BACKEND_AGENT,
@@ -114,11 +169,12 @@ class _RouterAIBackend:
     name = BACKEND_ROUTER
 
     def run(self, request: AIRequest) -> UnifiedAIResult:
+        _require_not_cancelled(request)
         from ... import ai_router as legacy
 
-        with _ROUTER_EXECUTION_LOCK:
-            return _legacy_result_to_unified(
-                legacy.run_ai_router(
+        try:
+            with _ROUTER_EXECUTION_LOCK:
+                result = legacy.run_ai_router(
                     request.prompt,
                     validator=request.validator,
                     max_output_tokens=request.max_output_tokens,
@@ -132,9 +188,13 @@ class _RouterAIBackend:
                     skip_models=request.skip_models,
                     suppress_provider_on_quota=request.suppress_provider_on_quota,
                     cancel_event=request.cancel_event,
-                ),
-                BACKEND_ROUTER,
-            )
+                )
+        except Exception as exc:
+            if _cancelled(request):
+                raise AIServiceError("AI-завдання скасовано.", kind=AIErrorKind.CANCELLED) from exc
+            raise AIServiceError(str(exc), kind=_error_kind(exc)) from exc
+        _require_not_cancelled(request)
+        return _legacy_result_to_unified(result, BACKEND_ROUTER)
 
 
 def _backend_for(name: str, settings: object) -> AIBackend:
@@ -142,19 +202,17 @@ def _backend_for(name: str, settings: object) -> AIBackend:
         return _OpenRouterAIBackend(settings)
     if name == BACKEND_AGENT:
         return _AgentAIBackend()
-    return _RouterAIBackend()
+    if name == BACKEND_ROUTER:
+        return _RouterAIBackend()
+    raise AIServiceError(f"Невідомий AI backend: {name}", kind=AIErrorKind.CONFIGURATION)
 
 
 def execute_request(request: AIRequest) -> UnifiedAIResult:
-    """Execute one typed AI request through the selected backend contract."""
+    """Execute one canonical typed AI request through exactly one selected backend."""
     global _LAST_RESULT
-    if request.cancel_event is not None and bool(
-        getattr(request.cancel_event, "is_set", lambda: False)()
-    ):
-        raise AIServiceError("AI-завдання скасовано.")
-
+    _require_not_cancelled(request)
     settings = load_backend_settings()
-    backend_name = str(settings.active_backend or BACKEND_ROUTER)
+    backend_name = str(settings.active_backend or BACKEND_ROUTER).strip().casefold()
     logger.info(
         "AI V2 execute backend=%s task=%s tier=%s max_output_tokens=%s",
         backend_name,
@@ -163,6 +221,7 @@ def execute_request(request: AIRequest) -> UnifiedAIResult:
         request.max_output_tokens,
     )
     result = _backend_for(backend_name, settings).run(request)
+    _require_not_cancelled(request)
     with _LOCK:
         _LAST_RESULT = result
     return result
@@ -184,7 +243,7 @@ def execute(
     suppress_provider_on_quota: bool = False,
     cancel_event: object | None = None,
 ) -> UnifiedAIResult:
-    """Compatibility signature that now builds the canonical typed request."""
+    """Compatibility signature that builds the canonical AIRequest."""
     return execute_request(
         AIRequest(
             prompt=str(prompt),
@@ -205,6 +264,7 @@ def execute(
 
 
 def run_ai_compat(*args, **kwargs):
+    """Legacy return-shape shim; execution still goes through the V2 gateway contract."""
     unified = execute(*args, **kwargs)
     from ...ai_router import AIResult
 
@@ -228,7 +288,7 @@ def last_result() -> UnifiedAIResult | None:
         return _LAST_RESULT
 
 
-def backend_status() -> dict[str, object]:
+def _structured_backend_status() -> dict[str, object]:
     settings = load_backend_settings()
     status: dict[str, object] = {
         "active_backend": settings.active_backend,
@@ -269,17 +329,49 @@ def backend_status() -> dict[str, object]:
     return status
 
 
-def test_active_backend() -> str:
-    settings = load_backend_settings()
-    if settings.active_backend == BACKEND_OPENROUTER:
-        return OpenRouterBackend(settings).probe()
-    if settings.active_backend == BACKEND_AGENT:
-        result = execute("Відповідай тільки словом OK.", max_output_tokens=16, task_timeout_seconds=45)
-        return f"Agent backend працює: {result.label}"
-    from ...ai_router import test_ai_router
+def backend_status(backend: str | None = None, *, openrouter_key: str | None = None):
+    """Structured status for telemetry, or one human-readable backend line for UI."""
+    status = _structured_backend_status()
+    if backend is None:
+        return status
+    selected = str(backend or "").strip().casefold()
+    active = str(status.get("active_backend") or "").strip().casefold()
+    marker = " · активний" if selected == active else ""
+    if selected == BACKEND_OPENROUTER:
+        configured = bool(str(openrouter_key or "").strip()) or bool(status.get("openrouter_configured"))
+        return f"OpenRouter: {'налаштовано' if configured else 'API key не задано'}{marker}"
+    if selected == BACKEND_ROUTER:
+        router = status.get("router") if isinstance(status, dict) else None
+        if isinstance(router, dict) and router.get("error"):
+            return f"AI Router: помилка стану · {router.get('error')}{marker}"
+        configured = int((router or {}).get("configured_providers") or 0) if isinstance(router, dict) else 0
+        available = int((router or {}).get("available_providers") or 0) if isinstance(router, dict) else 0
+        return f"AI Router: провайдерів {configured}, доступно {available}{marker}"
+    if selected == BACKEND_AGENT:
+        return f"Agent / Codex: {'активний' if selected == active else 'неактивний'}"
+    return f"AI backend: {backend or 'невідомий'}{marker}"
 
-    with _ROUTER_EXECUTION_LOCK:
-        return test_ai_router()
+
+def test_active_backend(backend: str | None = None, *, timeout_seconds: int = 45) -> str:
+    """Probe the requested backend without changing the selected backend."""
+    settings = load_backend_settings()
+    selected = str(backend or settings.active_backend or BACKEND_ROUTER).strip().casefold()
+    if selected == BACKEND_OPENROUTER:
+        return OpenRouterBackend(settings).probe()
+    request = AIRequest(
+        prompt="Відповідай тільки словом OK.",
+        max_output_tokens=16,
+        task_timeout_seconds=max(3, int(timeout_seconds)),
+    )
+    if selected == BACKEND_AGENT:
+        result = _backend_for(BACKEND_AGENT, settings).run(request)
+        return f"Agent backend працює: {result.label}"
+    if selected == BACKEND_ROUTER:
+        from ...ai_router import test_ai_router
+
+        with _ROUTER_EXECUTION_LOCK:
+            return test_ai_router()
+    raise AIServiceError(f"Невідомий AI backend: {selected}", kind=AIErrorKind.CONFIGURATION)
 
 
 __all__ = [
