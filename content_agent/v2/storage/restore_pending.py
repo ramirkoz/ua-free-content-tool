@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,11 +83,21 @@ def _validate_for_stage(archive: Path, schema: int) -> None:
         raise backup_contract.BackupContractError("Backup schema is unsupported.")
 
 
-def stage_restore(archive_path: Path) -> StagedRestore:
+def _validate_migration_password(archive: Path, password: str) -> None:
+    try:
+        with zipfile.ZipFile(archive, "r") as handle:
+            raw = handle.read("credentials.enc")
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise backup_contract.BackupContractError("Migration credentials are missing or unreadable.") from exc
+    backup_contract._decrypt_credentials(raw, password)
+
+
+def stage_restore(archive_path: Path, *, credential_password: str | None = None) -> StagedRestore:
     """Validate and stage a restore without replacing live runtime state.
 
-    The current process keeps using its existing database. The archive is applied
-    only by the next process before create_database() constructs any SQLite object.
+    Migration-backup passwords are verified before anything is staged. The password
+    itself is never written into Data; the portable restart path passes it only in
+    the child process environment and removes it before restore application.
     """
 
     archive = Path(archive_path)
@@ -95,6 +106,10 @@ def stage_restore(archive_path: Path) -> StagedRestore:
     schema = _schema(archive)
     _validate_for_stage(archive, schema)
     requires_password = schema == backup_contract.SCHEMA and backup_contract.backup_requires_password(archive)
+    if requires_password:
+        if not credential_password:
+            raise backup_contract.BackupContractError("Цей migration backup захищено паролем.")
+        _validate_migration_password(archive, str(credential_password))
 
     with DATA_MAINTENANCE_LOCK:
         safety = backup_contract.create_backup()
@@ -143,9 +158,6 @@ def apply_pending_restore(*, credential_password: str | None = None):
         else:
             raise backup_contract.BackupContractError("Backup schema is unsupported.")
     except Exception:
-        # Leave the staged archive intact so the operator can retry with the right
-        # password or inspect the failure. Startup must fail closed rather than
-        # silently continue on partially restored state.
         raise
     shutil.rmtree(_pending_dir(), ignore_errors=True)
     return result
