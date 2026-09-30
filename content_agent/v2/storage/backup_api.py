@@ -15,7 +15,7 @@ def _schema(path: Path) -> int:
 
 
 def create_backup(destination_dir: Path | None = None) -> Path:
-    """Create the RC49 credential-free durable backup."""
+    """Create the credential-free durable backup."""
     return backup_contract.create_backup(destination_dir)
 
 
@@ -29,11 +29,7 @@ def backup_requires_password(path: Path) -> bool:
 
 
 def import_backup(path: Path, *, credential_password: str | None = None):
-    """Import current schema 3 or historical schema 2 backups.
-
-    Schema 2 is intentionally read-only compatibility. New backups are always
-    schema 3 and never place a portable config together with its raw key.
-    """
+    """Import current schema or historical schema 2 backups."""
     archive = Path(path)
     schema = _schema(archive)
     if schema == backup_contract.SCHEMA:
@@ -43,7 +39,24 @@ def import_backup(path: Path, *, credential_password: str | None = None):
     raise backup_contract.BackupContractError("Backup schema is unsupported.")
 
 
+class BackupService:
+    """Small composition-root facade over the fail-closed backup contract."""
+
+    def create(self, destination_dir: Path | None = None) -> Path:
+        return create_backup(destination_dir)
+
+    def create_migration(self, password: str, destination_dir: Path | None = None) -> Path:
+        return create_migration_backup(password, destination_dir)
+
+    def requires_password(self, path: Path) -> bool:
+        return backup_requires_password(path)
+
+    def restore(self, path: Path, *, credential_password: str | None = None):
+        return import_backup(path, credential_password=credential_password)
+
+
 __all__ = [
+    "BackupService",
     "create_backup",
     "create_migration_backup",
     "backup_requires_password",
