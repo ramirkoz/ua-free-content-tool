@@ -31,8 +31,10 @@ def test_rc55_legacy_search_and_column_reset_are_removed_but_block_composition_s
     assert "def reset_inbox_columns" in source
     assert "self._enforce_rc55_inbox_columns()" in source
     legacy = (Path(__file__).parents[1] / "content_agent" / "v2" / "ui" / "legacy_manual_topics_window_rc44.py").read_text(encoding="utf-8")
-    assert "show_group_composition" in legacy
-    assert "Склад блоку" in legacy
+    assert '"Редагувати склад блоку": "Склад блоку…"' in legacy
+    # RC55 cleanup must not destroy the block-composition operator tool.
+    cleanup = inspect.getsource(MainWindow._apply_rc55_inbox_cleanup)
+    assert '"Склад блоку' not in cleanup
 
 
 def test_rc55_does_not_add_numbered_window_layer() -> None:
