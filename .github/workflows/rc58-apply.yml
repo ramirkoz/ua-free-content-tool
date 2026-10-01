@@ -26,6 +26,7 @@ jobs:
         run: |
           git config user.name "Tony"
           git config user.email "ramirua.fm@gmail.com"
+          rm -f .github/workflows/rc58-targeted.yml
           git add -A
           git commit -m "RC58 Telegram video carousel and busy media progress [rc58-applied]"
           git push origin HEAD:rc58-telegram-video-carousel
