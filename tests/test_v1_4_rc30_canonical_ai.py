@@ -7,6 +7,7 @@ import pytest
 
 from content_agent import ai_router
 from content_agent import codex_runtime
+from content_agent.v2.ai.router_backend import CanonicalRouterBackend
 
 
 def test_ui_engine_uses_canonical_router_objects() -> None:
@@ -80,11 +81,12 @@ def test_router_test_never_caps_codex_at_ten_seconds(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(ai_router, "_normalize_state", lambda: None)
     monkeypatch.setattr(ai_router, "_available_routes", lambda **_kwargs: [codex])
 
-    def fake_invoke(slot, cfg, prompt, *, max_output_tokens, timeout_seconds, local_prompt, local_max_output_tokens):
+    def fake_invoke(self, slot, cfg, request, *, timeout_seconds, output_budget, local_budget):
+        del self, cfg, request, output_budget, local_budget
         captured.append(int(timeout_seconds))
         return "AI Router працює", slot
 
-    monkeypatch.setattr(ai_router, "_invoke_route", fake_invoke)
+    monkeypatch.setattr(CanonicalRouterBackend, "_invoke", fake_invoke)
     result = ai_router.run_ai("test", max_output_tokens=128, cloud_timeout_seconds=10, task_timeout_seconds=90)
     assert result.provider == "codex"
     assert captured == [45]

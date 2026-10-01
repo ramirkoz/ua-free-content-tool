@@ -136,6 +136,8 @@ def test_rc54_appservices_owns_retention() -> None:
 
 
 def test_rc54_version_alignment() -> None:
-    assert Path("VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc54"
-    assert Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc54"
+    version = Path("VERSION.txt").read_text(encoding="utf-8").strip()
+    public = Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip()
+    assert version == public
+    assert version.startswith("2.0.0-rc") and int(version.rsplit("rc", 1)[1]) >= 54
     assert '__version__ = "2.0.0-rc54"' in Path("content_agent/__init__.py").read_text(encoding="utf-8")

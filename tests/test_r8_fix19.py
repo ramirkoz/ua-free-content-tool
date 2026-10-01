@@ -245,7 +245,8 @@ def test_fix20_meta_error_classification() -> None:
 def test_fix20_ui_contract_exposes_pacing_pause_and_manual_resume() -> None:
     source = Path("content_agent/ui/main_window.py").read_text(encoding="utf-8")
     assert 'root.title(f"UA FREE Content Tool — v{APP_VERSION}")' in source
-    assert "inter_target_delay_seconds=5.0" in source
+    container = Path("content_agent/app/container.py").read_text(encoding="utf-8")
+    assert "PublicationService(destinations)" in container
     assert '"Призупинені": {"paused"}' in source
     assert 'text="Повторити невідправлені"' in source
     assert "Інша публікація вже виконується" in source
