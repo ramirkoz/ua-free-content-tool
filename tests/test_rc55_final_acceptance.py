@@ -15,9 +15,11 @@ from content_agent.v2.ui.tabs.inbox import InboxTabController
 
 
 def test_rc55_version_alignment() -> None:
-    assert Path("VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc55"
-    assert Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc55"
-    assert content_agent.__version__ == "2.0.0-rc55"
+    version = Path("VERSION.txt").read_text(encoding="utf-8").strip()
+    assert Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip() == version
+    assert content_agent.__version__ == version
+    assert version.startswith("2.0.0-rc")
+    assert int(version.rsplit("rc", 1)[1]) >= 55
 
 
 def test_rc55_fact_guard_numeric_extraction_is_live() -> None:
@@ -39,8 +41,6 @@ def test_rc55_inbox_contract_has_only_four_operator_columns() -> None:
     assert "_install_v2_inbox_reset_button" not in v2_window
     assert "reset_v2_inbox_columns" not in v2_window
     assert '"Відновити стандартні колонки": "Колонки"' not in legacy
-    # The RC55 cleanup targets only obsolete search/column controls; block-composition
-    # editing is deliberately outside that destruction set and remains inherited.
     cleanup = shell.split("if text in {", 1)[1].split("}:", 1)[0]
     assert "Склад блоку" not in cleanup
 

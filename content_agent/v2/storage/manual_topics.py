@@ -196,13 +196,13 @@ class ManualTopicsMixin:
             )
             params.append(int(topic_id))
         for token in [part for part in str(search or "").split() if part]:
-            pattern = f"%{token}%"
+            pattern = f"%{token.casefold()}%"
             where.append(
                 """EXISTS (
                     SELECT 1 FROM articles fa
                     WHERE fa.group_id=g.id AND (
-                        g.canonical_title LIKE ? OR g.headline LIKE ? OR g.rewrite_text LIKE ?
-                        OR fa.title LIKE ? OR fa.raw_text LIKE ?
+                        CASEFOLD(g.canonical_title) LIKE ? OR CASEFOLD(g.headline) LIKE ? OR CASEFOLD(g.rewrite_text) LIKE ?
+                        OR CASEFOLD(fa.title) LIKE ? OR CASEFOLD(fa.raw_text) LIKE ?
                     )
                 )"""
             )
@@ -214,6 +214,7 @@ class ManualTopicsMixin:
             query += " LIMIT ?"
             params.append(max(1, min(5000, int(limit))))
         with self.connect() as db:
+            db.create_function("CASEFOLD", 1, lambda value: str(value or "").casefold(), deterministic=True)
             rows = db.execute(query, params).fetchall()
         return [self._group_from_row(row, []) for row in rows]
 
