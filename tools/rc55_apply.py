@@ -114,3 +114,4 @@ s = s.replace('assert \'Where-Object { $_.Name -ne "Data" }\' in script', 'asser
 write(path, s)
 
 print("RC55 deterministic patches applied")
+# trigger
