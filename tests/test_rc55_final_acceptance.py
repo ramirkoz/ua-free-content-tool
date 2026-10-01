@@ -11,7 +11,7 @@ import content_agent
 from content_agent.fact_guard import extract_numbers, guard_rewrite
 from content_agent.services.collection import CollectionService
 from content_agent.v2.supervisor.update_manifest import MANIFEST_SCHEMA, canonical_manifest_bytes, verify_manifest
-from content_agent.v2.ui.tabs.inbox import DISPLAY_COLUMNS
+from content_agent.v2.ui.tabs.inbox import InboxTabController
 
 
 def test_rc55_version_alignment() -> None:
@@ -29,7 +29,7 @@ def test_rc55_fact_guard_numeric_extraction_is_live() -> None:
 
 
 def test_rc55_inbox_contract_has_only_four_operator_columns() -> None:
-    assert DISPLAY_COLUMNS == ("title", "topic", "sources", "published")
+    assert InboxTabController.DISPLAY_COLUMNS == ("title", "topic", "sources", "published")
     shell = Path("content_agent/v2/ui/manual_topics_window_rc44.py").read_text(encoding="utf-8")
     legacy = Path("content_agent/v2/ui/legacy_manual_topics_window_rc44.py").read_text(encoding="utf-8")
     assert 'tree.configure(displaycolumns=("title", "topic", "sources", "published"))' in shell
