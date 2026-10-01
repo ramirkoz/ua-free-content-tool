@@ -29,21 +29,21 @@ _UNIT_SHORT_SOURCE = (
 )
 _SUFFIX_SOURCE = (
     r"%|"
-    r"тис\\.?|тисяч(?:а|і|у|ею)?|тыс\\.?|тысяч(?:а|и|у|ей)?|thousand|"
-    r"млн\\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
-    r"млрд\\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
+    r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
+    r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
+    r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
     r"(?:" + _UNIT_SHORT_SOURCE + r")" + _WORD_END + r"|"
     r"(?:" + _UNIT_WORD_SOURCE + r")" + _WORD_END + r"|"
     r"k" + _WORD_END + r"|"
-    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
-    r"dollars?|євро|евро|euros?|₴|\\$|€"
+    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
+    r"dollars?|євро|евро|euros?|₴|\$|€"
 )
 
 _NUMBER_RE = re.compile(
-    r"(?<![\\w])"
-    r"(?:(?P<prefix>[$€₴])\\s*|(?P<prefix_word>USD|EUR|UAH)\\s+)?"
-    r"(?P<number>(?:\\d{1,3}(?:[ \\u00a0\\u202f,'’ʼ]\\d{3})+|\\d+(?:[.,]\\d+)?))"
-    r"(?P<suffix>(?:\\s*(?:" + _SUFFIX_SOURCE + r")){0,2})",
+    r"(?<![\w])"
+    r"(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
+    r"(?P<number>(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?))"
+    r"(?P<suffix>(?:\s*(?:" + _SUFFIX_SOURCE + r")){0,2})",
     re.IGNORECASE,
 )
 _SUFFIX_TOKEN_RE = re.compile(r"(?iu)" + _SUFFIX_SOURCE)
@@ -189,6 +189,16 @@ def _is_strong_latin_token(token: str) -> bool:
     return False
 
 
+def _is_contextual_title_entity(text: str, start: int, token: str) -> bool:
+    clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
+    if len(clean) < 6 or not (clean[:1].isupper() and clean[1:].islower()):
+        return False
+    prefix = str(text or "")[:max(0, int(start))].rstrip()
+    if not prefix:
+        return False
+    return prefix[-1] not in ".!?…"
+
+
 def _parse_decimal(raw: str) -> Decimal | None:
     value = str(raw or "").strip().replace("\u00a0", " ").replace("\u202f", " ")
     # Thousands separators seen in real feeds include spaces, commas and multiple
@@ -326,8 +336,9 @@ def extract_latin_entities(value: str) -> set[str]:
     """Extract only high-confidence Latin entities, not ordinary English words."""
     text = str(value or "")
     result: set[str] = set()
-    for token in _LATIN_TOKEN_RE.findall(text):
-        if _is_strong_latin_token(token):
+    for match in _LATIN_TOKEN_RE.finditer(text):
+        token = match.group(0)
+        if _is_strong_latin_token(token) or _is_contextual_title_entity(text, match.start(), token):
             result.add(token.casefold())
     return result
 

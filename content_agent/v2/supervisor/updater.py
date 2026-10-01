@@ -13,6 +13,7 @@ from typing import Any
 
 from ...network import fetch_url
 from ...paths import data_dir, runtime_dir
+from .update_manifest import verify_manifest
 
 _REPO = "ramirkoz/ua-free-content-tool"
 _VERSION_RE = re.compile(r"^2\.0\.0-rc(?P<rc>[1-9]\d*)$")
@@ -70,6 +71,7 @@ class PreparedUpdate:
 
 
 def resolve_release(target_version: str, *, current_version: str) -> ReleaseAsset:
+    """Resolve only a cryptographically authenticated release manifest."""
     target = str(target_version or "").strip()
     if _rc_number(target) < 0:
         raise ValueError("UPDATE_VERSION_INVALID")
@@ -91,20 +93,42 @@ def resolve_release(target_version: str, *, current_version: str) -> ReleaseAsse
     if not isinstance(payload, dict) or str(payload.get("tag_name") or "") != f"v{target}":
         raise RuntimeError("UPDATE_RELEASE_METADATA_INVALID")
     expected_name = f"UA_FREE_Content_Tool_v{target}_Windows_Portable.zip"
+    manifest_name = f"UA_FREE_Content_Tool_v{target}_manifest.json"
+    signature_name = manifest_name + ".sig"
     assets = payload.get("assets") if isinstance(payload.get("assets"), list) else []
-    for raw in assets:
-        if not isinstance(raw, dict) or str(raw.get("name") or "") != expected_name:
-            continue
-        url = str(raw.get("browser_download_url") or "").strip()
-        digest = str(raw.get("digest") or "").strip().casefold()
-        if digest.startswith("sha256:"):
-            digest = digest.split(":", 1)[1]
-        prefix = f"https://github.com/{_REPO}/releases/download/v{target}/"
-        if not url.startswith(prefix) or not _SHA256_RE.fullmatch(digest):
-            raise RuntimeError("UPDATE_RELEASE_ASSET_NOT_VERIFIABLE")
-        return ReleaseAsset(target, url, digest, expected_name)
-    raise RuntimeError(f"UPDATE_PORTABLE_ASSET_MISSING: {expected_name}")
-
+    by_name = {str(row.get("name") or ""): row for row in assets if isinstance(row, dict)}
+    required = (expected_name, manifest_name, signature_name)
+    if any(name not in by_name for name in required):
+        raise RuntimeError("UPDATE_SIGNED_MANIFEST_MISSING")
+    prefix = f"https://github.com/{_REPO}/releases/download/v{target}/"
+    urls: dict[str, str] = {}
+    for name in required:
+        url = str(by_name[name].get("browser_download_url") or "").strip()
+        if not url.startswith(prefix):
+            raise RuntimeError("UPDATE_RELEASE_ASSET_URL_INVALID")
+        urls[name] = url
+    manifest_response = fetch_url(
+        urls[manifest_name], method="GET", timeout=30, max_bytes=64 * 1024,
+        allowed_content_types={"application/json", "application/octet-stream", "text/plain"},
+        max_redirects=4,
+    )
+    signature_response = fetch_url(
+        urls[signature_name], method="GET", timeout=30, max_bytes=4096,
+        allowed_content_types={"application/octet-stream", "text/plain"},
+        max_redirects=4,
+    )
+    try:
+        manifest_payload = json.loads(manifest_response.body.decode("utf-8"))
+        signature_b64 = signature_response.body.decode("ascii").strip()
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("UPDATE_SIGNED_MANIFEST_INVALID") from exc
+    try:
+        verified = verify_manifest(manifest_payload, signature_b64)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if verified.version != target or verified.asset_name != expected_name:
+        raise RuntimeError("UPDATE_SIGNED_MANIFEST_TARGET_MISMATCH")
+    return ReleaseAsset(target, urls[expected_name], verified.sha256, expected_name)
 
 def _runner_script() -> str:
     # Generated locally. Remote control selects only a validated release version;

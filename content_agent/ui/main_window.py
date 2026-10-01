@@ -961,7 +961,8 @@ class MainWindow:
             if source_ids is not None and source.id not in source_ids:
                 continue
             try:
-                items = collect_source(source)
+                collection = getattr(getattr(self, 'services', None), 'collection', None)
+                items = collection.collect(source) if collection is not None else collect_source(source)
                 total += self.db.insert_collected(int(source.id), items)
             except Exception as exc:
                 errors.append(f"{source.name}: {exc}")

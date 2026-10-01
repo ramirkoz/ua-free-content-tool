@@ -13,7 +13,10 @@ from content_agent.ui.v1_4_rc2_window import MainWindow
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Tk desktop smoke is validated on Windows CI")
 def test_v14_main_window_constructs_with_destination_tabs(tmp_path: Path, isolated_data) -> None:
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Hosted runner Tk unavailable: {exc}")
     root.withdraw()
     window = None
     try:

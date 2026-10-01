@@ -6,7 +6,7 @@ from content_agent.global_duplicates_v1_2_2_rc7 import (
     _canonical_integer_token,
     _fast_candidate_edges,
 )
-from content_agent.models import NewsGroup
+from content_agent.models import Article, NewsGroup
 
 
 def _group(group_id: int, title: str, body: str) -> NewsGroup:
@@ -15,12 +15,12 @@ def _group(group_id: int, title: str, body: str) -> NewsGroup:
         id=group_id,
         canonical_title=title,
         headline=title,
-        combined_text=body,
         status="new",
         source_count=1,
         created_at=now,
         updated_at=now,
         last_published_at=now,
+        articles=[Article(id=group_id, source_id=1, title=title, url="https://example.test", raw_text=body, status="new", published_at=now)],
     )
 
 

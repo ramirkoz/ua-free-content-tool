@@ -72,7 +72,7 @@ def test_rc24_codex_uses_live_model_catalog_and_falls_back_from_retired_default(
 
     assert raw == '{"status":"ok"}'
     assert calls == ["gpt-retired", "gpt-live"]
-    assert codex_engine.CODEX_PACKAGE == "openai-codex==0.147.0"
+    assert codex_engine.CODEX_PACKAGE == "openai-codex==0.156.1"
 
 
 def test_rc24_recovers_different_transient_route_after_fresh_failure(monkeypatch: pytest.MonkeyPatch) -> None:

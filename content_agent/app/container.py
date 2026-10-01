@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from ..config import AppConfig
 from ..paths import database_path
+from ..services.collection import CollectionService
 from ..services.maintenance import MaintenanceService
 from ..services.retention import RetentionService
 from ..v2.ai.gateway import AIGateway
@@ -24,6 +25,7 @@ class AppServices:
     ai: AIGateway
     maintenance: MaintenanceService
     retention: RetentionService
+    collection: CollectionService
     destinations: DestinationRegistry
     publishing: PublicationService
     media: GoogleDriveMediaService
@@ -49,6 +51,7 @@ def build_services(*, config: AppConfig, database: Database | None = None) -> Ap
         ai=AIGateway(),
         maintenance=MaintenanceService(),
         retention=retention,
+        collection=CollectionService(),
         destinations=destinations,
         publishing=publishing,
         media=GoogleDriveMediaService(config),
