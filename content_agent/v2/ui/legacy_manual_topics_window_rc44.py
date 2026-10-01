@@ -445,7 +445,6 @@ class MainWindow(Rc43MainWindow):
             "Об’єднати в один блок": "Об’єднати",
             "Знайти за ключовими словами": "Знайти",
             "Редагувати склад блоку": "Склад блоку…",
-            "Відновити стандартні колонки": "Колонки",
         }
         for widget in self._rc48_walk(tab):
             if not isinstance(widget, (ttk.Button, tk.Button)):

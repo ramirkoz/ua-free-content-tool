@@ -29,21 +29,21 @@ _UNIT_SHORT_SOURCE = (
 )
 _SUFFIX_SOURCE = (
     r"%|"
-    r"тис\\.?|тисяч(?:а|і|у|ею)?|тыс\\.?|тысяч(?:а|и|у|ей)?|thousand|"
-    r"млн\\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
-    r"млрд\\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
+    r"тис\.?|тисяч(?:а|і|у|ею)?|тыс\.?|тысяч(?:а|и|у|ей)?|thousand|"
+    r"млн\.?|мільйон(?:а|ів|и)?|миллион(?:а|ов|ы)?|million|"
+    r"млрд\.?|мільярд(?:а|ів|и)?|миллиард(?:а|ов|ы)?|billion|bn|"
     r"(?:" + _UNIT_SHORT_SOURCE + r")" + _WORD_END + r"|"
     r"(?:" + _UNIT_WORD_SOURCE + r")" + _WORD_END + r"|"
     r"k" + _WORD_END + r"|"
     r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
-    r"dollars?|євро|евро|euros?|₴|\\$|€"
+    r"dollars?|євро|евро|euros?|₴|\$|€"
 )
 
 _NUMBER_RE = re.compile(
-    r"(?<![\\w])"
-    r"(?:(?P<prefix>[$€₴])\\s*|(?P<prefix_word>USD|EUR|UAH)\\s+)?"
+    r"(?<![\w])"
+    r"(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
     r"(?P<number>(?:\\d{1,3}(?:[ \\u00a0\\u202f,'’ʼ]\\d{3})+|\\d+(?:[.,]\\d+)?))"
-    r"(?P<suffix>(?:\\s*(?:" + _SUFFIX_SOURCE + r")){0,2})",
+    r"(?P<suffix>(?:\s*(?:" + _SUFFIX_SOURCE + r")){0,2})",
     re.IGNORECASE,
 )
 _SUFFIX_TOKEN_RE = re.compile(r"(?iu)" + _SUFFIX_SOURCE)

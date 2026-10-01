@@ -22,6 +22,7 @@ class MainWindow(LegacyStableMainWindow):
         self._platforms_controller: PlatformsTabController | None = None
         self._data_controller: DataBackupsTabController | None = None
         super().__init__(root, database_or_services, config)
+        self._apply_rc55_inbox_cleanup()
         self._apply_rc54_dpi_layout()
         self._inbox_controller = InboxTabController(self, self._rc53_filter_bar)
         self._inbox_controller.refresh_choices()
@@ -30,6 +31,35 @@ class MainWindow(LegacyStableMainWindow):
         self._rename_system_tab()
         self._apply_rc54_publication_layout()
         self.refresh_groups()
+
+    def _apply_rc55_inbox_cleanup(self) -> None:
+        """Remove obsolete Inbox controls and lock the operator-visible column contract."""
+        old_search = getattr(self, "_rc14_keyword_entry", None)
+        if old_search is not None:
+            try:
+                old_search.destroy()
+            except tk.TclError:
+                pass
+        tree = getattr(self, "groups_tree", None)
+        if tree is not None:
+            try:
+                tree.configure(displaycolumns=("title", "topic", "sources", "published"))
+            except tk.TclError:
+                pass
+        # RC54 live review proved that the historical column-reset action can
+        # resurrect removed ID/status/score columns. Remove that UI path entirely.
+        for widget in tuple(self._rc48_walk(self.root)):
+            if widget is getattr(self, "_rc53_filter_bar", None):
+                continue
+            try:
+                text = str(widget.cget("text") or "").strip()
+            except Exception:
+                continue
+            if text in {"Пошук у Вхідних:", "Знайти", "Колонки", "Відновити стандартні колонки"}:
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
 
     def _install_manual_topic_inbox_filters(self) -> None:
         if hasattr(self, "_rc53_filter_bar"):

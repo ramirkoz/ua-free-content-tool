@@ -66,8 +66,8 @@ def test_rc28_local_runs_before_secondary_cloud_models(monkeypatch: pytest.Monke
 
 
 def test_rc28_codex_install_is_side_by_side(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(codex.legacy, "data_dir", lambda: tmp_path)
-    old = tmp_path / "ai_runtime" / "codex"
+    monkeypatch.setattr(codex, "tools_dir", lambda: tmp_path)
+    old = tmp_path / "Codex" / "codex"
     old.mkdir(parents=True)
     locked = old / "pydantic_core" / "_pydantic_core.cp312-win_amd64.pyd"
     locked.parent.mkdir()
@@ -76,7 +76,7 @@ def test_rc28_codex_install_is_side_by_side(monkeypatch: pytest.MonkeyPatch, tmp
     def fake_run(command, **_kwargs):
         target = Path(command[command.index("--target") + 1])
         (target / "openai_codex").mkdir(parents=True)
-        (target / "openai_codex-0.147.0.dist-info").mkdir()
+        (target / "openai_codex-0.156.1.dist-info").mkdir()
         return SimpleNamespace(returncode=0, stdout="installed")
 
     monkeypatch.setattr(codex.subprocess, "run", fake_run)
@@ -85,8 +85,8 @@ def test_rc28_codex_install_is_side_by_side(monkeypatch: pytest.MonkeyPatch, tmp
     message = codex.install_codex()
 
     assert locked.read_bytes() == b"loaded-binary-placeholder"
-    pointer = json.loads((tmp_path / "ai_runtime" / "codex_active.json").read_text(encoding="utf-8"))
-    active = tmp_path / "ai_runtime" / pointer["directory"]
+    pointer = json.loads((tmp_path / "Codex" / "codex_active.json").read_text(encoding="utf-8"))
+    active = tmp_path / "Codex" / pointer["directory"]
     assert active != old
     assert (active / "openai_codex").is_dir()
     assert "Перезапустіть" in message

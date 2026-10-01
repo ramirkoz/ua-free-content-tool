@@ -59,7 +59,7 @@ def test_control_rejects_stale_and_wrong_instance(monkeypatch, tmp_path) -> None
 
 def test_update_runner_preserves_data_and_has_rollback() -> None:
     script = _runner_script()
-    assert 'Where-Object { $_.Name -ne "Data" }' in script
+    assert 'Where-Object { $_.Name -notin @("Data", "Tools") }' in script
     assert 'Write-Pending "ROLLBACK_OK"' in script
     assert 'UPDATE_SHA256_MISMATCH' in script
     assert 'startup_healthy.json' in script

@@ -109,7 +109,7 @@ def test_local_fallback_is_after_best_cloud_not_after_whole_cloud_pool(monkeypat
 
 
 def test_codex_runtime_is_canonical_and_side_by_side() -> None:
-    assert codex_runtime.CODEX_PACKAGE == "openai-codex==0.147.0"
+    assert codex_runtime.CODEX_PACKAGE == "openai-codex==0.156.1"
     source = Path(codex_runtime.__file__).read_text(encoding="utf-8")
     assert "codex_versions" in source
     assert "--target" in source
