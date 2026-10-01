@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from .media_candidates import MediaCandidate, deduplicate_media_candidates
+from .media_candidates import MediaCandidate, deduplicate_media_candidates, extract_html_media
 from .media_priority_v1_2 import prefer_real_video
 from .network import NetworkError, fetch_url
 
@@ -75,8 +76,6 @@ def _safe_media_url(base_url: str, value: str) -> str:
     if any(word in lowered for word in _NOISE_WORDS):
         return ""
     host = (parts.hostname or "").casefold()
-    # Telegram post media is served through telesco.pe/Telegram CDN. Reject page
-    # chrome and arbitrary linked images even if they happen to sit in the embed.
     if not (
         host.endswith("telesco.pe")
         or "telegram" in host
@@ -145,8 +144,6 @@ class _TelegramPostMediaParser(HTMLParser):
                 self._append(href, fallback="video", origin="telegram:a:video", score=145)
         style = values.get("style", "")
         for match in _STYLE_URL_RE.finditer(style):
-            # A Telegram photo is normally the background of the exact message's
-            # photo wrapper. Video posters stay below a real video candidate.
             score = 125 if "photo" in classes else 85
             self._append(
                 match.group(2),
@@ -178,24 +175,38 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
     embed = telegram_embed_url(url)
     if not embed:
         return []
-    try:
-        response = fetch_url(
-            embed,
-            headers={"Accept": "text/html,application/xhtml+xml"},
-            max_bytes=5 * 1024 * 1024,
-            allowed_content_types={"text/html", "application/xhtml+xml"},
-            timeout=35,
-            max_redirects=5,
-        )
-    except NetworkError as exc:
-        logger.info("Telegram exact-post media unavailable url=%s error=%s", embed, exc)
-        return []
-    html = response.body.decode("utf-8", errors="replace")
-    result = extract_telegram_post_media(html, response.final_url, source_label)
-    logger.info(
-        "Telegram exact-post media source=%s candidates=%s videos=%s",
-        source_label,
-        len(result),
-        sum(item.kind == "video" for item in result),
-    )
-    return result
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = fetch_url(
+                embed,
+                headers={"Accept": "text/html,application/xhtml+xml", "Cache-Control": "no-cache"},
+                max_bytes=5 * 1024 * 1024,
+                allowed_content_types={"text/html", "application/xhtml+xml"},
+                timeout=35,
+                max_redirects=5,
+            )
+        except NetworkError as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(0.4)
+                continue
+            logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, exc)
+            return []
+        html = response.body.decode("utf-8", errors="replace")
+        exact = extract_telegram_post_media(html, response.final_url, source_label)
+        if exact:
+            result = exact
+        else:
+            safe_fallback = [
+                item for item in extract_html_media(html, response.final_url, source_label)
+                if (urlsplit(item.url).hostname or "").casefold().endswith("telesco.pe")
+            ]
+            result = prefer_real_video(deduplicate_media_candidates(safe_fallback))
+        if result:
+            logger.info("Telegram exact-post media source=%s candidates=%s videos=%s", source_label, len(result), sum(item.kind == "video" for item in result))
+            return result
+        if attempt == 0:
+            time.sleep(0.4)
+    logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, last_error or "no-candidate")
+    return []
