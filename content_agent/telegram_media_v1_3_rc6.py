@@ -101,6 +101,7 @@ class _TelegramPostMediaParser(HTMLParser):
         self.source_label = source_label
         self.stack: list[tuple[str, bool]] = []
         self.items: list[MediaCandidate] = []
+        self.player_pages: list[str] = []
 
     def _inside_media(self) -> bool:
         return bool(self.stack and self.stack[-1][1])
@@ -139,9 +140,12 @@ class _TelegramPostMediaParser(HTMLParser):
                         score=150,
                     )
         if lowered_tag == "a":
-            href = values.get("href", "")
-            if urlsplit(href).path.casefold().endswith(_VIDEO_EXT):
+            href = _safe_media_url(self.page_url, values.get("href", ""))
+            if href and urlsplit(href).path.casefold().endswith(_VIDEO_EXT):
                 self._append(href, fallback="video", origin="telegram:a:video", score=145)
+            elif href and (urlsplit(href).hostname or "").casefold().endswith("telesco.pe"):
+                if href not in self.player_pages:
+                    self.player_pages.append(href)
         style = values.get("style", "")
         for match in _STYLE_URL_RE.finditer(style):
             score = 125 if "photo" in classes else 85
@@ -165,10 +169,14 @@ class _TelegramPostMediaParser(HTMLParser):
                 break
 
 
-def extract_telegram_post_media(html: str, page_url: str, source_label: str = "") -> list[MediaCandidate]:
+def _extract_telegram_post_details(html: str, page_url: str, source_label: str = "") -> tuple[list[MediaCandidate], list[str]]:
     parser = _TelegramPostMediaParser(page_url, source_label)
     parser.feed(str(html or ""))
-    return prefer_real_video(deduplicate_media_candidates(parser.items))
+    return prefer_real_video(deduplicate_media_candidates(parser.items)), list(parser.player_pages)
+
+def extract_telegram_post_media(html: str, page_url: str, source_label: str = "") -> list[MediaCandidate]:
+    items, _ = _extract_telegram_post_details(html, page_url, source_label)
+    return items
 
 
 def discover_telegram_post_media(url: str, source_label: str = "") -> list[MediaCandidate]:
@@ -194,9 +202,16 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
             logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, exc)
             return []
         html = response.body.decode("utf-8", errors="replace")
-        exact = extract_telegram_post_media(html, response.final_url, source_label)
-        if exact:
-            result = exact
+        exact, player_pages = _extract_telegram_post_details(html, response.final_url, source_label)
+        followed_videos: list[MediaCandidate] = []
+        for player_url in player_pages[:10]:
+            try:
+                player = fetch_url(player_url, headers={"Accept":"text/html,application/xhtml+xml","Cache-Control":"no-cache"}, max_bytes=5*1024*1024, allowed_content_types={"text/html","application/xhtml+xml"}, timeout=35, max_redirects=5)
+            except NetworkError:
+                continue
+            followed_videos.extend(item for item in extract_html_media(player.body.decode("utf-8", errors="replace"), player.final_url, source_label) if item.kind == "video")
+        if exact or followed_videos:
+            result = prefer_real_video(deduplicate_media_candidates([*exact, *followed_videos]))
         else:
             safe_fallback = [
                 item for item in extract_html_media(html, response.final_url, source_label)

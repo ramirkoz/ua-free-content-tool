@@ -56,6 +56,7 @@ class MainWindow(LegacyStableMainWindow):
         frame = tree.master
         progress = ttk.Progressbar(frame, mode="indeterminate")
         progress.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(2, 4))
+        progress.grid_remove()
         self._rc56_media_progress = progress
 
     def discover_current_group_media(self) -> None:
@@ -70,14 +71,22 @@ class MainWindow(LegacyStableMainWindow):
         )
         progress = getattr(self, "_rc56_media_progress", None)
         if progress is not None:
-            progress.start(12)
+            progress.grid()
+            progress.start(10)
+            try:
+                progress.update_idletasks()
+            except Exception:
+                pass
 
         def action() -> object:
             try:
                 return discover_group_media_rc3(articles)
             finally:
                 if progress is not None:
-                    self._post_ui(progress.stop)
+                    def _stop_media_progress() -> None:
+                    progress.stop()
+                    progress.grid_remove()
+                self._post_ui(_stop_media_progress)
 
         def success(result: object) -> None:
             if self.current_group_id != group_id:

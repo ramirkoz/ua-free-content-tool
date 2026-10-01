@@ -43,3 +43,25 @@ class ImageGalleryPayload:
     @property
     def public_url(self) -> str:
         return self.first.public_url
+
+
+@dataclass(slots=True)
+class VideoGalleryPayload:
+    items: list[MediaPayload]
+    def __post_init__(self) -> None:
+        if not (2 <= len(self.items) <= MAX_IMAGE_ATTACHMENTS): raise ValueError(f"Відеокарусель повинна містити від 2 до {MAX_IMAGE_ATTACHMENTS} відео.")
+        if any(item.kind != "video" or not item.mime_type.casefold().startswith("video/") for item in self.items): raise ValueError("У відеокаруселі дозволені тільки відео.")
+    @property
+    def first(self) -> MediaPayload: return self.items[0]
+    @property
+    def file_id(self) -> str: return self.first.file_id
+    @property
+    def name(self) -> str: return self.first.name
+    @property
+    def kind(self) -> str: return "video"
+    @property
+    def mime_type(self) -> str: return self.first.mime_type
+    @property
+    def data(self) -> bytes: return self.first.data
+    @property
+    def public_url(self) -> str: return self.first.public_url

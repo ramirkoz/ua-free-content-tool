@@ -24,13 +24,14 @@ class StoredImageAttachment:
     drive_url: str
 
     @classmethod
-    def from_mapping(cls, value: object) -> "StoredImageAttachment":
+    def from_mapping(cls, value: object, *, allow_video: bool = False) -> "StoredImageAttachment":
         if not isinstance(value, dict):
             raise MultiImageStoreError("Збережений список фото має некоректний формат.")
         file_id = str(value.get("file_id") or "").strip()
         mime_type = str(value.get("mime_type") or "").strip().casefold()
-        if not file_id or not mime_type.startswith("image/"):
-            raise MultiImageStoreError("У списку кількох медіа дозволені лише фото.")
+        allowed = mime_type.startswith("image/") or (allow_video and mime_type.startswith("video/"))
+        if not file_id or not allowed:
+            raise MultiImageStoreError("У списку кількох медіа дозволені лише фото або відео одного типу.")
         return cls(
             file_id=file_id,
             name=str(value.get("name") or "image"),
@@ -41,8 +42,9 @@ class StoredImageAttachment:
 
 
 class MultiImageStore:
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Path | None = None, *, allow_video: bool = False):
         self.path = path or (data_dir() / "multi_images_v1_2.json")
+        self.allow_video = bool(allow_video)
 
     def _read(self) -> dict[str, object]:
         if not self.path.exists():
@@ -81,16 +83,22 @@ class MultiImageStore:
         raw = groups.get(str(int(group_id)), [])
         if not isinstance(raw, list):
             raise MultiImageStoreError("Список фото цього блока пошкоджений.")
-        return [StoredImageAttachment.from_mapping(item) for item in raw][:MAX_IMAGE_ATTACHMENTS]
+        return [StoredImageAttachment.from_mapping(item, allow_video=self.allow_video) for item in raw][:MAX_IMAGE_ATTACHMENTS]
 
     def set_group(self, group_id: int, items: list[StoredImageAttachment]) -> None:
         if len(items) > MAX_IMAGE_ATTACHMENTS:
             raise MultiImageStoreError(f"До однієї публікації можна додати не більше {MAX_IMAGE_ATTACHMENTS} фото.")
         unique: list[StoredImageAttachment] = []
         seen: set[str] = set()
+        media_families: set[str] = set()
         for item in items:
-            if not item.mime_type.casefold().startswith("image/"):
-                raise MultiImageStoreError("Кілька медіафайлів дозволені тільки для зображень.")
+            mime = item.mime_type.casefold()
+            family = "image" if mime.startswith("image/") else ("video" if mime.startswith("video/") else "")
+            if not family or (family == "video" and not self.allow_video):
+                raise MultiImageStoreError("Кілька медіафайлів дозволені тільки для фото або відео.")
+            media_families.add(family)
+            if len(media_families) > 1:
+                raise MultiImageStoreError("Не змішуйте фото й відео в одному наборі медіа.")
             if not item.file_id or item.file_id in seen:
                 continue
             seen.add(item.file_id)

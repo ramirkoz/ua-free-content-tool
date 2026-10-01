@@ -23,7 +23,7 @@ class MultiImageEditorMixin:
         ttk.Separator(frame, orient="horizontal").grid(
             row=5, column=0, columnspan=6, sticky="ew", pady=(6, 4)
         )
-        ttk.Label(frame, text="Прикріплені фото (до 10)").grid(
+        ttk.Label(frame, text="Прикріплені медіа (до 10)").grid(
             row=6, column=0, columnspan=6, sticky="w", pady=(0, 3)
         )
         self.attached_images_tree = ttk.Treeview(
@@ -42,7 +42,7 @@ class MultiImageEditorMixin:
         self.attached_images_tree.grid(row=7, column=0, columnspan=5, sticky="ew", pady=(0, 4))
         remove_button = ttk.Button(
             frame,
-            text="Прибрати вибрані фото",
+            text="Прибрати вибране медіа",
             command=self.remove_selected_attached_images,
         )
         remove_button.grid(row=7, column=5, sticky="n", padx=(6, 0))
@@ -60,12 +60,12 @@ class MultiImageEditorMixin:
         if rows:
             return rows
         group = self.db.get_group(target)  # type: ignore[attr-defined]
-        if group.media_file_id and group.media_kind == "image":
+        if group.media_file_id and group.media_kind in {"image", "video"}:
             return [
                 StoredImageAttachment(
                     file_id=group.media_file_id,
-                    name=group.media_name or "image",
-                    mime_type=group.media_mime or "image/jpeg",
+                    name=group.media_name or group.media_kind,
+                    mime_type=group.media_mime or ("image/jpeg" if group.media_kind == "image" else "video/mp4"),
                     size=int(group.media_size or 0),
                     drive_url=group.media_drive_url,
                 )
