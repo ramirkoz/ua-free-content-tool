@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import os
@@ -20,6 +21,30 @@ CODEX_PACKAGE = rc24.CODEX_PACKAGE
 _POINTER_FILE = "codex_active.json"
 _VERSIONS_DIR = "codex_versions"
 _OLD_INSTALL_CODEX = legacy.install_codex
+_CODEX_LOCKED_WHEELS = {
+    "openai_codex-0.156.1-py3-none-any.whl": "6a11313e86027dd2da00f1af475388a578a19076ae8150b0f1c305d8564c973f",
+    "openai_codex_cli_bin-0.156.1-py3-none-win_amd64.whl": "81ab68fdadf448af52736282619875e10d365d93dd7442e94925899e77b99e7d",
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_locked_download(directory: Path) -> None:
+    files = {item.name: item for item in directory.iterdir() if item.is_file()}
+    if set(files) != set(_CODEX_LOCKED_WHEELS):
+        raise CodexEngineError(
+            "Codex download не відповідає зафіксованому набору wheel-файлів; встановлення скасовано."
+        )
+    for name, expected in _CODEX_LOCKED_WHEELS.items():
+        actual = _sha256(files[name])
+        if actual.casefold() != expected:
+            raise CodexEngineError(f"Codex wheel SHA-256 не збігається: {name}")
 
 
 def _runtime_root() -> Path:
@@ -137,21 +162,32 @@ def install_codex() -> str:
     target = versions / unique
     staging.mkdir(parents=True, exist_ok=False)
 
+    download_dir = versions / ("." + unique + ".download")
+    download_dir.mkdir(parents=True, exist_ok=False)
+    download_command = [
+        sys.executable, "-m", "pip", "download",
+        "--disable-pip-version-check", "--no-input", "--only-binary=:all:",
+        "--dest", str(download_dir), CODEX_PACKAGE,
+    ]
     command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--disable-pip-version-check",
-        "--no-input",
-        "--target",
-        str(staging),
-        CODEX_PACKAGE,
+        sys.executable, "-m", "pip", "install",
+        "--disable-pip-version-check", "--no-input", "--no-index",
+        "--find-links", str(download_dir), "--target", str(staging), CODEX_PACKAGE,
     ]
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     env["UA_FREE_CHILD_PROCESS"] = "1"
     try:
+        downloaded = subprocess.run(
+            download_command,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            encoding="utf-8", errors="replace", timeout=600, env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if downloaded.returncode != 0:
+            tail = "\n".join(downloaded.stdout.splitlines()[-14:])
+            raise CodexEngineError("Не вдалося завантажити зафіксований Codex runtime.\n" + tail)
+        _verify_locked_download(download_dir)
         completed = subprocess.run(
             command,
             stdout=subprocess.PIPE,
@@ -175,8 +211,12 @@ def install_codex() -> str:
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
         finally:
-            pass
+            if download_dir.exists():
+                shutil.rmtree(download_dir, ignore_errors=True)
         raise
+    finally:
+        if download_dir.exists():
+            shutil.rmtree(download_dir, ignore_errors=True)
 
     importlib.invalidate_caches()
     legacy.clear_codex_status_cache()
