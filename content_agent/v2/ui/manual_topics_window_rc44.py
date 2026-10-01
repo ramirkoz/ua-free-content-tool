@@ -84,9 +84,9 @@ class MainWindow(LegacyStableMainWindow):
             finally:
                 if progress is not None:
                     def _stop_media_progress() -> None:
-                    progress.stop()
-                    progress.grid_remove()
-                self._post_ui(_stop_media_progress)
+                        progress.stop()
+                        progress.grid_remove()
+                    self._post_ui(_stop_media_progress)
 
         def success(result: object) -> None:
             if self.current_group_id != group_id:
