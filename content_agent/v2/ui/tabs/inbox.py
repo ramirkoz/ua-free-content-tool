@@ -135,7 +135,12 @@ class InboxTabController:
     def refresh(self) -> None:
         selected_before = tuple(self.tree.selection())
         focus_before = self.tree.focus()
+        old_children = list(self.tree.get_children())
         yview_before = self.tree.yview()
+        top_index = 0
+        if old_children and yview_before:
+            top_index = min(len(old_children) - 1, max(0, int(float(yview_before[0]) * len(old_children))))
+        viewport_anchors = old_children[top_index:top_index + 16]
         current = self.state()
         selected_filter = original_text(self.host.group_filter.get())
         status = GROUP_FILTERS.get(selected_filter)
@@ -182,7 +187,14 @@ class InboxTabController:
             self.tree.selection_set(existing)
         if focus_before and self.tree.exists(focus_before):
             self.tree.focus(focus_before)
-        if yview_before:
+        new_children = list(self.tree.get_children())
+        anchor = next((iid for iid in viewport_anchors if self.tree.exists(iid)), None)
+        if anchor and new_children:
+            try:
+                self.tree.yview_moveto(new_children.index(anchor) / max(1, len(new_children)))
+            except Exception:
+                pass
+        elif yview_before:
             try:
                 self.tree.yview_moveto(float(yview_before[0]))
             except Exception:
