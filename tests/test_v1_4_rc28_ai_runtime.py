@@ -74,12 +74,15 @@ def test_rc28_codex_install_is_side_by_side(monkeypatch: pytest.MonkeyPatch, tmp
     locked.write_bytes(b"loaded-binary-placeholder")
 
     def fake_run(command, **_kwargs):
+        if "download" in command:
+            return SimpleNamespace(returncode=0, stdout="downloaded")
         target = Path(command[command.index("--target") + 1])
         (target / "openai_codex").mkdir(parents=True)
         (target / "openai_codex-0.156.1.dist-info").mkdir()
         return SimpleNamespace(returncode=0, stdout="installed")
 
     monkeypatch.setattr(codex.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex, "_verify_locked_download", lambda _path: None)
     # Simulate a process that already imported Codex: new runtime must wait for restart.
     monkeypatch.setitem(sys.modules, "openai_codex", SimpleNamespace())
     message = codex.install_codex()
