@@ -3,6 +3,9 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from ..media_rc56 import Rc56ManagedGoogleDriveClient
+from ...media_discovery_v1_2_rc3 import discover_group_media_rc3
+
 from .components import FilterBar, PublicationStatus, StatusBar
 from .legacy_manual_topics_window_rc44 import MainWindow as LegacyStableMainWindow
 from .manual_topics_window import ALL_SOURCES, ALL_TOPICS
@@ -13,6 +16,84 @@ from .tabs.platforms import PlatformsTabController
 
 class MainWindow(LegacyStableMainWindow):
     """Canonical V2 shell composed from shared controls and tab controllers."""
+
+    def _replace_ollama_settings_panel(self) -> None:
+        """RC56: AI configuration lives only in the dedicated AI tab."""
+        stack = list(getattr(self, "notebook", self.root).winfo_children())
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, ttk.LabelFrame):
+                try:
+                    label = str(widget.cget("text") or "")
+                except tk.TclError:
+                    label = ""
+                if label.startswith("1. Ollama") or label.startswith("1. AI Router"):
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
+                    return
+            try:
+                stack.extend(widget.winfo_children())
+            except tk.TclError:
+                pass
+
+    def _managed_drive_client(self) -> Rc56ManagedGoogleDriveClient:
+        if not self.config.platform_ready("google_drive"):
+            from ...google_drive import GoogleDriveError
+            raise GoogleDriveError("Спочатку підключіть Google Drive у налаштуваннях.")
+        return Rc56ManagedGoogleDriveClient(
+            self.config.google_client_id,
+            self.config.google_client_secret,
+            self.config.google_refresh_token,
+        )
+
+    def _upgrade_media_editor(self) -> None:
+        super()._upgrade_media_editor()
+        tree = getattr(self, "media_candidates_tree", None)
+        if tree is None or hasattr(self, "_rc56_media_progress"):
+            return
+        frame = tree.master
+        progress = ttk.Progressbar(frame, mode="indeterminate")
+        progress.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(2, 4))
+        self._rc56_media_progress = progress
+
+    def discover_current_group_media(self) -> None:
+        group_id = getattr(self, "current_group_id", None)
+        articles = list(getattr(self, "current_group_articles", []))
+        if group_id is None:
+            self.msg.showinfo("Медіа", "Спочатку відкрийте новину в редакторі.", parent=self.root)
+            return
+        self._media_discovery_group_id = group_id
+        self.media_candidates_status_var.set(
+            f"Перевіряю джерела: {len(articles)}. Це не змінює вже прикріплене медіа."
+        )
+        progress = getattr(self, "_rc56_media_progress", None)
+        if progress is not None:
+            progress.start(12)
+
+        def action() -> object:
+            try:
+                return discover_group_media_rc3(articles)
+            finally:
+                if progress is not None:
+                    self._post_ui(progress.stop)
+
+        def success(result: object) -> None:
+            if self.current_group_id != group_id:
+                return
+            candidates = list(result) if isinstance(result, list) else []
+            self._set_media_candidates(candidates)
+            if candidates:
+                self.media_candidates_status_var.set(
+                    f"Знайдено медіафайлів: {len(candidates)}. Виберіть один і натисніть «Використати вибране»."
+                )
+            else:
+                self.media_candidates_status_var.set(
+                    "У джерелах не знайдено придатного медіа. Додайте файл із комп’ютера або за посиланням."
+                )
+
+        self.run_async(action, success, label=f"Шукаю медіа для блоку #{group_id}", done_label="Пошук медіа завершено")
 
     ALL_SOURCES_LABEL = ALL_SOURCES
     ALL_TOPICS_LABEL = ALL_TOPICS
@@ -46,8 +127,6 @@ class MainWindow(LegacyStableMainWindow):
                 tree.configure(displaycolumns=("title", "topic", "sources", "published"))
             except tk.TclError:
                 pass
-        # RC54 live review proved that the historical column-reset action can
-        # resurrect removed ID/status/score columns. Remove that UI path entirely.
         for widget in tuple(self._rc48_walk(self.root)):
             if widget is getattr(self, "_rc53_filter_bar", None):
                 continue
@@ -163,7 +242,6 @@ class MainWindow(LegacyStableMainWindow):
         self.operation_progress = bar.progress
 
     def _apply_rc54_dpi_layout(self) -> None:
-        """Respect Windows DPI while keeping the product usable at compact acceptance sizes."""
         try:
             pixels_per_inch = float(self.root.winfo_fpixels("1i"))
             scaling = max(1.0, min(2.5, pixels_per_inch / 72.0))
@@ -177,7 +255,6 @@ class MainWindow(LegacyStableMainWindow):
             pass
 
     def _apply_rc54_publication_layout(self) -> None:
-        """Favor always-visible destinations over oversized media preview space."""
         canvas = getattr(self, "targets_canvas", None)
         if canvas is not None:
             try:
