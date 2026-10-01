@@ -79,7 +79,8 @@ jobs:
           if ($shell -notmatch 'Пошук у Вхідних:' -or $shell -notmatch 'Колонки') { throw "RC55 cleanup guard missing legacy control names" }
           $legacy = Get-Content content_agent/v2/ui/legacy_manual_topics_window_rc44.py -Raw
           if ($legacy -match '"Відновити стандартні колонки": "Колонки"') { throw "legacy column reset mapping returned" }
-          if ($legacy -notmatch '"Редагувати склад блоку": "Склад блоку\.\.\."') { throw "manual block composition editor was removed" }
+          $v2window = Get-Content content_agent/v2/ui/window.py -Raw
+          if ($v2window -match '_install_v2_inbox_reset_button' -or $v2window -match 'reset_v2_inbox_columns') { throw "legacy Inbox column-reset mechanism still active" }
           $container = Get-Content content_agent/app/container.py -Raw
           if ($container -notmatch 'collection: CollectionService' -or $container -notmatch 'publishing: PublicationService') { throw "AppServices composition incomplete" }
           $updater = Get-Content content_agent/v2/supervisor/updater.py -Raw
