@@ -42,7 +42,7 @@ _SUFFIX_SOURCE = (
 _NUMBER_RE = re.compile(
     r"(?<![\w])"
     r"(?:(?P<prefix>[$€₴])\s*|(?P<prefix_word>USD|EUR|UAH)\s+)?"
-    r"(?P<number>(?:\\d{1,3}(?:[ \\u00a0\\u202f,'’ʼ]\\d{3})+|\\d+(?:[.,]\\d+)?))"
+    r"(?P<number>(?:\d{1,3}(?:[ \u00a0\u202f,'’ʼ]\d{3})+|\d+(?:[.,]\d+)?))"
     r"(?P<suffix>(?:\s*(?:" + _SUFFIX_SOURCE + r")){0,2})",
     re.IGNORECASE,
 )
