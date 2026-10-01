@@ -35,7 +35,7 @@ _SUFFIX_SOURCE = (
     r"(?:" + _UNIT_SHORT_SOURCE + r")" + _WORD_END + r"|"
     r"(?:" + _UNIT_WORD_SOURCE + r")" + _WORD_END + r"|"
     r"k" + _WORD_END + r"|"
-    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
+    r"usd|eur|uah|грн|грив(?:ня|ні|ень)|дол(?:л?\.?|ар(?:и|а|ів)?|лар(?:а|ів)?)|"
     r"dollars?|євро|евро|euros?|₴|\$|€"
 )
 
@@ -182,6 +182,8 @@ def _is_strong_latin_token(token: str) -> bool:
     has_upper = any(char.isupper() for char in letters)
     has_lower = any(char.islower() for char in letters)
     simple_title = clean[:1].isupper() and clean[1:].islower()
+    if simple_title and len(clean) >= 6:
+        return True
     if has_upper and has_lower and not simple_title:
         return True
     if clean.isupper() and 2 <= len(clean) <= 5:
