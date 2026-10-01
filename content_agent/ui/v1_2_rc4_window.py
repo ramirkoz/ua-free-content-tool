@@ -5,8 +5,8 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..multi_image_store_v1_2_rc4 import MultiImageStore
-from ..publisher_factory_v1_2_rc3_compat import Rc3CompatiblePublisherFactory
-from ..worker_v1_2_rc4 import Rc4PublicationWorker
+from ..publisher_factory_rc58 import Rc58PublisherFactory
+from ..worker_rc58 import Rc58PublicationWorker
 from .candidate_gallery_actions_v1_2_rc4 import CandidateGalleryActionsMixin
 from .instagram_settings_v1_2_rc4 import InstagramSettingsMixin
 from .local_gallery_actions_v1_2_rc4 import LocalGalleryActionsMixin
@@ -22,12 +22,12 @@ class MainWindow(
     RC3FinalWindow,
 ):
     def __init__(self, *args: object, **kwargs: object) -> None:
-        self.multi_image_store = MultiImageStore()
+        self.multi_image_store = MultiImageStore(allow_video=True)
         super().__init__(*args, **kwargs)
         self.media_candidates_tree.configure(selectmode="extended")
         self._style_topic_search_button()
-        self.publisher_factory = Rc3CompatiblePublisherFactory(self.config)
-        self.worker = Rc4PublicationWorker(
+        self.publisher_factory = Rc58PublisherFactory(self.config)
+        self.worker = Rc58PublicationWorker(
             self.db,
             self.publisher_factory,
             inter_target_delay_seconds=5.0,

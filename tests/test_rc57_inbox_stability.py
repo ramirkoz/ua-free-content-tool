@@ -36,10 +36,12 @@ def _controller(tmp_path: Path) -> InboxTabController:
     return obj
 
 
-def test_rc57_version_alignment():
-    assert Path("VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc57"
-    assert Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip() == "2.0.0-rc57"
-    assert content_agent.__version__ == "2.0.0-rc57"
+def test_rc57_version_alignment_is_retained_across_newer_rcs():
+    version = Path("VERSION.txt").read_text(encoding="utf-8").strip()
+    public_version = Path("PUBLIC_VERSION.txt").read_text(encoding="utf-8").strip()
+    assert version == public_version == content_agent.__version__
+    assert version.startswith("2.0.0-rc")
+    assert int(version.rsplit("rc", 1)[1]) >= 57
 
 
 def test_rc57_sources_sort_is_reapplied_after_refresh_order():

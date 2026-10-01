@@ -125,7 +125,10 @@ def test_rc49_full_ai_tab_builds_on_windows(monkeypatch) -> None:
         "local_enabled": False,
     })())
 
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk runtime unavailable on this Windows runner: {exc}")
     root.withdraw()
     try:
         window = object.__new__(MainWindow)

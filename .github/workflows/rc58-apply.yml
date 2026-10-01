@@ -1,0 +1,31 @@
+name: RC58 apply media fixes
+
+on:
+  push:
+    branches: [rc58-telegram-video-carousel]
+    paths:
+      - '.github/workflows/rc58-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rc58-telegram-video-carousel
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Repair RC58 media progress indentation
+        run: python .github/rc58_fix_indent.py
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "Tony"
+          git config user.email "ramirua.fm@gmail.com"
+          git add content_agent/v2/ui/manual_topics_window_rc44.py
+          git commit -m "RC58 fix media progress indentation"
+          git push origin HEAD:rc58-telegram-video-carousel

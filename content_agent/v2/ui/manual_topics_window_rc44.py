@@ -56,6 +56,7 @@ class MainWindow(LegacyStableMainWindow):
         frame = tree.master
         progress = ttk.Progressbar(frame, mode="indeterminate")
         progress.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(2, 4))
+        progress.grid_remove()
         self._rc56_media_progress = progress
 
     def discover_current_group_media(self) -> None:
@@ -70,14 +71,22 @@ class MainWindow(LegacyStableMainWindow):
         )
         progress = getattr(self, "_rc56_media_progress", None)
         if progress is not None:
+            progress.grid()
             progress.start(12)
+            try:
+                progress.update_idletasks()
+            except Exception:
+                pass
 
         def action() -> object:
             try:
                 return discover_group_media_rc3(articles)
             finally:
                 if progress is not None:
-                    self._post_ui(progress.stop)
+                    def _stop_media_progress() -> None:
+                        progress.stop()
+                        progress.grid_remove()
+                    self._post_ui(_stop_media_progress)
 
         def success(result: object) -> None:
             if self.current_group_id != group_id:
@@ -249,86 +258,3 @@ class MainWindow(LegacyStableMainWindow):
             self._rc54_tk_scaling = scaling
         except Exception:
             self._rc54_tk_scaling = 1.0
-        try:
-            self.root.minsize(980, 540)
-        except tk.TclError:
-            pass
-
-    def _apply_rc54_publication_layout(self) -> None:
-        canvas = getattr(self, "targets_canvas", None)
-        if canvas is not None:
-            try:
-                canvas.configure(height=190)
-            except tk.TclError:
-                pass
-        media_tree = getattr(self, "media_candidates_tree", None)
-        if media_tree is not None:
-            try:
-                media_tree.configure(height=2)
-            except tk.TclError:
-                pass
-
-    def _install_rc48_history_unknown_controls(self) -> None:
-        retry = getattr(self, "history_retry_button", None)
-        parent = getattr(retry, "master", None)
-        if parent is None or hasattr(self, "_rc48_unknown_status_var"):
-            return
-        try:
-            retry.configure(text="Повторити")
-        except Exception:
-            pass
-        self._rc48_unknown_status_var = tk.StringVar(master=self.root, value="")
-        status = PublicationStatus(
-            parent,
-            status_var=self._rc48_unknown_status_var,
-            on_exists=self._rc48_confirm_unknown_sent,
-            on_absent=self._rc48_confirm_unknown_not_sent,
-        )
-        status.pack(side="left", padx=(6, 0))
-        self._rc53_publication_status = status
-        self._rc48_unknown_label = status.label
-        self._rc48_post_exists_button = status.exists_button
-        self._rc48_post_absent_button = status.absent_button
-        overview = getattr(self, "history_overview_tree", None)
-        detail = getattr(self, "history_detail_tree", None)
-        if overview is not None:
-            overview.bind("<<TreeviewSelect>>", lambda _event: self._update_rc48_history_unknown_state(), add="+")
-        if detail is not None:
-            detail.bind("<<TreeviewSelect>>", lambda _event: self._update_rc48_history_unknown_state(), add="+")
-        self._update_rc48_history_unknown_state()
-
-    def _rc48_focus_inbox_search(self, _event=None):
-        controller = getattr(self, "_inbox_controller", None)
-        if controller is not None:
-            controller.focus_primary()
-            return "break"
-        bar = getattr(self, "_rc53_filter_bar", None)
-        if bar is not None:
-            bar.focus_search()
-            return "break"
-        return None
-
-    def _rc48_escape_inbox_search(self, _event=None):
-        controller = getattr(self, "_inbox_controller", None)
-        if controller is not None:
-            return controller.escape()
-        if hasattr(self, "inbox_search_var") and str(self.inbox_search_var.get() or ""):
-            self.inbox_search_var.set("")
-            self.refresh_groups()
-            return "break"
-        return None
-
-    def _rename_system_tab(self) -> None:
-        notebook = getattr(self, "notebook", None)
-        if notebook is None:
-            return
-        for tab_id in notebook.tabs():
-            try:
-                text = str(notebook.tab(tab_id, "text") or "")
-            except tk.TclError:
-                continue
-            if "supervisor" in text.casefold() or "наглядач" in text.casefold():
-                notebook.tab(tab_id, text="Стан системи")
-
-
-__all__ = ["MainWindow"]
