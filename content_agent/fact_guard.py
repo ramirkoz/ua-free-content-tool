@@ -182,13 +182,21 @@ def _is_strong_latin_token(token: str) -> bool:
     has_upper = any(char.isupper() for char in letters)
     has_lower = any(char.islower() for char in letters)
     simple_title = clean[:1].isupper() and clean[1:].islower()
-    if simple_title and len(clean) >= 6:
-        return True
     if has_upper and has_lower and not simple_title:
         return True
     if clean.isupper() and 2 <= len(clean) <= 5:
         return True
     return False
+
+
+def _is_contextual_title_entity(text: str, start: int, token: str) -> bool:
+    clean = str(token or "").strip(".,:;!?()[]{}«»\"'")
+    if len(clean) < 6 or not (clean[:1].isupper() and clean[1:].islower()):
+        return False
+    prefix = str(text or "")[:max(0, int(start))].rstrip()
+    if not prefix:
+        return False
+    return prefix[-1] not in ".!?…"
 
 
 def _parse_decimal(raw: str) -> Decimal | None:
@@ -328,8 +336,9 @@ def extract_latin_entities(value: str) -> set[str]:
     """Extract only high-confidence Latin entities, not ordinary English words."""
     text = str(value or "")
     result: set[str] = set()
-    for token in _LATIN_TOKEN_RE.findall(text):
-        if _is_strong_latin_token(token):
+    for match in _LATIN_TOKEN_RE.finditer(text):
+        token = match.group(0)
+        if _is_strong_latin_token(token) or _is_contextual_title_entity(text, match.start(), token):
             result.add(token.casefold())
     return result
 
