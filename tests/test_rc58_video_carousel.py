@@ -25,6 +25,6 @@ def test_grouped_player_pages_all_collected():
     html='<div class="tgme_widget_message_grouped"><a class="tgme_widget_message_video_player" href="https://telesco.pe/file/a"></a><a class="tgme_widget_message_video_player" href="https://telesco.pe/file/b"></a></div>'
     p=_TelegramPostMediaParser("https://t.me/x/1?embed=1","x"); p.feed(html); assert p.player_pages==["https://telesco.pe/file/a","https://telesco.pe/file/b"]
 def test_progress_busy_only():
-    src=inspect.getsource(MainWindow); assert "progress.grid_remove()" in src and "progress.grid()" in src and "progress.start(10)" in src
+    src=inspect.getsource(MainWindow); assert "progress.grid_remove()" in src and "progress.grid()" in src and "progress.start(" in src and "progress.stop()" in src
 def test_candidate_video_multiselect_enabled():
     src=Path("content_agent/ui/candidate_gallery_actions_v1_2_rc4.py").read_text(encoding="utf-8"); assert "self._commit_uploaded_media(uploads, group_id)" in src; assert "Кілька медіафайлів можна додавати тільки як фотогалерею" not in src
