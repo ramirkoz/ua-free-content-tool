@@ -31,12 +31,18 @@ def test_rc55_fact_guard_numeric_extraction_is_live() -> None:
 def test_rc55_inbox_contract_has_only_four_operator_columns() -> None:
     assert InboxTabController.DISPLAY_COLUMNS == ("title", "topic", "sources", "published")
     shell = Path("content_agent/v2/ui/manual_topics_window_rc44.py").read_text(encoding="utf-8")
+    v2_window = Path("content_agent/v2/ui/window.py").read_text(encoding="utf-8")
     legacy = Path("content_agent/v2/ui/legacy_manual_topics_window_rc44.py").read_text(encoding="utf-8")
     assert 'tree.configure(displaycolumns=("title", "topic", "sources", "published"))' in shell
     assert '"Пошук у Вхідних:"' in shell and '"Колонки"' in shell
     assert "widget.destroy()" in shell
+    assert "_install_v2_inbox_reset_button" not in v2_window
+    assert "reset_v2_inbox_columns" not in v2_window
     assert '"Відновити стандартні колонки": "Колонки"' not in legacy
-    assert '"Редагувати склад блоку": "Склад блоку..."' in legacy
+    # The RC55 cleanup targets only obsolete search/column controls; block-composition
+    # editing is deliberately outside that destruction set and remains inherited.
+    cleanup = shell.split("if text in {", 1)[1].split("}:", 1)[0]
+    assert "Склад блоку" not in cleanup
 
 
 def test_rc55_collection_service_is_composed_and_active_path_uses_it() -> None:
