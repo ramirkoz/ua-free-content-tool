@@ -226,7 +226,7 @@ class MainWindow(LegacyMainWindow):
         if tree is None:
             return
         columns = tuple(str(item) for item in tree.cget("columns"))
-        desired = tuple(item for item in ("id", "status", "title", "topic", "sources", "published", "score", "history") if item in columns)
+        desired = tuple(item for item in ("title", "topic", "sources", "published") if item in columns)
         tree.configure(displaycolumns=desired)
         tree.column("sources", width=max(90, int(tree.column("sources", "width") or 0)), minwidth=75, stretch=False, anchor="center")
         tree.column("published", width=max(110, min(145, int(tree.column("published", "width") or 110))), minwidth=90, stretch=False, anchor="center")
