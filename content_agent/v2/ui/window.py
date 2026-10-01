@@ -79,7 +79,6 @@ class MainWindow(LegacyMainWindow):
         except Exception:
             pass
         self._apply_v2_inbox_contract()
-        self._install_v2_inbox_reset_button()
         self._install_v2_history_retry_button()
         self._build_v2_ai_tab()
         self._build_v2_supervisor_tab()
@@ -245,40 +244,6 @@ class MainWindow(LegacyMainWindow):
                 tree.heading(column, text=base)
             except Exception:
                 pass
-
-    def _install_v2_inbox_reset_button(self) -> None:
-        if self._v2_inbox_reset_button is not None:
-            return
-        bar = getattr(self, "_rc14_inbox_tools_frame", None)
-        if bar is None:
-            return
-        button = ttk.Button(bar, text="Відновити стандартні колонки", command=self.reset_v2_inbox_columns)
-        button.pack(side="right", padx=(8, 0))
-        self._v2_inbox_reset_button = button
-
-    def reset_v2_inbox_columns(self) -> None:
-        widths = {
-            "id": 72,
-            "status": 82,
-            "title": 520,
-            "topic": 130,
-            "sources": 90,
-            "published": 115,
-            "score": 150,
-            "history": 180,
-        }
-        try:
-            save_widths(widths, inbox_layout_path())
-        except Exception:
-            pass
-        tree = getattr(self, "groups_tree", None)
-        if tree is not None:
-            for column, width in widths.items():
-                if column in tuple(tree.cget("columns")):
-                    minwidth = 90 if column == "published" else 75 if column == "sources" else 45
-                    tree.column(column, width=width, minwidth=minwidth, stretch=False)
-            self._apply_v2_inbox_contract()
-        self.set_status("Колонки Вхідних відновлено. «Джерел» і «Час» незалежні.")
 
     @staticmethod
     def _v2_time_only(value: object) -> str:
