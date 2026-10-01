@@ -1,0 +1,33 @@
+name: RC55 apply collection wiring
+
+on:
+  push:
+    branches: [rc55-final-consolidation-security]
+    paths:
+      - tools/rc55_collection_wiring.py
+      - .github/workflows/rc55-collection-apply.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rc55-final-consolidation-security
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/rc55_collection_wiring.py
+      - name: Commit collection wiring
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add content_agent/ui/main_window.py
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "RC55: route active collection through AppServices [skip ci]"
+          git push origin HEAD:rc55-final-consolidation-security
