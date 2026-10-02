@@ -4,7 +4,11 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..media_rc56 import Rc56ManagedGoogleDriveClient
+from ...google_drive import GoogleDriveError
+from ...managed_media_drive import ManagedMediaUpload
+from ...media_candidates import download_media_candidate
 from ...media_discovery_v1_2_rc3 import discover_group_media_rc3
+from ...ui.media_workflow import MediaWorkflowMixin, media_filename_from_url
 
 from .components import FilterBar, PublicationStatus, StatusBar
 from .legacy_manual_topics_window_rc44 import MainWindow as LegacyStableMainWindow
@@ -67,7 +71,6 @@ class MainWindow(LegacyStableMainWindow):
 
     def _managed_drive_client(self) -> Rc56ManagedGoogleDriveClient:
         if not self.config.platform_ready("google_drive"):
-            from ...google_drive import GoogleDriveError
             raise GoogleDriveError("Спочатку підключіть Google Drive у налаштуваннях.")
         return Rc56ManagedGoogleDriveClient(
             self.config.google_client_id,
@@ -95,6 +98,7 @@ class MainWindow(LegacyStableMainWindow):
         count = int(getattr(self, "_rc59_media_busy_count", 0) or 0) + 1
         self._rc59_media_busy_count = count
         if count == 1:
+            progress.configure(value=0)
             progress.start(12)
             try:
                 progress.update_idletasks()
@@ -113,6 +117,21 @@ class MainWindow(LegacyStableMainWindow):
                 progress.configure(value=0)
             except Exception:
                 pass
+
+    def load_group(self, group_id: int) -> None:
+        """RC60: opening an item must not silently start a media scan.
+
+        The operator now starts source discovery explicitly with the button. This
+        makes the progress indicator mean actual requested media work instead of
+        background activity triggered merely by opening a material.
+        """
+        super(MediaWorkflowMixin, self).load_group(group_id)
+        self._media_discovery_group_id = group_id
+        self._set_media_candidates([])
+        if hasattr(self, "media_candidates_status_var"):
+            self.media_candidates_status_var.set(
+                "Натисніть «Знайти медіа в джерелах», щоб перевірити фото й відео для цього матеріалу."
+            )
 
     def discover_current_group_media(self) -> None:
         group_id = getattr(self, "current_group_id", None)
@@ -147,6 +166,112 @@ class MainWindow(LegacyStableMainWindow):
                 )
 
         self.run_async(action, success, label=f"Шукаю медіа для блоку #{group_id}", done_label="Пошук медіа завершено")
+
+    def use_selected_media_candidate(self) -> None:
+        candidates = []
+        selected_many = getattr(self, "_selected_media_candidates_rc4", None)
+        if callable(selected_many):
+            candidates = list(selected_many())
+        if not candidates:
+            single = getattr(self, "_selected_media_candidate", None)
+            candidate = single() if callable(single) else None
+            if candidate is not None:
+                candidates = [candidate]
+        if not candidates:
+            self.msg.showinfo("Медіа", "Оберіть файл у списку знайдених медіа.", parent=self.root)
+            return
+
+        group_id = getattr(self, "current_group_id", None)
+        if group_id is None:
+            self.msg.showinfo("Медіа", "Спочатку відкрийте новину в редакторі.", parent=self.root)
+            return
+        kinds = {candidate.kind for candidate in candidates}
+        if len(kinds) != 1 or next(iter(kinds)) not in {"image", "video"}:
+            self._show_error(GoogleDriveError("Оберіть медіа одного типу: тільки фото або тільки відео."))
+            return
+        if len(candidates) > 10:
+            self._show_error(GoogleDriveError("До однієї публікації можна додати не більше 10 медіафайлів."))
+            return
+
+        kind = next(iter(kinds))
+        attached = self._attachment_rows(group_id) if len(candidates) > 1 else []
+        if attached:
+            attached_kind = "video" if attached[0].mime_type.casefold().startswith("video/") else "image"
+            if attached_kind != kind:
+                self._show_error(GoogleDriveError("Не можна змішувати фото й відео в одному наборі медіа."))
+                return
+        if len(attached) + len(candidates) > 10:
+            self._show_error(GoogleDriveError("До однієї публікації можна додати не більше 10 медіафайлів."))
+            return
+
+        self.media_candidates_status_var.set(
+            f"Завантажую {'відео' if kind == 'video' else 'фото'}: {len(candidates)}."
+        )
+        self._begin_media_busy()
+
+        def action() -> object:
+            client = self._managed_drive_client()
+            uploaded: list[ManagedMediaUpload] = []
+            try:
+                for candidate in candidates:
+                    media = download_media_candidate(candidate)
+                    uploaded.append(
+                        client.upload_validated_media(
+                            media,
+                            media_filename_from_url(media.source_url or candidate.url, media.mime_type),
+                        )
+                    )
+                return uploaded
+            except Exception:
+                for upload in uploaded:
+                    try:
+                        client.delete_file(upload.info.file_id)
+                    except GoogleDriveError:
+                        pass
+                raise
+            finally:
+                self._post_ui(self._finish_media_busy)
+
+        def success(result: object) -> None:
+            uploads = list(result) if isinstance(result, list) else []
+            if not uploads:
+                raise GoogleDriveError("Google Drive не повернув результат завантаження.")
+            if len(uploads) == 1:
+                self._attach_uploaded_media(uploads[0])
+            else:
+                self._commit_uploaded_media(uploads, group_id)
+            self.media_candidates_status_var.set(
+                f"Додано {'відео' if kind == 'video' else 'фото'}: {len(uploads)}."
+            )
+
+        self.run_async(
+            action,
+            success,
+            label=f"Завантажую вибрані медіа з джерел: {len(candidates)}",
+            done_label="Медіа з джерел додано",
+        )
+
+    def _upload_media(self, media, filename: str, *, label: str) -> None:
+        group_id = getattr(self, "current_group_id", None)
+        if group_id is None:
+            self.msg.showinfo("Медіа", "Спочатку відкрийте новину в редакторі.", parent=self.root)
+            return
+        self.media_candidates_status_var.set("Завантажую медіафайл у Google Drive…")
+        self._begin_media_busy()
+
+        def action() -> object:
+            try:
+                return self._managed_drive_client().upload_validated_media(media, filename)
+            finally:
+                self._post_ui(self._finish_media_busy)
+
+        def success(result: object) -> None:
+            if not isinstance(result, ManagedMediaUpload):
+                raise GoogleDriveError("Google Drive не повернув результат завантаження.")
+            self._attach_uploaded_media(result)
+            self.media_candidates_status_var.set("Вибраний файл автоматично додано й перевірено.")
+
+        self.run_async(action, success, label=label, done_label="Медіафайл додано")
 
     ALL_SOURCES_LABEL = ALL_SOURCES
     ALL_TOPICS_LABEL = ALL_TOPICS
