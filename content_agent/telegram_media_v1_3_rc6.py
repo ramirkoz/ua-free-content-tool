@@ -174,9 +174,46 @@ def _extract_telegram_post_details(html: str, page_url: str, source_label: str =
     parser.feed(str(html or ""))
     return prefer_real_video(deduplicate_media_candidates(parser.items)), list(parser.player_pages)
 
+
 def extract_telegram_post_media(html: str, page_url: str, source_label: str = "") -> list[MediaCandidate]:
     items, _ = _extract_telegram_post_details(html, page_url, source_label)
     return items
+
+
+def _fetch_player_videos(player_url: str, source_label: str) -> list[MediaCandidate]:
+    """Resolve a Telegram player page with one bounded retry."""
+    for attempt in range(2):
+        try:
+            player = fetch_url(
+                player_url,
+                headers={"Accept": "text/html,application/xhtml+xml", "Cache-Control": "no-cache"},
+                max_bytes=5 * 1024 * 1024,
+                allowed_content_types={"text/html", "application/xhtml+xml"},
+                timeout=35,
+                max_redirects=5,
+            )
+        except NetworkError as exc:
+            logger.info(
+                "TELEGRAM_PLAYER_RETRY source=%s attempt=%s url=%s error=%s",
+                source_label,
+                attempt + 1,
+                player_url,
+                exc,
+            )
+            if attempt == 0:
+                time.sleep(0.35)
+                continue
+            return []
+        return [
+            item
+            for item in extract_html_media(
+                player.body.decode("utf-8", errors="replace"),
+                player.final_url,
+                source_label,
+            )
+            if item.kind == "video"
+        ]
+    return []
 
 
 def discover_telegram_post_media(url: str, source_label: str = "") -> list[MediaCandidate]:
@@ -184,7 +221,7 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
     if not embed:
         return []
     last_error: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             response = fetch_url(
                 embed,
@@ -196,8 +233,15 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
             )
         except NetworkError as exc:
             last_error = exc
-            if attempt == 0:
-                time.sleep(0.4)
+            if attempt < 2:
+                logger.info(
+                    "TELEGRAM_MEDIA_RETRY source=%s attempt=%s url=%s error=%s",
+                    source_label,
+                    attempt + 1,
+                    embed,
+                    exc,
+                )
+                time.sleep(0.4 * (attempt + 1))
                 continue
             logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, exc)
             return []
@@ -205,11 +249,7 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
         exact, player_pages = _extract_telegram_post_details(html, response.final_url, source_label)
         followed_videos: list[MediaCandidate] = []
         for player_url in player_pages[:10]:
-            try:
-                player = fetch_url(player_url, headers={"Accept":"text/html,application/xhtml+xml","Cache-Control":"no-cache"}, max_bytes=5*1024*1024, allowed_content_types={"text/html","application/xhtml+xml"}, timeout=35, max_redirects=5)
-            except NetworkError:
-                continue
-            followed_videos.extend(item for item in extract_html_media(player.body.decode("utf-8", errors="replace"), player.final_url, source_label) if item.kind == "video")
+            followed_videos.extend(_fetch_player_videos(player_url, source_label))
         if exact or followed_videos:
             result = prefer_real_video(deduplicate_media_candidates([*exact, *followed_videos]))
         else:
@@ -219,9 +259,21 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
             ]
             result = prefer_real_video(deduplicate_media_candidates(safe_fallback))
         if result:
-            logger.info("Telegram exact-post media source=%s candidates=%s videos=%s", source_label, len(result), sum(item.kind == "video" for item in result))
+            logger.info(
+                "Telegram exact-post media source=%s candidates=%s videos=%s attempt=%s",
+                source_label,
+                len(result),
+                sum(item.kind == "video" for item in result),
+                attempt + 1,
+            )
             return result
-        if attempt == 0:
-            time.sleep(0.4)
+        if attempt < 2:
+            logger.info(
+                "TELEGRAM_MEDIA_EMPTY_RETRY source=%s attempt=%s url=%s",
+                source_label,
+                attempt + 1,
+                embed,
+            )
+            time.sleep(0.4 * (attempt + 1))
     logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, last_error or "no-candidate")
     return []
