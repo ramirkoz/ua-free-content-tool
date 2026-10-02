@@ -60,6 +60,14 @@ def telegram_embed_url(url: str) -> str:
     return f"https://t.me/{channel}/{post_id}?embed=1&mode=tme"
 
 
+def telegram_public_post_url(url: str) -> str:
+    parts = telegram_post_parts(url)
+    if parts is None:
+        return ""
+    channel, post_id = parts
+    return f"https://t.me/s/{channel}/{post_id}"
+
+
 def _safe_media_url(base_url: str, value: str) -> str:
     raw = str(value or "").strip()
     if not raw or raw.startswith(("data:", "blob:", "javascript:")):
@@ -216,6 +224,91 @@ def _fetch_player_videos(player_url: str, source_label: str) -> list[MediaCandid
     return []
 
 
+def _resolve_details(html: str, page_url: str, source_label: str) -> list[MediaCandidate]:
+    exact, player_pages = _extract_telegram_post_details(html, page_url, source_label)
+    followed_videos: list[MediaCandidate] = []
+    for player_url in player_pages[:10]:
+        followed_videos.extend(_fetch_player_videos(player_url, source_label))
+    if exact or followed_videos:
+        return prefer_real_video(deduplicate_media_candidates([*exact, *followed_videos]))
+    safe_fallback = [
+        item for item in extract_html_media(html, page_url, source_label)
+        if (urlsplit(item.url).hostname or "").casefold().endswith("telesco.pe")
+    ]
+    return prefer_real_video(deduplicate_media_candidates(safe_fallback))
+
+
+def _exact_public_post_fragment(html: str, channel: str, post_id: str) -> str:
+    """Scope a t.me/s page to the requested data-post block, excluding neighbours."""
+    text = str(html or "")
+    lower = text.casefold()
+    target = f"data-post=\"{channel}/{post_id}\"".casefold()
+    marker = lower.find(target)
+    if marker < 0:
+        target = f"data-post='{channel}/{post_id}'".casefold()
+        marker = lower.find(target)
+    if marker < 0:
+        return ""
+    start = lower.rfind("<div", 0, marker)
+    if start < 0:
+        start = marker
+    next_double = lower.find('data-post="', marker + len(target))
+    next_single = lower.find("data-post='", marker + len(target))
+    next_markers = [value for value in (next_double, next_single) if value >= 0]
+    if not next_markers:
+        return text[start:]
+    next_marker = min(next_markers)
+    end = lower.rfind("<div", marker, next_marker)
+    if end <= start:
+        end = next_marker
+    return text[start:end]
+
+
+def _discover_public_post_fallback(url: str, source_label: str) -> list[MediaCandidate]:
+    parts = telegram_post_parts(url)
+    public_url = telegram_public_post_url(url)
+    if parts is None or not public_url:
+        return []
+    channel, post_id = parts
+    for attempt in range(2):
+        try:
+            response = fetch_url(
+                public_url,
+                headers={"Accept": "text/html,application/xhtml+xml", "Cache-Control": "no-cache"},
+                max_bytes=8 * 1024 * 1024,
+                allowed_content_types={"text/html", "application/xhtml+xml"},
+                timeout=40,
+                max_redirects=5,
+            )
+        except NetworkError as exc:
+            logger.info(
+                "TELEGRAM_PUBLIC_POST_RETRY source=%s attempt=%s url=%s error=%s",
+                source_label,
+                attempt + 1,
+                public_url,
+                exc,
+            )
+            if attempt == 0:
+                time.sleep(0.4)
+                continue
+            return []
+        html = response.body.decode("utf-8", errors="replace")
+        fragment = _exact_public_post_fragment(html, channel, post_id)
+        if fragment:
+            result = _resolve_details(fragment, response.final_url, source_label)
+            if result:
+                logger.info(
+                    "Telegram public exact-post fallback source=%s candidates=%s videos=%s",
+                    source_label,
+                    len(result),
+                    sum(item.kind == "video" for item in result),
+                )
+                return result
+        if attempt == 0:
+            time.sleep(0.4)
+    return []
+
+
 def discover_telegram_post_media(url: str, source_label: str = "") -> list[MediaCandidate]:
     embed = telegram_embed_url(url)
     if not embed:
@@ -243,21 +336,9 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
                 )
                 time.sleep(0.4 * (attempt + 1))
                 continue
-            logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, exc)
-            return []
+            break
         html = response.body.decode("utf-8", errors="replace")
-        exact, player_pages = _extract_telegram_post_details(html, response.final_url, source_label)
-        followed_videos: list[MediaCandidate] = []
-        for player_url in player_pages[:10]:
-            followed_videos.extend(_fetch_player_videos(player_url, source_label))
-        if exact or followed_videos:
-            result = prefer_real_video(deduplicate_media_candidates([*exact, *followed_videos]))
-        else:
-            safe_fallback = [
-                item for item in extract_html_media(html, response.final_url, source_label)
-                if (urlsplit(item.url).hostname or "").casefold().endswith("telesco.pe")
-            ]
-            result = prefer_real_video(deduplicate_media_candidates(safe_fallback))
+        result = _resolve_details(html, response.final_url, source_label)
         if result:
             logger.info(
                 "Telegram exact-post media source=%s candidates=%s videos=%s attempt=%s",
@@ -275,5 +356,9 @@ def discover_telegram_post_media(url: str, source_label: str = "") -> list[Media
                 embed,
             )
             time.sleep(0.4 * (attempt + 1))
+
+    public_result = _discover_public_post_fallback(url, source_label)
+    if public_result:
+        return public_result
     logger.warning("TELEGRAM_MEDIA_NOT_RESOLVED url=%s source=%s error=%s", embed, source_label, last_error or "no-candidate")
     return []
