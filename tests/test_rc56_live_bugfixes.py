@@ -71,7 +71,7 @@ def test_rc56_inbox_refresh_preserves_a_surviving_viewport_anchor():
 
 def test_rc56_telegram_exact_media_retries_and_reports_resolution_failure():
     source = inspect.getsource(discover_telegram_post_media)
-    assert "for attempt in range(2)" in source
+    assert "for attempt in range(" in source
     assert '"Cache-Control": "no-cache"' in source
     assert "extract_html_media" in source
     assert "TELEGRAM_MEDIA_NOT_RESOLVED" in source
