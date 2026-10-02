@@ -38,6 +38,33 @@ class MainWindow(LegacyStableMainWindow):
             except tk.TclError:
                 pass
 
+    def _current_media_title(self) -> str:
+        """Return the publication headline/context used for human-readable media names."""
+        group_id = int(getattr(self, "current_group_id", 0) or 0)
+        if group_id:
+            try:
+                group = self.db.get_group(group_id)
+            except Exception:
+                group = None
+            if group is not None:
+                for key in ("headline", "canonical_title", "title"):
+                    try:
+                        value = getattr(group, key, "")
+                    except Exception:
+                        value = ""
+                    if not value:
+                        try:
+                            value = group[key]
+                        except Exception:
+                            value = ""
+                    if str(value or "").strip():
+                        return str(value).strip()
+        for article in list(getattr(self, "current_group_articles", [])):
+            value = str(getattr(article, "title", "") or "").strip()
+            if value:
+                return value
+        return ""
+
     def _managed_drive_client(self) -> Rc56ManagedGoogleDriveClient:
         if not self.config.platform_ready("google_drive"):
             from ...google_drive import GoogleDriveError
@@ -46,6 +73,8 @@ class MainWindow(LegacyStableMainWindow):
             self.config.google_client_id,
             self.config.google_client_secret,
             self.config.google_refresh_token,
+            post_title=self._current_media_title(),
+            group_id=int(getattr(self, "current_group_id", 0) or 0),
         )
 
     def _upgrade_media_editor(self) -> None:
@@ -56,8 +85,34 @@ class MainWindow(LegacyStableMainWindow):
         frame = tree.master
         progress = ttk.Progressbar(frame, mode="indeterminate")
         progress.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(2, 4))
-        progress.grid_remove()
         self._rc56_media_progress = progress
+        self._rc59_media_busy_count = 0
+
+    def _begin_media_busy(self) -> None:
+        progress = getattr(self, "_rc56_media_progress", None)
+        if progress is None:
+            return
+        count = int(getattr(self, "_rc59_media_busy_count", 0) or 0) + 1
+        self._rc59_media_busy_count = count
+        if count == 1:
+            progress.start(12)
+            try:
+                progress.update_idletasks()
+            except Exception:
+                pass
+
+    def _finish_media_busy(self) -> None:
+        progress = getattr(self, "_rc56_media_progress", None)
+        if progress is None:
+            return
+        count = max(0, int(getattr(self, "_rc59_media_busy_count", 0) or 0) - 1)
+        self._rc59_media_busy_count = count
+        if count == 0:
+            progress.stop()
+            try:
+                progress.configure(value=0)
+            except Exception:
+                pass
 
     def discover_current_group_media(self) -> None:
         group_id = getattr(self, "current_group_id", None)
@@ -69,24 +124,13 @@ class MainWindow(LegacyStableMainWindow):
         self.media_candidates_status_var.set(
             f"Перевіряю джерела: {len(articles)}. Це не змінює вже прикріплене медіа."
         )
-        progress = getattr(self, "_rc56_media_progress", None)
-        if progress is not None:
-            progress.grid()
-            progress.start(12)
-            try:
-                progress.update_idletasks()
-            except Exception:
-                pass
+        self._begin_media_busy()
 
         def action() -> object:
             try:
                 return discover_group_media_rc3(articles)
             finally:
-                if progress is not None:
-                    def _stop_media_progress() -> None:
-                        progress.stop()
-                        progress.grid_remove()
-                    self._post_ui(_stop_media_progress)
+                self._post_ui(self._finish_media_busy)
 
         def success(result: object) -> None:
             if self.current_group_id != group_id:
@@ -95,7 +139,7 @@ class MainWindow(LegacyStableMainWindow):
             self._set_media_candidates(candidates)
             if candidates:
                 self.media_candidates_status_var.set(
-                    f"Знайдено медіафайлів: {len(candidates)}. Виберіть один і натисніть «Використати вибране»."
+                    f"Знайдено медіафайлів: {len(candidates)}. Виберіть потрібне медіа та натисніть «Використати вибране»."
                 )
             else:
                 self.media_candidates_status_var.set(
