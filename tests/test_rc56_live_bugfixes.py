@@ -7,7 +7,7 @@ from PIL import Image
 
 from content_agent.anti_slop import assess_ukrainian_slop
 from content_agent.media_candidates import ValidatedMedia
-from content_agent.telegram_media_v1_3_rc6 import discover_telegram_post_media
+from content_agent.telegram_media_v1_3_rc6 import _resolve_details, discover_telegram_post_media
 from content_agent.v2.media_rc56 import normalize_instagram_safe_image
 from content_agent.v2.storage.manual_topics import ManualTopicsMixin
 from content_agent.v2.ui.manual_topics_window_rc44 import MainWindow
@@ -70,11 +70,12 @@ def test_rc56_inbox_refresh_preserves_a_surviving_viewport_anchor():
 
 
 def test_rc56_telegram_exact_media_retries_and_reports_resolution_failure():
-    source = inspect.getsource(discover_telegram_post_media)
-    assert "for attempt in range(" in source
-    assert '"Cache-Control": "no-cache"' in source
-    assert "extract_html_media" in source
-    assert "TELEGRAM_MEDIA_NOT_RESOLVED" in source
+    discovery_source = inspect.getsource(discover_telegram_post_media)
+    resolution_source = inspect.getsource(_resolve_details)
+    assert "for attempt in range(" in discovery_source
+    assert '"Cache-Control": "no-cache"' in discovery_source
+    assert "extract_html_media" in resolution_source
+    assert "TELEGRAM_MEDIA_NOT_RESOLVED" in discovery_source
 
 
 def test_rc56_does_not_add_another_versioned_window_layer():
