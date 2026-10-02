@@ -6,6 +6,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..google_drive import GoogleDriveError
 from ..media_candidates import ValidatedMedia
+from ..readable_media_names import readable_post_media_filename
 from ..strict_media_drive import StrictManagedGoogleDriveClient, validate_decodable_image
 
 _INSTAGRAM_MIN_RATIO = 4 / 5
@@ -63,10 +64,29 @@ def normalize_instagram_safe_image(media: ValidatedMedia) -> ValidatedMedia:
 
 
 class Rc56ManagedGoogleDriveClient(StrictManagedGoogleDriveClient):
+    """RC56 validation plus the readable media-name contract restored in RC59."""
+
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        refresh_token: str,
+        *,
+        post_title: str = "",
+        group_id: int = 0,
+    ) -> None:
+        super().__init__(client_id, client_secret, refresh_token)
+        self._post_title = str(post_title or "")
+        self._group_id = int(group_id or 0)
+
+    def _publication_filename(self, mime_type: str) -> str:
+        return readable_post_media_filename(self._post_title, self._group_id, mime_type)
+
     def upload_validated_media(self, media: ValidatedMedia, filename: str, *, folder_id: str = "", folder_name: str = "UA FREE Content Tool Media"):
+        del filename
         return super().upload_validated_media(
             normalize_instagram_safe_image(media),
-            filename,
+            self._publication_filename(media.mime_type),
             folder_id=folder_id,
             folder_name=folder_name,
         )

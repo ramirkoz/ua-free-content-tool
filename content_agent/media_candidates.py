@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from .network import NetworkError, fetch_url
+
+logger = logging.getLogger("content_agent.media.candidates")
 
 MAX_MEDIA_BYTES = 200 * 1024 * 1024
 _MIN_IMAGE_SIDE = 180
@@ -333,18 +337,37 @@ def validate_media_bytes(data: bytes, declared_content_type: str = "", *, source
 
 
 def download_media_candidate(candidate: MediaCandidate) -> ValidatedMedia:
-    try:
-        response = fetch_url(
-            candidate.url,
-            headers={"Accept": "image/*,video/*"},
-            max_bytes=MAX_MEDIA_BYTES,
-            timeout=180,
-            max_redirects=5,
-        )
-    except NetworkError as exc:
-        raise MediaCandidateError(str(exc)) from exc
-    return validate_media_bytes(
-        response.body,
-        response.headers.get("content-type", ""),
-        source_url=response.final_url,
-    )
+    """Download a candidate with bounded retries for transient CDN/network misses.
+
+    Preview and video URLs, especially Telegram CDN/player URLs, occasionally fail a
+    single GET even though the same URL works immediately afterwards. RC59 retries
+    only the read-only media GET and keeps publication/upload semantics unchanged.
+    """
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = fetch_url(
+                candidate.url,
+                headers={"Accept": "image/*,video/*", "Cache-Control": "no-cache"},
+                max_bytes=MAX_MEDIA_BYTES,
+                timeout=180,
+                max_redirects=5,
+            )
+            return validate_media_bytes(
+                response.body,
+                response.headers.get("content-type", ""),
+                source_url=response.final_url,
+            )
+        except (NetworkError, MediaCandidateError) as exc:
+            last_error = exc
+            logger.warning(
+                "MEDIA_DOWNLOAD_RETRY kind=%s origin=%s attempt=%s url=%s error=%s",
+                candidate.kind,
+                candidate.origin,
+                attempt + 1,
+                candidate.url,
+                exc,
+            )
+            if attempt < 2:
+                time.sleep(0.35 * (attempt + 1))
+    raise MediaCandidateError(str(last_error or "Не вдалося завантажити медіафайл.")) from last_error
