@@ -203,9 +203,10 @@ class MainWindow(Rc43MainWindow):
             env = os.environ.copy()
             if credential_password:
                 env[_RESTORE_PASSWORD_ENV] = credential_password
+            escaped_executable = str(executable).replace("'", "''")
             command = (
                 f"Wait-Process -Id {os.getpid()}; "
-                f"Start-Process -FilePath '{str(executable).replace("'", "''")}'"
+                f"Start-Process -FilePath '{escaped_executable}'"
             )
             try:
                 subprocess.Popen(
