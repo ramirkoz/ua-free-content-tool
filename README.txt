@@ -1,10 +1,10 @@
-UA FREE Content Tool v2.0.0-rc61 — Windows Portable
+UA FREE Content Tool v2.0.0-rc62 — Windows Portable
 
-Small stabilization update on accepted RC60.
-- Keep all RC60 media discovery, progress, filename, Telegram albums and Inbox behavior.
-- Use OpenRouter generic chat models only; exclude schema-only specialized endpoints.
-- Stop retrying different models when the OpenRouter hostname has DNS failure.
-- Update the deprecated Cloudflare AI Router model to Gemma 4 26B A4B.
-- Do not modify Data; keep old RC60 portable as a rollback before updating.
+Focused live rewrite recovery fix on RC61.
+- When OpenRouter returns an otherwise usable article that Fact Guard rejects, allow ONE existing bounded FACT-SAFE REPAIR attempt.
+- Repair rechecks the exact evidence with Fact Guard; every result still passes sanitization and Anti-Slop before publication.
+- Never bypass factual QA, never auto-publish a rejected or speculative rewrite.
+- OpenRouter backend, monthly budget, existing RC61 endpoint blacklist, media, Inbox, Data, publication and source schedules remain unchanged.
+- Keep RC61 (or accepted RC60) and a Data backup for rollback before first launch.
 
-No changes to Fact Guard, Anti-Slop, publication receipts or target delivery behavior.
+OpenRouter model HTTP 404 BYOK-only endpoints remain quarantined by the existing model selector.
