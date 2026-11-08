@@ -1,4 +1,4 @@
-# UA FREE Content Tool v2.0.0-rc29
+# UA FREE Content Tool v2.0.0-rc61
 
 Windows Portable інструмент для збору, редактури, підготовки й публікації контенту з AI Router, Supervisor та інтеграціями соцмереж.
 
@@ -30,7 +30,7 @@ PUBLIC_VERSION.txt
 README.txt
 ```
 
-Updater зберігає `Data` і `Tools`. Поточний реліз: **v2.0.0-rc29**.
+Updater зберігає `Data` і `Tools`. Поточний реліз: **v2.0.0-rc61**.
 
 
 ## RC29 recovery

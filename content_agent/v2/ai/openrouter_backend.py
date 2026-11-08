@@ -225,6 +225,13 @@ _SKIP_ID_PARTS = (
     "image", "embedding", "rerank", "audio", "speech", "tts", "transcription", "video",
 )
 
+# Specialized ScaleDown endpoints are not generic chat models. They require
+# task-specific schemas or response formats, and caused HTTP 400 during
+# ordinary Supervisor requests in the operator telemetry on 2026-11-06.
+# Filter at candidate selection as well so persisted RC60 catalog caches
+# cannot silently reintroduce them after an upgrade.
+_NON_CHAT_ENDPOINT_IDS = frozenset({"scaledown/extract", "scaledown/summarize"})
+
 
 def _catalog_cache_path() -> Path:
     root = data_dir() / "v2"
@@ -493,6 +500,7 @@ def _candidate_models(
     def eligible_row(row: ModelInfo) -> bool:
         return (
             not _is_batch_variant(row.id)
+            and row.id.casefold() not in _NON_CHAT_ENDPOINT_IDS
             and row.id.casefold() not in excluded
             and _model_family_key(row.id) not in excluded_families
             and row.quality >= min_quality
@@ -874,6 +882,13 @@ class OpenRouterBackend:
                     task=route.task.value, tier=tier.value, model=model.id, attempt=tries,
                     outcome="failed", kind="network", detail=str(exc), elapsed_seconds=elapsed,
                 )
+                # Every model uses the same OpenRouter hostname. When DNS is
+                # unavailable, switching models cannot repair the network and
+                # only extends a stalled operation. Let the next scheduled
+                # task retry after connectivity returns; do not alter normal
+                # model-fallback behavior for other transient failures.
+                if "dns resolution failed" in str(exc).casefold() or "dns resolution timed out" in str(exc).casefold():
+                    break
                 continue
 
         if last_error is not None:
