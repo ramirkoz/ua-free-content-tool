@@ -12,8 +12,8 @@ from . import rewrite_pipeline_v1_3 as base
 
 logger = logging.getLogger("content_agent.rewrite.rc17")
 
-_KNOWN_PROVIDERS = frozenset({"codex", "gemini", "nvidia", "groq", "cloudflare", "local"})
-_FACT_REPAIR_PROVIDERS = frozenset({"codex", "gemini", "nvidia", "groq"})
+_KNOWN_PROVIDERS = frozenset({"codex", "gemini", "nvidia", "groq", "cloudflare", "local", "openrouter"})
+_FACT_REPAIR_PROVIDERS = frozenset({"codex", "gemini", "nvidia", "groq", "openrouter"})
 
 
 def install_rc17_fact_guard() -> None:
