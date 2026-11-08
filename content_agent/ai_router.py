@@ -100,7 +100,7 @@ MODEL_SLOTS: tuple[AIModelSlot, ...] = (
     AIModelSlot(4, "nvidia", "nvidia/nemotron-3-super-120b-a12b", "Nemotron 3 Super 120B / NVIDIA"),
     AIModelSlot(5, "groq", "openai/gpt-oss-120b", "GPT-OSS 120B / Groq"),
     AIModelSlot(6, "groq", "qwen/qwen3.6-27b", "Qwen 3.6 27B / Groq"),
-    AIModelSlot(7, "cloudflare", "@cf/nvidia/nemotron-3-120b-a12b", "Nemotron 3 120B / Cloudflare"),
+    AIModelSlot(7, "cloudflare", "@cf/google/gemma-4-26b-a4b-it", "Gemma 4 26B A4B / Cloudflare"),
     AIModelSlot(8, "cloudflare", "@cf/zai-org/glm-4.7-flash", "GLM-4.7 Flash / Cloudflare"),
     AIModelSlot(9, "local", "local-model", "Локальний AI · Ollama → llama.cpp", "local"),
 )
