@@ -1,9 +1,10 @@
-UA FREE Content Tool v2.0.0-rc40 — MANUAL TEST
+UA FREE Content Tool v2.0.0-rc61 — Windows Portable
 
-RC40 is based on RC39.
+Small stabilization update on accepted RC60.
+- Keep all RC60 media discovery, progress, filename, Telegram albums and Inbox behavior.
+- Use OpenRouter generic chat models only; exclude schema-only specialized endpoints.
+- Stop retrying different models when the OpenRouter hostname has DNS failure.
+- Update the deprecated Cloudflare AI Router model to Gemma 4 26B A4B.
+- Do not modify Data; keep old RC60 portable as a rollback before updating.
 
-Changes:
-- active V2 global duplicate search now normalizes Unicode digits before numeric comparison;
-- malformed numeric-looking tokens are skipped instead of aborting the duplicate scan;
-- UI operation errors are written to the application log for Supervisor visibility;
-- RC34-RC39 fixes are retained.
+No changes to Fact Guard, Anti-Slop, publication receipts or target delivery behavior.
