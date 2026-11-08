@@ -150,14 +150,30 @@ jobs:
             Pop-Location
           }
 
+          # First-run UI intentionally waits for a human import/fresh decision.
+          # For this disposable CI Data only, explicitly choose a clean start
+          # before the exe smoke test instead of hanging on a welcome dialog.
+          & $console -I -c "from content_agent.clean_import import mark_first_run_choice; mark_first_run_choice('fresh')"
+          if ($LASTEXITCODE -ne 0) { throw "Disposable first-run choice setup failed" }
+
           $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
-          Start-Sleep -Seconds 10
-          if ($process.HasExited) {
-            throw "Portable application exited during startup smoke test: $($process.ExitCode)"
-          }
-          Stop-Process -Id $process.Id -Force
-          if (-not (Test-Path (Join-Path $root "Data\content_agent.sqlite3"))) {
-            throw "Portable startup did not create its local database"
+          $dbPath = Join-Path $root "Data\content_agent.sqlite3"
+          $deadline = (Get-Date).AddSeconds(45)
+          try {
+            do {
+              Start-Sleep -Milliseconds 500
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "Portable application exited during startup smoke test: $($process.ExitCode)"
+              }
+              if (Test-Path $dbPath) { break }
+            } while ((Get-Date) -lt $deadline)
+            if (-not (Test-Path $dbPath)) {
+              throw "Portable did not initialize its disposable CI database after first-run choice"
+            }
+          } finally {
+            $process.Refresh()
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
 
           Remove-Item $console -Force

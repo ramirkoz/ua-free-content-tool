@@ -15,6 +15,9 @@ Targeted safe-stability update on **operator-accepted RC60**, without changing i
 - OpenRouter backend selection stays exclusive; no silent activation of direct Gemini/NVIDIA/Groq/Cloudflare while OpenRouter is selected.
 - Data, provider keys, Google Drive accounts, Telegram/social destinations and operator settings.
 
+## Release verification
+- The Windows first-run screen is intentionally interactive. The automated release smoke test seeds a **disposable CI-only** fresh-start choice, then checks for database initialization with a bounded startup window. Production first-run choices and existing user Data are unchanged.
+
 ## Evidence and acceptance
 - Basis: Google Drive Supervisor last mirrored 2026-11-06 18:59 Kyiv (RC60 healthy after a transient network/DNS incident); this is not a November 8 live run.
 - Automated CI, Windows signed Portable build, Defender scan, official GitHub Release and operator runtime acceptance must be verified separately before declaring complete.
